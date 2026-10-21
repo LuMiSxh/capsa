@@ -225,10 +225,11 @@ fn the_install_hint_names_the_global_bin_dir_only_when_it_is_off_the_path() {
 fn the_adapter_is_ok_through_any_launcher_and_shows_its_version_when_known() {
     let binary = detect_report(&["/bin/claude-agent-acp"], &["/bin"]).adapter;
     assert_eq!(binary.status, "ok");
+    let adapter = Path::new("/bin").join("claude-agent-acp");
     assert!(
         binary
             .detail
-            .contains("/bin/claude-agent-acp (version unknown)"),
+            .contains(&format!("{} (version unknown)", adapter.display())),
         "{}",
         binary.detail
     );

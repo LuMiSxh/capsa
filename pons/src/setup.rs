@@ -223,6 +223,7 @@ mod tests {
     use std::path::Path;
 
     use capsa_core::hint::find_hint;
+    use capsa_core::which::Platform;
 
     use super::*;
 
@@ -249,8 +250,16 @@ mod tests {
         }
     }
 
+    // The fake files use Unix paths, so the platform is fixed rather than the host's.
     fn env() -> Env {
-        Env::from_path(std::ffi::OsStr::new("/bin"))
+        Env {
+            platform: Platform::Linux,
+            path: vec![PathBuf::from("/bin")],
+            home: None,
+            appdata: None,
+            local_appdata: None,
+            pathext: Vec::new(),
+        }
     }
 
     fn nothing(_: Manager) -> Option<PathBuf> {
