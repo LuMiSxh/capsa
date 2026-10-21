@@ -79,49 +79,66 @@ impl Lang {
     }
 
     /// Returns the grammar, or `None` when its Cargo feature is disabled.
-    // The `_` arm is live only when a language feature is off; with none, every arm diverges.
-    #[expect(
-        unreachable_patterns,
-        reason = "the _ arm is live only when a language feature is off"
+    #[cfg_attr(
+        all(
+            feature = "lang-rust",
+            feature = "lang-swift",
+            feature = "lang-ts",
+            feature = "lang-python",
+            feature = "lang-markdown",
+            feature = "lang-svelte",
+            feature = "lang-data",
+            feature = "lang-shell",
+            feature = "lang-c",
+            feature = "lang-css",
+            feature = "lang-scss",
+            feature = "lang-html",
+            feature = "lang-xml",
+            not(windows)
+        ),
+        expect(
+            unreachable_patterns,
+            reason = "the _ arm is live only when a grammar is compiled out"
+        )
     )]
     pub(crate) fn grammar(self) -> Option<tree_sitter::Language> {
-        Some(match self {
+        match self {
             #[cfg(feature = "lang-rust")]
-            Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
+            Lang::Rust => Some(tree_sitter_rust::LANGUAGE.into()),
             #[cfg(feature = "lang-swift")]
-            Lang::Swift => tree_sitter_swift::LANGUAGE.into(),
+            Lang::Swift => Some(tree_sitter_swift::LANGUAGE.into()),
             #[cfg(feature = "lang-ts")]
-            Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            Lang::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
             #[cfg(feature = "lang-ts")]
-            Lang::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+            Lang::Tsx => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
             #[cfg(feature = "lang-ts")]
-            Lang::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
+            Lang::JavaScript => Some(tree_sitter_javascript::LANGUAGE.into()),
             #[cfg(feature = "lang-python")]
-            Lang::Python => tree_sitter_python::LANGUAGE.into(),
+            Lang::Python => Some(tree_sitter_python::LANGUAGE.into()),
             #[cfg(feature = "lang-markdown")]
-            Lang::Markdown => tree_sitter_md::LANGUAGE.into(),
+            Lang::Markdown => Some(tree_sitter_md::LANGUAGE.into()),
             #[cfg(feature = "lang-svelte")]
-            Lang::Svelte => tree_sitter_svelte_ng::LANGUAGE.into(),
+            Lang::Svelte => Some(tree_sitter_svelte_ng::LANGUAGE.into()),
             #[cfg(feature = "lang-data")]
-            Lang::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
+            Lang::Toml => Some(tree_sitter_toml_ng::LANGUAGE.into()),
             #[cfg(feature = "lang-data")]
-            Lang::Json => tree_sitter_json::LANGUAGE.into(),
+            Lang::Json => Some(tree_sitter_json::LANGUAGE.into()),
             #[cfg(feature = "lang-data")]
-            Lang::Yaml => tree_sitter_yaml::LANGUAGE.into(),
+            Lang::Yaml => Some(tree_sitter_yaml::LANGUAGE.into()),
             #[cfg(feature = "lang-shell")]
-            Lang::Shell => tree_sitter_bash::LANGUAGE.into(),
+            Lang::Shell => Some(tree_sitter_bash::LANGUAGE.into()),
             #[cfg(feature = "lang-c")]
-            Lang::C => tree_sitter_c::LANGUAGE.into(),
+            Lang::C => Some(tree_sitter_c::LANGUAGE.into()),
             #[cfg(feature = "lang-css")]
-            Lang::Css => tree_sitter_css::LANGUAGE.into(),
+            Lang::Css => Some(tree_sitter_css::LANGUAGE.into()),
             #[cfg(all(feature = "lang-scss", not(windows)))]
-            Lang::Scss => tree_sitter_scss::language(),
+            Lang::Scss => Some(tree_sitter_scss::language()),
             #[cfg(feature = "lang-html")]
-            Lang::Html => tree_sitter_html::LANGUAGE.into(),
+            Lang::Html => Some(tree_sitter_html::LANGUAGE.into()),
             #[cfg(feature = "lang-xml")]
-            Lang::Xml => tree_sitter_xml::LANGUAGE_XML.into(),
-            _ => return None,
-        })
+            Lang::Xml => Some(tree_sitter_xml::LANGUAGE_XML.into()),
+            _ => None,
+        }
     }
 }
 
