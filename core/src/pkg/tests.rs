@@ -32,6 +32,7 @@ impl Fs for FakeFs {
     }
 }
 
+#[cfg(unix)]
 const PKG: &str = "@agentclientprotocol/claude-agent-acp";
 
 fn env(path: &[&str]) -> Env {

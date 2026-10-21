@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use std::collections::HashSet;
+#[cfg(unix)]
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
