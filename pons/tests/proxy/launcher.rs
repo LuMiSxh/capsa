@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 use tokio::process::Command;
 
-use super::harness::{Harness, mock_agent, pons_command, temp_path};
+#[cfg(unix)]
+use super::harness::pons_command;
+use super::harness::{Harness, mock_agent, temp_path};
 
 #[cfg(unix)]
 #[tokio::test]

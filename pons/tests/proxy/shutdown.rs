@@ -2,10 +2,15 @@
 
 use std::time::Duration;
 
+#[cfg(unix)]
 use serde_json::json;
-use tokio::time::{sleep, timeout};
+#[cfg(unix)]
+use tokio::time::sleep;
+use tokio::time::timeout;
 
-use super::harness::{Harness, start_with_agent_args, temp_path};
+use super::harness::Harness;
+#[cfg(unix)]
+use super::harness::{start_with_agent_args, temp_path};
 
 #[tokio::test]
 async fn a_dead_agent_answers_the_waiting_prompt_with_an_error_and_pons_exits() {
