@@ -1,0 +1,31 @@
+[package]
+name = "pons"
+version = "0.6.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Transparent stdio proxy between Zed and the Claude ACP adapter that keeps background subagents alive."
+license.workspace = true
+repository.workspace = true
+publish = false
+readme = "README.md"
+keywords = ["acp", "zed", "claude", "proxy"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+anyhow = { workspace = true }
+capsa-core = { workspace = true, features = ["clap", "update"] }
+chrono = { workspace = true }
+clap = { workspace = true, features = ["env"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros", "io-util", "io-std", "process", "signal", "sync", "time"] }
+
+# Signals the agent's process group (src/proxy/mod.rs).
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+# Profiles live in the workspace root. Build pons with `--profile release-unwind`,
+# because the fail-safe catches panics in the message rules (see src/failsafe.rs), which
+# needs unwinding.
+
+[lints]
+workspace = true

@@ -1,0 +1,70 @@
+[package]
+name = "acus-cli"
+description = "acus: agent-first code search, outline and editing."
+version = "0.17.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "acus"
+path = "src/main.rs"
+
+[features]
+default = ["lang-rust", "lang-swift", "lang-ts", "lang-python", "lang-markdown", "lang-svelte", "lang-data", "lang-shell", "lang-c", "lang-css", "lang-scss", "lang-html", "lang-xml", "guard-bash", "guard-zsh", "guard-powershell", "cmd-update"]
+lang-rust = ["acus-syntax/lang-rust"]
+lang-swift = ["acus-syntax/lang-swift"]
+lang-ts = ["acus-syntax/lang-ts"]
+lang-python = ["acus-syntax/lang-python"]
+lang-markdown = ["acus-syntax/lang-markdown"]
+lang-svelte = ["acus-syntax/lang-svelte"]
+lang-data = ["acus-syntax/lang-data"]
+lang-shell = ["acus-syntax/lang-shell"]
+lang-c = ["acus-syntax/lang-c"]
+lang-css = ["acus-syntax/lang-css"]
+lang-scss = ["acus-syntax/lang-scss"]
+lang-html = ["acus-syntax/lang-html"]
+lang-xml = ["acus-syntax/lang-xml"]
+# Guard parsers. Each grammar is a few MB of generated C; without any, the guard falls back
+# to its hand-written splitter. See docs/guard.md.
+guard-bash = ["acus-guard/bash"]
+guard-zsh = ["acus-guard/zsh"]
+guard-powershell = ["acus-guard/powershell"]
+# Network judgements via a Jev-compatible API; off by default.
+cmd-decide = ["dep:acus-decide"]
+# `acus self update` and `acus self uninstall`; network only when called.
+cmd-update = ["capsa-core/update"]
+
+[dependencies]
+acus-decide = { workspace = true, optional = true }
+acus-edit.workspace = true
+acus-guard.workspace = true
+acus-search.workspace = true
+acus-syntax.workspace = true
+acus-usage.workspace = true
+acus-walk.workspace = true
+anstyle.workspace = true
+anyhow.workspace = true
+capsa-core = { workspace = true, features = ["clap"] }
+clap.workspace = true
+regex.workspace = true
+serde.workspace = true
+similar.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.190"
+
+[dev-dependencies]
+criterion.workspace = true
+insta.workspace = true
+tempfile.workspace = true
+
+[[bench]]
+name = "core"
+harness = false

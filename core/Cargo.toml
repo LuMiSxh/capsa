@@ -1,0 +1,34 @@
+[package]
+name = "capsa-core"
+version = "0.1.0"
+description = "Shared building blocks for the capsa tools: hints, output formats, exit codes, program lookup and package-manager installs."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+clap = ["dep:clap"]
+# Self update and uninstall from GitHub releases; network only when called.
+update = ["dep:ureq", "dep:flate2", "dep:tar", "dep:zip", "dep:sha2"]
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
+serde_json.workspace = true
+sha2 = { workspace = true, optional = true }
+tar = { workspace = true, optional = true }
+thiserror.workspace = true
+ureq = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

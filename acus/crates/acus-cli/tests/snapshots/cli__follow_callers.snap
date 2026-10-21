@@ -1,0 +1,7 @@
+---
+source: crates/acus-cli/tests/cli/follow.rs
+expression: "acus_in(d.path(), &[\"follow\", \"lib.rs#parse\", \"-d\", \"3\"], \"\").1"
+---
+lib.rs#parse  fn 1-3  callers depth 3
+  lib.rs#run  6  let n = parse(src);
+    main.rs#main  2  let n = run("x");

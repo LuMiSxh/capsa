@@ -1,0 +1,33 @@
+[package]
+name = "acus-guard"
+description = "PreToolUse decisions for acus: which shell, Read, Grep and Glob calls to rewrite or refuse."
+version = "0.17.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = ["bash", "zsh", "powershell"]
+bash = ["dep:tree-sitter", "dep:tree-sitter-bash"]
+zsh = ["dep:tree-sitter", "dep:tree-sitter-zsh"]
+powershell = ["dep:tree-sitter", "dep:tree-sitter-powershell"]
+
+[dependencies]
+acus-syntax.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tree-sitter = { workspace = true, optional = true }
+tree-sitter-bash = { workspace = true, optional = true }
+tree-sitter-powershell = { workspace = true, optional = true }
+tree-sitter-zsh = { workspace = true, optional = true }
+
+[dev-dependencies]
+acus-syntax = { workspace = true, features = ["default"] }
+insta.workspace = true
+tempfile.workspace = true

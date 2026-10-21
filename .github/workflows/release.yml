@@ -1,0 +1,196 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tool:
+        description: "Tool to release"
+        required: true
+        type: choice
+        options:
+          - acus
+          - pons
+          - velum
+      version:
+        description: "Crate version without v, e.g. 0.16.2. Must match the tool's Cargo.toml and have a CHANGELOG.md section."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    env:
+      TOOL: ${{ inputs.tool }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check version, changelog and tag
+        run: |
+          case "$TOOL" in
+            acus)  manifest="acus/crates/acus-cli/Cargo.toml"; changelog="acus/CHANGELOG.md" ;;
+            pons)  manifest="pons/Cargo.toml";                 changelog="pons/CHANGELOG.md" ;;
+            velum) manifest="velum/Cargo.toml";                changelog="velum/CHANGELOG.md" ;;
+          esac
+
+          if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::version must look like 0.16.2, got $VERSION"
+            exit 1
+          fi
+
+          crate_version="$(awk -F'"' '/^version[[:space:]]*=/ { print $2; exit }' "$manifest")"
+          if [ "$crate_version" != "$VERSION" ]; then
+            echo "::error::$manifest has version $crate_version, not $VERSION"
+            exit 1
+          fi
+
+          if ! grep -Fq "## [$VERSION]" "$changelog"; then
+            echo "::error::$changelog has no section ## [$VERSION]"
+            exit 1
+          fi
+
+          tag="$TOOL-v$VERSION"
+          existing="$(git ls-remote --tags origin "refs/tags/$tag")"
+          if [ -n "$existing" ]; then
+            echo "::error::tag $tag already exists"
+            exit 1
+          fi
+
+      - name: Select build targets
+        id: matrix
+        run: |
+          case "$TOOL" in
+            velum)
+              matrix='{"include":[{"target":"x86_64-apple-darwin","os":"macos-latest"},{"target":"aarch64-apple-darwin","os":"macos-latest"}]}' ;;
+            *)
+              matrix='{"include":[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest"},{"target":"aarch64-unknown-linux-gnu","os":"ubuntu-latest"},{"target":"x86_64-apple-darwin","os":"macos-latest"},{"target":"aarch64-apple-darwin","os":"macos-latest"},{"target":"x86_64-pc-windows-msvc","os":"windows-latest"}]}' ;;
+          esac
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: validate
+    strategy:
+      matrix: ${{ fromJSON(needs.validate.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      TOOL: ${{ inputs.tool }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve package, binary and profile
+        run: |
+          case "$TOOL" in
+            acus)  package="acus-cli"; bin="acus";  features="cmd-decide,cmd-update"; profile="release" ;;
+            pons)  package="pons";     bin="pons";  features="";                      profile="release-unwind" ;;
+            velum) package="velum";    bin="velum"; features="";                      profile="release" ;;
+          esac
+          bin_file="$bin"
+          if [ "$RUNNER_OS" = "Windows" ]; then bin_file="$bin.exe"; fi
+          {
+            echo "PACKAGE=$package"
+            echo "FEATURES=$features"
+            echo "PROFILE=$profile"
+            echo "BIN_FILE=$bin_file"
+            echo "ASSET=$TOOL-$TARGET"
+          } >> "$GITHUB_ENV"
+
+      # rustup reads rust-toolchain.toml and installs the pinned toolchain.
+      - name: Install pinned toolchain and target
+        run: |
+          rustup show
+          rustup target add "$TARGET"
+
+      - name: Install cross-compilation tools (aarch64-linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Build release binary
+        run: |
+          if [ -n "$FEATURES" ]; then
+            cargo build --profile "$PROFILE" --locked -p "$PACKAGE" --features "$FEATURES" --target "$TARGET"
+          else
+            cargo build --profile "$PROFILE" --locked -p "$PACKAGE" --target "$TARGET"
+          fi
+
+      - name: Package binary (unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          tar -czf "dist/$ASSET.tar.gz" -C "target/$TARGET/$PROFILE" "$BIN_FILE"
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256"
+          else
+            shasum -a 256 "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256"
+          fi
+
+      - name: Package binary (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $name = "$env:ASSET.zip"
+          Compress-Archive -Path "target/$env:TARGET/$env:PROFILE/$env:BIN_FILE" -DestinationPath "dist/$name"
+          $hash = (Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "dist/$name.sha256" -Value "$hash  $name" -Encoding ascii
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ASSET }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TOOL: ${{ inputs.tool }}
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          case "$TOOL" in
+            acus)  changelog="acus/CHANGELOG.md" ;;
+            pons)  changelog="pons/CHANGELOG.md" ;;
+            velum) changelog="velum/CHANGELOG.md" ;;
+          esac
+          awk -v heading="## [$VERSION]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' "$changelog" > release-notes.md
+          test -s release-notes.md
+
+      - name: Create GitHub release
+        run: |
+          tag="$TOOL-v$VERSION"
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "$tag" \
+            --notes-file release-notes.md \
+            dist/*

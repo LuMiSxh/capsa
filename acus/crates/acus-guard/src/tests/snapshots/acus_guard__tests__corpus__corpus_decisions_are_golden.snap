@@ -1,0 +1,188 @@
+---
+source: crates/acus-cli/src/guard/tests/corpus.rs
+expression: out
+---
+skipped 0 cases (grammar not built)
+0001 rewrite build-pipe ⇒ acus ctx 'uv run --locked pytest scripts/tests -q' --tail 5; just --list 2>&1 | grep -i -E 'check|lint|format|action'; acus find 'lint|fmt' scripts/check.py justfile --head 20
+0002 rewrite build-pipe ⇒ acus ctx 'cargo test' --grep '^test result|FAILED|failed'; acus ctx 'cargo test --release' --grep '^test result|FAILED|failed'
+0003 rewrite build-pipe ⇒ acus ctx 'uv run --locked pytest -q tests' --tail 40
+0004 rewrite build-pipe ⇒ git diff HEAD -- scripts | head -120; acus ctx 'uv run --locked pytest scripts/tests -q' --tail 8
+0005 rewrite build-pipe ⇒ cargo metadata --no-deps -q >/dev/null; echo "metadata exit $?"; acus ctx 'cargo check --workspace' --tail 40; echo "check exit $?"
+0006 rewrite build-pipe ⇒ acus ctx 'cargo test -q -p acus-cli -- guard convert' --drop '^$' --max-output 80
+0007 rewrite ctx-pipe ⇒ acus ctx 'cargo check --workspace --all-targets' --grep '^error' --max-output 150
+0008 rewrite ctx-pipe ⇒ acus ctx 'cargo test -q' --tail 3; echo "test_exit=$?"; acus ctx 'cargo clippy -q --all-targets -- -D warnings' --tail 3; echo "clippy_exit=$?"; cargo fmt --check; echo "fmt_exit=$?"
+0009 rewrite ctx-pipe ⇒ acus ctx 'just check' --tail 60
+0010 rewrite ctx-pipe ⇒ acus ctx 'just check' --max-output 120
+0011 rewrite ctx-pipe ⇒ acus ctx 'just check' --grep 'error:' --max-output 60; echo "exit=$?"
+0012 rewrite ctx-pipe ⇒ acus ctx 'just check' --grep 'error:' --max-output 80; echo "EXIT=$?"
+0013 rewrite ctx-pipe ⇒ cd /repo && acus ctx 'cargo test -p acus-cli --lib guard' --tail 40
+0014 rewrite grep ⇒ acus find '^ci' 'justfile' -A 12; acus find 'licenses|check docs|^check' 'justfile' --max-hits 40
+0015 pass - ⇒
+0016 deny grep ⇒
+0017 pass - ⇒
+0018 pass - ⇒
+0019 rewrite read-shell ⇒ git status --short | head; git branch --show-current; wc -l crates/acus-cli/src/cmd_guard.rs; ls crates/acus-cli/src crates/acus-cli/tests; acus show 'CHANGELOG.md:1-60'
+0020 rewrite read-shell ⇒ acus show 'AGENTS.md:1-80'; git ls-files '*.md' | xargs wc -w; ls; cat justfile | head -40
+0021 deny sed-i ⇒
+0022 deny sed-i ⇒
+0023 deny sed-i ⇒
+0024 escape edit-script ⇒
+0025 escape sed-i ⇒
+0026 hint edit-script ⇒
+0027 hint edit-script ⇒
+0028 hint edit-script ⇒
+0029 rewrite git-diff ⇒ ls -l CLAUDE.md AGENTS.md && wc -l AGENTS.md && acus diff -p AGENTS.md
+0030 hint git-diff ⇒
+0031 rewrite git-diff ⇒ git status --short; acus diff -p HEAD crates/acus-search crates/acus-walk crates/acus-edit crates/acus-cli/src/cmd_show.rs crates/acus-cli/src/cmd_find.rs crates/acus-cli/src/cmd_skill.rs
+0032 rewrite git-diff ⇒ acus diff -p HEAD crates/acus-search/src/lib.rs crates/acus-cli/src/cmd_find.rs crates/acus-cli/src/cmd_ctx.rs crates/acus-cli/src/main.rs skill CHANGELOG.md
+0033 hint git-diff ⇒
+0034 rewrite git-diff ⇒ acus diff -p HEAD~3..HEAD crates/acus-search/src/lib.rs crates/acus-walk/src/lib.rs
+0035 hint git-diff ⇒
+0036 hint git-status ⇒
+0037 hint tree ⇒
+0038 hint tree ⇒
+0039 rewrite build-pipe ⇒ acus ctx 'cargo check -q --workspace --all-targets' --tail 5; echo "check_exit=${pipestatus[1]:-$?}"
+0040 rewrite build-pipe ⇒ acus diff --stat 2>&1 | tail -5; acus ctx 'cargo build -p acus-cli -q' --tail 20; echo "exit=$?"; ls -la target/debug/acus; target/debug/acus patch --help 2>&1 | grep -n -i -E 'search|hunk|@@' | head -20
+0041 rewrite build-pipe ⇒ acus ctx 'cargo test -p acus-edit' --tail 15; echo "exit=$?"; acus ctx 'cargo clippy -p acus-edit --all-targets -- -D warnings' --tail 30; echo "clippy exit=$?"
+0042 rewrite build-pipe ⇒ cd /repo && acus ctx 'INSTA_UPDATE=no cargo test -p acus-cli --test cli -- oneline_and_stat find_files_points' --grep '^test |test result'; echo "exit $?"
+0043 rewrite build-pipe ⇒ rm -rf /tmp/acus-head && git worktree add --detach /tmp/acus-head HEAD >/dev/null 2>&1 && cd /tmp/acus-head && acus ctx 'CARGO_TARGET_DIR=/tmp/acus-head-target cargo build -q' --tail 3; ls /tmp/acus-head-target/debug/acus
+0044 rewrite build-pipe ⇒ acus ctx 'INSTA_UPDATE=always cargo test -p acus-cli --all-features --test cli patch_diff_prints' --tail 5; echo "exit $?"; acus show crates/acus-cli/tests/snapshots/cli__patch_diff.snap
+0045 rewrite build-pipe ⇒ acus ctx 'cargo test -p acus-edit -p acus-cli --all-features -- indent exact_search_wins' --grep '^test |test result' ; ls crates/acus-cli/tests/snapshots | grep -c '\.snap\.new$'
+0046 rewrite ctx-pipe ⇒ cd /repo && acus ctx 'cargo test -p acus-search -p acus-cli' --tail 80
+0047 rewrite ctx-pipe ⇒ cd /repo && acus ctx 'cargo clippy --workspace --all-targets -- -D warnings' --tail 60
+0048 pass - ⇒
+0049 rewrite grep ⇒ cd /repo && acus run <<'EOF'\nfind 'lines|split' -g 'parse.rs' crates/acus-edit/src --block\nEOF\nacus find "lines\\(\\)|split\\('\\\\\\\\n'\\)|\\\\\\\\r" '/repo/crates/acus-edit/src/parse.rs' --max-hits 20
+0050 rewrite grep ⇒ cp crates/acus-edit/src/apply.rs /tmp/acus-apply-orig.rs && acus find 'pub enum Op' 'crates/acus-edit/src/lib.rs' -A 3 | head -5; ls crates/acus-edit/src/
+0051 pass - ⇒
+0052 rewrite grep ⇒ cd /repo/crates/acus-cli && grep -n 'libc\|nix\|^\[' Cargo.toml; acus show src/cmd_ctx/mod.rs:186-202; acus find 'timeout|ctx' 'src/config.rs' --max-hits 10
+0053 rewrite grep ⇒ cd /repo/crates/acus-edit/src && acus find 'fn take_contents|fn occurrences|fn search_block' --block; git show main:crates/acus-edit/src/apply.rs > /tmp/old_apply.rs; acus find 'fn take_contents|fn occurrences|fn search_block' '/tmp/old_apply.rs'
+0054 rewrite acus-pipe ⇒ acus diff -p crates/acus-cli/src/cmd_guard.rs --head 700; acus show 'CHANGELOG.md:1-40'
+0055 rewrite read-shell ⇒ wc -w skill/CORE.md; acus show 'skill/CORE.md'; acus find 'skill' crates/acus-cli/src --glob '!cmd_skill.rs' -l
+0056 rewrite acus-pipe ⇒ acus help ctx; acus find 'Command::new|sh.*-c|shell' crates/acus-cli/src/cmd_ctx.rs --head 30; acus show 'CHANGELOG.md:1-30'; git status --short
+0057 rewrite read-shell ⇒ acus show 'crates/acus-cli/src/cmd_guard.rs:276-292'; acus find 'fn path|ACUS_|env::var' crates/acus-cli/src/config.rs --head 10; cd /tmp/gw && printf 'a\nb\nc\n' > f.txt; acus show f.txt:2-99; echo "rc=$?"; acus show f.txt:-2; echo "rc=$?"; acus show f.txt:2-; echo rc=$?; which acus; acus --version
+0058 rewrite read-shell ⇒ ls -a; ls skill; acus show crates/acus-cli/src/main.rs Cargo.toml; acus show 'AGENTS.md:1-150' 2>/dev/null
+0059 rewrite read-shell ⇒ acus show 'CHANGELOG.md:15-22'; acus show crates/acus-cli/tests/cli.rs:12-80 crates/acus-cli/tests/cli.rs:204-246
+0060 rewrite read-shell ⇒ cd /repo/crates/acus-cli/src/guard && acus show 'shell.rs:1-130'; git status --short | head
+0061 rewrite read-shell ⇒ cd /repo/crates/acus-cli/src/guard && acus show 'search.rs' 'read.rs' 'rewrite.rs'
+0062 rewrite read-shell ⇒ cd /repo/crates/acus-cli && acus show 'src/cmd_files.rs:1-120'; acus show src/guard/tests/rewrite.rs src/guard/tests/conversions.rs src/guard/tests/tools.rs
+0063 rewrite read-shell ⇒ cd /repo/crates/acus-cli/src && acus show 'cmd_show.rs:95-200'; acus show 'cmd_ctx/mod.rs:85-230'
+0064 rewrite read-shell ⇒ cd /repo/crates/acus-cli/src && acus show 'cmd_files.rs'; git diff HEAD~3..HEAD -- cmd_find.rs | head -400
+0065 pass - ⇒
+0066 rewrite read-shell ⇒ acus show 'AGENTS.md:1-60'; git checkout -b guard-captured-output main 2>&1 | tail -1; ls crates/acus-cli/src/guard crates/acus-cli/src/guard/tests; wc -l crates/acus-cli/src/guard/*.rs; cat ~/.claude/jobs/session/tmp/replay2.sh
+0067 deny grep ⇒
+0068 rewrite read-shell ⇒ cd /repo/crates/acus-cli/src/guard/tests && acus run <<'EOF'\nshow mod.rs\nshow bash.rs:1-40\nEOF\nacus show 'bash.rs:-20'
+0069 pass - ⇒
+0070 pass - ⇒
+0071 pass - ⇒
+0072 pass - ⇒
+0073 pass - ⇒
+0074 rewrite read-shell ⇒ { echo; grep x a.rs; } > b; acus show 'a.md'
+0075 rewrite read-shell ⇒ { echo; head -3 a.md; } > b; acus show 'a.md:-3'
+0076 hint read-shell ⇒
+0077 pass - ⇒
+0078 pass - ⇒
+0079 rewrite read-shell ⇒ x=$(cat a.md); acus show 'a.md'
+0080 pass - ⇒
+0081 pass - ⇒
+0082 rewrite read-shell ⇒ acus show 'a.md' 2>/dev/null
+0083 rewrite read-shell ⇒ acus show 'a.md' && acus find 'x' 'a.rs' || echo none
+0084 rewrite read-shell ⇒ false && acus show 'a.md'
+0085 rewrite grep ⇒ acus find 'x' 'a.rs' || true
+0086 rewrite build-pipe ⇒ acus ctx 'cargo test' --tail 5; echo $?
+0087 pass - ⇒
+0088 rewrite grep ⇒ acus find "it's" 'a.rs' -F
+0089 rewrite read-shell ⇒ acus show 'my notes.md'
+0090 rewrite grep ⇒ acus find 'fn main' src/*.rs
+0091 pass - ⇒
+0092 hint edit-script ⇒
+0093 deny sed-i ⇒
+0094 rewrite read-shell ⇒ acus show 'src/lib.rs:1-20'
+0095 rewrite read-shell ⇒ acus show 'src/lib.rs:1-40'
+0096 escape grep ⇒
+0097 escape read-shell ⇒
+0098 pass - ⇒
+0099 pass - ⇒
+0100 rewrite git-diff ⇒ acus diff -p HEAD~1 src/lib.rs
+0101 pass - ⇒
+0102 rewrite build-pipe ⇒ acus ctx 'cargo test' --tail 20
+0103 rewrite ctx-pipe ⇒ acus ctx 'cargo test' --tail 5
+0104 pass - ⇒
+0105 pass - ⇒
+0106 pass - ⇒
+0107 pass - ⇒
+0108 pass - ⇒
+0109 pass - ⇒
+0110 escape build-pipe ⇒
+0111 rewrite git-diff ⇒ acus diff HEAD~1
+0112 rewrite git-diff ⇒ acus diff --staged -p HEAD src/lib.rs
+0113 hint git-diff ⇒
+0114 hint git-diff ⇒
+0115 hint git-diff ⇒
+0116 hint git-diff ⇒
+0117 rewrite build-pipe ⇒ acus ctx 'cargo test' --tail 5; echo "exit=$?"
+0118 rewrite build-pipe ⇒ acus ctx 'cargo test' --grep 'ok|FAILED'; echo "exit $?"
+0119 rewrite build-pipe ⇒ acus ctx 'cargo test' --tail 5 && echo "exit=${PIPESTATUS[0]}"
+0120 hint read-shell ⇒
+0121 pass - ⇒
+0122 pass - ⇒
+0123 pass - ⇒
+0124 pass - ⇒
+0125 pass - ⇒
+0126 rewrite read-shell ⇒ x=${(f)"$(cat Cargo.toml)"}; acus show 'src/main.rs'
+0127 hint read-shell ⇒
+0128 rewrite read-shell ⇒ [[ -f src/lib.rs && $x == b* ]] && acus show 'src/lib.rs'
+0129 deny build-pipe ⇒
+0130 deny grep ⇒
+0131 pass - ⇒
+0132 pass - ⇒
+0133 pass - ⇒
+0134 hint read-shell ⇒
+0135 rewrite grep ⇒ typeset -A m; m=(a 1 b 2); print ${(k)m}; acus find 'foo' 'src/lib.rs'
+0136 rewrite read-shell ⇒ echo ${${(f)"$(cat Cargo.toml)"}[1]}; acus show 'src/main.rs:1-3'
+0137 deny read-shell ⇒
+0138 pass - ⇒
+0139 pass - ⇒
+0140 rewrite read-shell ⇒ print ${(j:,:)${(f)"$(ls)"}} > list.txt; acus show 'src/lib.rs'
+0141 deny read-shell ⇒
+0142 pass - ⇒
+0143 deny grep ⇒
+0144 deny read-shell ⇒
+0145 deny read-shell ⇒
+0146 pass - ⇒
+0147 pass - ⇒
+0148 hint tree ⇒
+0149 deny build-pipe ⇒
+0150 deny build-pipe ⇒
+0151 deny ps-replace ⇒
+0152 pass - ⇒
+0153 pass - ⇒
+0154 hint tree ⇒
+0155 deny read-shell ⇒
+0156 hint read-shell ⇒
+0157 pass - ⇒
+0158 pass - ⇒
+0159 deny grep ⇒
+0160 escape read-shell ⇒
+0161 rewrite read-shell ⇒ acus show 'a.rs:1-5'
+0162 deny read-shell ⇒
+0163 rewrite acus-pipe ⇒ acus show a.rs --head 20
+0164 pass - ⇒
+0165 pass - ⇒
+0166 rewrite task-log ⇒ acus ctx --log '/private/tmp/agent/proj/tasks/b7k2p9.output'
+0167 rewrite task-log ⇒ acus ctx --log '/private/tmp/agent/proj/tasks/b7k2p9.output' --tail 40
+0168 rewrite task-log ⇒ acus ctx --log '/private/tmp/agent/proj/tasks/b7k2p9.output' --grep 'error'
+0169 pass - ⇒
+0170 rewrite build-pipe ⇒ acus ctx 'cargo test' --timeout 300 --tail 30
+0171 pass - ⇒
+0172 rewrite build-pipe ⇒ acus ctx 'gh run view 123 --log-failed' --grep 'error' --tail 20
+0173 deny sed-i ⇒
+0174 deny sed-i ⇒
+0175 deny sed-i ⇒
+0176 rewrite grep ⇒ acus find 'foo' '.' -g '!target' -g '!node_modules'
+0177 rewrite build-pipe ⇒ acus ctx 'cargo test' --grep '<T>' --tail 5
+0178 rewrite grep ⇒ acus find 'foo' '.' -i
+0179 hint grep ⇒
+0180 pass - ⇒
+0181 pass - ⇒
+0182 pass - ⇒
+0183 rewrite ctx-pipe ⇒ acus ctx 'cargo test' --tail 30

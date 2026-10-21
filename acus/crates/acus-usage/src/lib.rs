@@ -1,0 +1,474 @@
+// SPDX-License-Identifier: MPL-2.0
+//! Token and tool-call analytics over Claude Code (`~/.claude/projects`) and Codex
+//! (`~/.codex/sessions`) JSONL transcripts.
+
+mod claude;
+mod codex;
+mod tools;
+
+pub use tools::group;
+
+use acus_walk::{WalkOpts, walk};
+use serde::Serialize;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
+
+/// Reports why a usage report could not be built.
+#[derive(Debug, thiserror::Error)]
+pub enum UsageError {
+    /// A transcript directory cannot be walked.
+    #[error(transparent)]
+    Walk(#[from] acus_walk::WalkError),
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct UsageOpts {
+    /// Defaults to `$CLAUDE_CONFIG_DIR/projects` or `~/.claude/projects`.
+    pub claude_root: Option<PathBuf>,
+    /// Defaults to `$CODEX_HOME/sessions` or `~/.codex/sessions`.
+    pub codex_root: Option<PathBuf>,
+    /// Only transcripts modified within this many days.
+    pub days: Option<u64>,
+    /// Case-insensitive substring of the session's working directory.
+    pub project: Option<String>,
+}
+
+/// Relative cost in input-token equivalents (Anthropic list-price ratios):
+/// cache read 0.1x, 5-minute cache write 1.25x, 1-hour cache write 2x, output 5x.
+pub const WEIGHTS: [(&str, f64); 5] = [
+    ("input", 1.0),
+    ("cache_read", 0.1),
+    ("cache_write_5m", 1.25),
+    ("cache_write_1h", 2.0),
+    ("output", 5.0),
+];
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Tokens {
+    pub input: u64,
+    pub cache_read: u64,
+    pub cache_write_5m: u64,
+    pub cache_write_1h: u64,
+    pub output: u64,
+    pub requests: u64,
+}
+
+impl Tokens {
+    pub fn classes(&self) -> [u64; 5] {
+        [
+            self.input,
+            self.cache_read,
+            self.cache_write_5m,
+            self.cache_write_1h,
+            self.output,
+        ]
+    }
+
+    pub fn weighted(&self) -> f64 {
+        self.classes()
+            .iter()
+            .zip(WEIGHTS)
+            .map(|(n, (_, w))| *n as f64 * w)
+            .sum()
+    }
+
+    /// Tokens the model had to look at for this request.
+    pub fn context(&self) -> u64 {
+        self.input + self.cache_read + self.cache_write_5m + self.cache_write_1h
+    }
+
+    fn add(&mut self, o: &Tokens) {
+        self.input += o.input;
+        self.cache_read += o.cache_read;
+        self.cache_write_5m += o.cache_write_5m;
+        self.cache_write_1h += o.cache_write_1h;
+        self.output += o.output;
+        self.requests += o.requests;
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Session {
+    pub agent: &'static str,
+    pub project: String,
+    pub id: String,
+    pub model: String,
+    pub tokens: Tokens,
+    pub weighted: f64,
+    pub max_context: u64,
+    pub compactions: u32,
+    pub prompts: u64,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct ToolStat {
+    pub name: String,
+    pub calls: u64,
+    pub input_chars: u64,
+    pub result_chars: u64,
+}
+
+/// Runs of ≥3 consecutive search/read tool calls.
+#[derive(Debug, Default, Serialize)]
+pub struct Chains {
+    pub count: u64,
+    pub calls_in_chains: u64,
+    pub tool_calls: u64,
+    pub longest: u64,
+}
+
+/// One row of `acus usage --agents`: every transcript is one spawn of a role
+/// (`main` for top-level sessions, the subagent type otherwise).
+#[derive(Debug, Default, Serialize)]
+pub struct AgentStat {
+    pub role: String,
+    pub spawns: u64,
+    pub models: Vec<String>,
+    pub median_requests: f64,
+    /// Median of input + cache read + cache write of each spawn's first request.
+    pub median_first_context: f64,
+    pub weighted: f64,
+    pub share: f64,
+    pub median_weighted: f64,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct Report {
+    pub total: Tokens,
+    pub weighted: f64,
+    pub prompts: u64,
+    /// Requests' context size percentiles: p50, p90, p99.
+    pub context: [u64; 3],
+    pub models: Vec<(String, Tokens)>,
+    pub sessions: Vec<Session>,
+    pub tools: Vec<ToolStat>,
+    pub chains: Chains,
+    pub agents: Vec<AgentStat>,
+    /// Tool-call categories → calls per agent `[claude, codex]`.
+    #[serde(skip)]
+    pub categories: BTreeMap<&'static str, [u64; 2]>,
+}
+
+/// What one transcript file contributes.
+#[derive(Default)]
+pub(crate) struct FileStats {
+    pub agent: &'static str,
+    pub session: String,
+    pub cwd: String,
+    /// Subagent type (`main` for top-level sessions); empty until resolved.
+    pub role: String,
+    pub is_subagent: bool,
+    /// Parent tool call that spawned this subagent (from the meta file).
+    pub spawn_id: Option<String>,
+    /// (tool_use id, subagent_type) of Agent calls made in this file.
+    pub spawns: Vec<(String, String)>,
+    /// (dedup id, model, tokens of one request)
+    pub requests: Vec<(Option<String>, String, Tokens)>,
+    pub compactions: u32,
+    pub prompts: u64,
+    /// (tool name, input chars, is search/read)
+    pub calls: Vec<(String, u64, bool)>,
+    pub results: HashMap<String, u64>,
+    /// Category hits per tool call, see `tools::classify`.
+    pub categories: Vec<&'static str>,
+}
+
+/// Shell commands whose first real step only searches or reads (`cd x && rg …` counts).
+pub(crate) fn is_explore_cmd(cmd: &str) -> bool {
+    for part in cmd.split(['&', ';', '|', '\n']) {
+        let first = part.split_whitespace().next().unwrap_or("");
+        match first.rsplit('/').next().unwrap_or(first) {
+            "" | "cd" | "pwd" | "echo" | "printf" | "set" => continue,
+            "grep" | "rg" | "sed" | "cat" | "head" | "tail" | "find" | "fd" | "ls" | "wc"
+            | "acus" | "tree" | "nl" => return true,
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn default_root(env: &str, home_sub: &str, sub: &str) -> Option<PathBuf> {
+    std::env::var_os(env)
+        .map(|d| PathBuf::from(d).join(sub))
+        .or_else(|| std::env::home_dir().map(|h| h.join(home_sub).join(sub)))
+}
+
+pub fn report(o: &UsageOpts) -> Result<Report, UsageError> {
+    let claude = o
+        .claude_root
+        .clone()
+        .or_else(|| default_root("CLAUDE_CONFIG_DIR", ".claude", "projects"));
+    let codex = o
+        .codex_root
+        .clone()
+        .or_else(|| default_root("CODEX_HOME", ".codex", "sessions"));
+    let cutoff = o
+        .days
+        .map(|d| SystemTime::now() - Duration::from_secs(d * 86_400));
+    let files = Mutex::new(Vec::new());
+    for (root, agent) in [(claude, "claude"), (codex, "codex")] {
+        let Some(root) = root.filter(|r| r.is_dir()) else {
+            continue;
+        };
+        let opts = WalkOpts {
+            roots: vec![root.clone()],
+            include: vec!["*.jsonl".into()],
+            hidden: true,
+            ..Default::default()
+        };
+        walk(&opts, |p| {
+            if cutoff.is_some_and(|c| p.metadata().and_then(|m| m.modified()).is_ok_and(|m| m < c))
+            {
+                return;
+            }
+            // ponytail: unreadable or foreign files are skipped; transcripts are best-effort data.
+            let Ok(text) = std::fs::read_to_string(p) else {
+                return;
+            };
+            let mut st = if agent == "claude" {
+                claude::parse(&text)
+            } else {
+                codex::parse(&text)
+            };
+            st.agent = agent;
+            st.session = session_id(&root, p, agent);
+            st.is_subagent = agent == "claude"
+                && p.parent()
+                    .and_then(|d| d.file_name())
+                    .is_some_and(|n| n == "subagents");
+            if st.is_subagent {
+                let meta: serde_json::Value =
+                    std::fs::read_to_string(p.with_extension("meta.json"))
+                        .ok()
+                        .and_then(|s| serde_json::from_str(&s).ok())
+                        .unwrap_or_default();
+                st.role = meta["agentType"].as_str().unwrap_or_default().to_owned();
+                st.spawn_id = meta["toolUseId"].as_str().map(str::to_owned);
+            } else {
+                st.role = "main".into();
+            }
+            files
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(st);
+        })?;
+    }
+    let mut files = files
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(q) = &o.project {
+        let q = q.to_lowercase();
+        files.retain(|f| f.cwd.to_lowercase().contains(&q));
+    }
+    files.sort_by(|a, b| a.session.cmp(&b.session));
+    // Subagents without an `agentType` take the type of the parent's Agent call.
+    let spawned: HashMap<String, String> = files
+        .iter()
+        .flat_map(|f| f.spawns.iter().cloned())
+        .collect();
+    for f in files.iter_mut().filter(|f| f.role.is_empty()) {
+        f.role = f
+            .spawn_id
+            .as_ref()
+            .and_then(|id| spawned.get(id))
+            .cloned()
+            .unwrap_or_else(|| "subagent".into());
+    }
+    Ok(merge(files))
+}
+
+/// Claude: `<project>/<session>.jsonl` and `<project>/<session>/subagents/*.jsonl`
+/// share one session; Codex: one rollout file per session.
+fn session_id(root: &Path, p: &Path, agent: &str) -> String {
+    let rel = p.strip_prefix(root).unwrap_or(p);
+    let part = if agent == "claude" {
+        rel.iter().nth(1)
+    } else {
+        rel.file_name()
+    };
+    let s = part.map(|s| s.to_string_lossy()).unwrap_or_default();
+    let s = s.trim_end_matches(".jsonl");
+    // `rollout-<timestamp>-<uuid>`: keep the uuid.
+    s.get(s.len().saturating_sub(36)..).unwrap_or(s).to_owned()
+}
+
+/// The 50th, 90th and 99th percentile of `values`, or 0 for each when there are none.
+fn quantiles(mut values: Vec<u64>) -> [u64; 3] {
+    values.sort_unstable();
+    [0.5, 0.9, 0.99].map(|q| {
+        values
+            .get((values.len() as f64 * q) as usize)
+            .copied()
+            .unwrap_or(0)
+    })
+}
+
+fn merge(files: Vec<FileStats>) -> Report {
+    let mut r = Report::default();
+    let mut seen = HashSet::new();
+    let mut sessions: HashMap<(&'static str, String), Session> = HashMap::new();
+    let mut models: HashMap<String, Tokens> = HashMap::new();
+    let mut tools: HashMap<String, ToolStat> = HashMap::new();
+    let mut contexts = Vec::new();
+    let mut roles: HashMap<String, Vec<Spawn>> = HashMap::new();
+    for f in files {
+        let project = Path::new(&f.cwd)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let s = sessions
+            .entry((f.agent, f.session.clone()))
+            .or_insert_with(|| Session {
+                agent: f.agent,
+                project: project.clone(),
+                id: f.session.clone(),
+                model: String::new(),
+                tokens: Tokens::default(),
+                weighted: 0.0,
+                max_context: 0,
+                compactions: 0,
+                prompts: 0,
+            });
+        if s.project.is_empty() {
+            s.project = project;
+        }
+        for c in &f.categories {
+            r.categories.entry(c).or_default()[usize::from(f.agent == "codex")] += 1;
+        }
+        let mut spawn = Spawn::default();
+        for (id, model, t) in f.requests {
+            if id.is_some_and(|id| !seen.insert(id)) {
+                continue;
+            }
+            spawn.add(&model, &t);
+            s.tokens.add(&t);
+            s.max_context = s.max_context.max(t.context());
+            contexts.push(t.context());
+            models.entry(model.clone()).or_default().add(&t);
+            r.total.add(&t);
+            if s.model.is_empty() || s.model == "<synthetic>" {
+                s.model = model;
+            }
+        }
+        s.compactions += f.compactions;
+        if spawn.requests > 0 {
+            roles.entry(f.role.clone()).or_default().push(spawn);
+        }
+        s.prompts += f.prompts;
+        r.prompts += f.prompts;
+        let mut run = 0u64;
+        for (name, input, explore) in &f.calls {
+            let t = tools.entry(name.clone()).or_insert_with(|| ToolStat {
+                name: name.clone(),
+                ..Default::default()
+            });
+            t.calls += 1;
+            t.input_chars += input;
+            r.chains.tool_calls += 1;
+            if *explore {
+                run += 1;
+            } else {
+                close_chain(&mut r.chains, &mut run);
+            }
+        }
+        close_chain(&mut r.chains, &mut run);
+        for (name, chars) in f.results {
+            tools
+                .entry(name.clone())
+                .or_insert_with(|| ToolStat {
+                    name,
+                    ..Default::default()
+                })
+                .result_chars += chars;
+        }
+    }
+    r.weighted = r.total.weighted();
+    r.context = quantiles(contexts);
+    r.sessions = sessions
+        .into_values()
+        .filter(|s| s.tokens.requests > 0 || s.prompts > 0)
+        .collect();
+    for s in &mut r.sessions {
+        s.weighted = s.tokens.weighted();
+    }
+    r.sessions
+        .sort_by(|a, b| b.weighted.total_cmp(&a.weighted).then(a.id.cmp(&b.id)));
+    r.models = models.into_iter().collect();
+    r.models
+        .sort_by(|a, b| b.1.weighted().total_cmp(&a.1.weighted()));
+    r.tools = tools.into_values().collect();
+    r.agents = agent_stats(roles, r.weighted);
+    r.tools
+        .sort_by(|a, b| b.calls.cmp(&a.calls).then(a.name.cmp(&b.name)));
+    r
+}
+
+/// One transcript's requests after dedup.
+#[derive(Default)]
+struct Spawn {
+    requests: u64,
+    first_context: u64,
+    weighted: f64,
+    models: HashMap<String, u64>,
+}
+
+impl Spawn {
+    fn add(&mut self, model: &str, t: &Tokens) {
+        if self.requests == 0 {
+            self.first_context = t.context();
+        }
+        self.requests += 1;
+        self.weighted += t.weighted();
+        if !model.is_empty() && model != "<synthetic>" {
+            *self.models.entry(model.to_owned()).or_default() += 1;
+        }
+    }
+}
+
+fn median(mut v: Vec<f64>) -> f64 {
+    v.sort_by(f64::total_cmp);
+    match v.len() {
+        0 => 0.0,
+        n if n % 2 == 1 => v[n / 2],
+        n => (v[n / 2 - 1] + v[n / 2]) / 2.0,
+    }
+}
+
+fn agent_stats(roles: HashMap<String, Vec<Spawn>>, total: f64) -> Vec<AgentStat> {
+    let mut out: Vec<AgentStat> = roles
+        .into_iter()
+        .map(|(role, spawns)| {
+            let col = |f: fn(&Spawn) -> f64| median(spawns.iter().map(f).collect());
+            let mut models: HashMap<&str, u64> = HashMap::new();
+            for (m, n) in spawns.iter().flat_map(|s| &s.models) {
+                *models.entry(m).or_default() += n;
+            }
+            let mut models: Vec<_> = models.into_iter().collect();
+            models.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+            let weighted = spawns.iter().map(|s| s.weighted).sum::<f64>();
+            AgentStat {
+                spawns: spawns.len() as u64,
+                models: models.into_iter().map(|(m, _)| m.to_owned()).collect(),
+                median_requests: col(|s| s.requests as f64),
+                median_first_context: col(|s| s.first_context as f64),
+                weighted,
+                share: weighted / total.max(1.0),
+                median_weighted: col(|s| s.weighted),
+                role,
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| b.weighted.total_cmp(&a.weighted).then(a.role.cmp(&b.role)));
+    out
+}
+
+fn close_chain(c: &mut Chains, run: &mut u64) {
+    if *run >= 3 {
+        c.count += 1;
+        c.calls_in_chains += *run;
+        c.longest = c.longest.max(*run);
+    }
+    *run = 0;
+}

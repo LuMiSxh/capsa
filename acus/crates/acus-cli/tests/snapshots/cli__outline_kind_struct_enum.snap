@@ -1,0 +1,6 @@
+---
+source: crates/acus-cli/tests/cli.rs
+expression: "acus(&[\"outline\", \"src/lib.rs\", \"--kind\", \"struct,enum\"]).1"
+---
+src/lib.rs rust 17
+struct Parser 1-3

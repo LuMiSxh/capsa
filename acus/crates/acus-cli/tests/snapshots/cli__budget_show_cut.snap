@@ -1,0 +1,8 @@
+---
+source: crates/acus-cli/tests/cli/budget.rs
+assertion_line: 27
+expression: out
+---
+== a.rs 1-2
+1	fn f… (+6 chars)
+2	fn f… (+6 chars)

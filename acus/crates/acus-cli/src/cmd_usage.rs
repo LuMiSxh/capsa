@@ -1,0 +1,302 @@
+// SPDX-License-Identifier: MPL-2.0
+//! `acus usage`: token, cost and tool-call statistics from agent transcripts.
+
+use crate::config::Config;
+use crate::fmt::Out;
+use acus_usage::{AgentStat, Report, UsageOpts, WEIGHTS, group, report};
+use anyhow::Result;
+use capsa_core::exit::Outcome;
+use capsa_core::format::Format;
+use std::path::PathBuf;
+
+#[derive(clap::Args)]
+pub struct Args {
+    /// Only transcripts modified in the last N days.
+    #[arg(long)]
+    days: Option<u64>,
+    /// Only sessions whose working directory contains this text.
+    #[arg(long)]
+    project: Option<String>,
+    /// Rows per table.
+    #[arg(long, default_value_t = 10)]
+    top: usize,
+    /// Claude Code projects dir (default ~/.claude/projects).
+    #[arg(long, value_parser = crate::home::<PathBuf>)]
+    claude_dir: Option<PathBuf>,
+    /// Codex sessions dir (default ~/.codex/sessions).
+    #[arg(long, value_parser = crate::home::<PathBuf>)]
+    codex_dir: Option<PathBuf>,
+    /// Count how agents search, read, edit and build (acus vs grep, sed, python, built-in tools).
+    #[arg(long)]
+    tools: bool,
+    /// Count `acus guard` decisions per rule and list the calls run through its escape.
+    #[arg(long)]
+    guard: bool,
+    /// One row per role (main, worker, worker-lite, ...): spawns, models, requests, preamble size and cost per spawn.
+    #[arg(long)]
+    agents: bool,
+}
+
+/// 1234567 → "1.2M".
+fn k(n: f64) -> String {
+    match n {
+        n if n >= 1e9 => format!("{:.1}G", n / 1e9),
+        n if n >= 1e6 => format!("{:.1}M", n / 1e6),
+        n if n >= 1e3 => format!("{:.0}k", n / 1e3),
+        n => format!("{n:.0}"),
+    }
+}
+
+pub fn run(a: Args, out: &Out, cfg: &Config) -> Result<Outcome> {
+    if a.guard {
+        return guard(&a, out, cfg);
+    }
+    let r = report(&UsageOpts {
+        claude_root: a.claude_dir,
+        codex_root: a.codex_dir,
+        days: a.days,
+        project: a.project,
+    })?;
+    if r.sessions.is_empty() {
+        return Ok(Outcome::Empty);
+    }
+    if a.tools {
+        return tools(&r, out);
+    }
+    if a.agents {
+        return agents(&r.agents, out);
+    }
+    if out.format == Format::Json {
+        println!("{}", serde_json::to_string(&r)?);
+        return Ok(Outcome::Found);
+    }
+    print_summary(&r, out, a.top);
+    Ok(Outcome::Found)
+}
+
+/// The human-readable report: totals, cost share, context, then the top models, sessions and tools.
+fn print_summary(r: &Report, out: &Out, top: usize) {
+    let w = r.weighted.max(1.0);
+    let pct = |x: f64| format!("{:.1}%", 100.0 * x / w);
+    println!(
+        "usage: {} sessions, {} requests, {} prompts ({:.1} req/prompt), {} weighted input-token equivalents",
+        r.sessions.len(),
+        r.total.requests,
+        r.prompts,
+        r.total.requests as f64 / r.prompts.max(1) as f64,
+        k(r.weighted)
+    );
+    let mut share: Vec<_> = r
+        .total
+        .classes()
+        .into_iter()
+        .zip(WEIGHTS)
+        .map(|(n, (name, wt))| (name, n as f64 * wt))
+        .collect();
+    share.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let share: Vec<_> = share
+        .iter()
+        .map(|(n, x)| format!("{n} {}", pct(*x)))
+        .collect();
+    println!("cost share: {}", share.join(", "));
+    println!(
+        "context per request: p50 {} p90 {} p99 {}",
+        k(r.context[0] as f64),
+        k(r.context[1] as f64),
+        k(r.context[2] as f64)
+    );
+    println!("{}", out.header("models"));
+    for (m, t) in r.models.iter().take(top) {
+        println!(
+            "  {m} reqs={} w={} ({})",
+            t.requests,
+            k(t.weighted()),
+            pct(t.weighted())
+        );
+    }
+    println!("{}", out.header("sessions"));
+    for s in r.sessions.iter().take(top) {
+        println!(
+            "  {} {} {} reqs={} w={} ({}) maxctx={} compact={} {}",
+            s.agent,
+            if s.project.is_empty() {
+                "?"
+            } else {
+                &s.project
+            },
+            &s.id[..s.id.len().min(8)],
+            s.tokens.requests,
+            k(s.weighted),
+            pct(s.weighted),
+            k(s.max_context as f64),
+            s.compactions,
+            s.model
+        );
+    }
+    println!("{}", out.header("tools (calls, input chars, result chars)"));
+    for t in r.tools.iter().take(top) {
+        println!(
+            "  {} {} in={} out={}",
+            t.name,
+            t.calls,
+            k(t.input_chars as f64),
+            k(t.result_chars as f64)
+        );
+    }
+    let c = &r.chains;
+    println!(
+        "search/read chains (>=3 in a row): {} chains, {:.0}% of {} tool calls, longest {}",
+        c.count,
+        100.0 * c.calls_in_chains as f64 / c.tool_calls.max(1) as f64,
+        c.tool_calls,
+        c.longest
+    );
+    let hidden = r.sessions.len().saturating_sub(top);
+    if hidden > 0 {
+        println!("… {hidden} more sessions (raise --top or filter with --project/--days)");
+    }
+}
+
+/// Reads the guard log: per rule how often it refused, hinted or was escaped. Escaped calls
+/// are listed, since they point at refusals acus could not replace.
+fn guard(a: &Args, out: &Out, cfg: &Config) -> Result<Outcome> {
+    use acus_guard::log::LogEntry;
+    let path = crate::cmd_guard::guard_config(cfg).log_path;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let since = a.days.map_or(0, |d| now.saturating_sub(d * 86_400));
+    let entries: Vec<LogEntry> = [path.with_extension("jsonl.old"), path.clone()]
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .flat_map(|s| {
+            s.lines()
+                .filter_map(|l| serde_json::from_str(l).ok())
+                .collect::<Vec<_>>()
+        })
+        .filter(|e: &LogEntry| e.ts >= since)
+        .filter(|e| {
+            a.project
+                .as_ref()
+                .is_none_or(|p| e.cwd.as_deref().unwrap_or_default().contains(p.as_str()))
+        })
+        .collect();
+    if entries.is_empty() {
+        eprintln!(
+            "no guard decisions in {}\nhint: add the acus guard PreToolUse hook (acus self skill --install --hooks)",
+            path.display()
+        );
+        return Ok(Outcome::Empty);
+    }
+    let mut rules: std::collections::BTreeMap<&str, [u64; 4]> = Default::default();
+    for e in &entries {
+        let slot = match e.kind.as_str() {
+            "deny" => 0,
+            "hint" => 1,
+            "rewrite" => 3,
+            _ => 2,
+        };
+        rules.entry(e.rule.as_str()).or_default()[slot] += 1;
+    }
+    let escaped: Vec<&LogEntry> = entries
+        .iter()
+        .filter(|e| e.kind == "escape")
+        .rev()
+        .take(a.top)
+        .collect();
+    if out.format == Format::Json {
+        let v: Vec<_> = rules
+            .iter()
+            .map(
+                |(r, n)| serde_json::json!({"rule": r, "deny": n[0], "hint": n[1], "escape": n[2], "rewrite": n[3]}),
+            )
+            .collect();
+        println!("{}", serde_json::json!({"rules": v, "escaped": escaped}));
+        return Ok(Outcome::Found);
+    }
+    println!("guard: {} decisions ({})", entries.len(), path.display());
+    println!("{}", out.header("rule deny hint escape rewrite"));
+    for (r, n) in &rules {
+        println!("  {r} {} {} {} {}", n[0], n[1], n[2], n[3]);
+    }
+    if !escaped.is_empty() {
+        println!("{}", out.header("latest escaped calls"));
+        for e in escaped {
+            println!("  {} {}", e.rule, e.call.replace('\n', "⏎"));
+        }
+    }
+    Ok(Outcome::Found)
+}
+
+/// Codex transcripts carry no roles and count under `main`.
+fn agents(rows: &[AgentStat], out: &Out) -> Result<Outcome> {
+    if out.format == Format::Json {
+        println!("{}", serde_json::to_string(rows)?);
+        return Ok(Outcome::Found);
+    }
+    println!(
+        "{}",
+        out.header(
+            "role spawns models median-reqs median-first-ctx weighted share median-weighted/spawn"
+        )
+    );
+    for a in rows {
+        println!(
+            "  {} {} {} {:.0} {} {} {:.1}% {}",
+            a.role,
+            a.spawns,
+            a.models.join(","),
+            a.median_requests,
+            k(a.median_first_context),
+            k(a.weighted),
+            100.0 * a.share,
+            k(a.median_weighted)
+        );
+    }
+    Ok(Outcome::Found)
+}
+
+fn tools(r: &Report, out: &Out) -> Result<Outcome> {
+    let mut rows: Vec<_> = r
+        .categories
+        .iter()
+        .map(|(c, n)| (group(c), *c, n[0], n[1]))
+        .collect();
+    rows.sort_by_key(|&(g, c, a, b)| (g, std::cmp::Reverse(a + b), c));
+    let group_total = |g| {
+        rows.iter()
+            .filter(|r| r.0 == g)
+            .map(|r| r.2 + r.3)
+            .sum::<u64>()
+            .max(1)
+    };
+    if out.format == Format::Json {
+        let v: Vec<_> = rows
+            .iter()
+            .map(|&(g, c, a, b)| {
+                serde_json::json!({
+                    "group": g, "category": c, "claude": a, "codex": b, "total": a + b,
+                    "share": (a + b) as f64 / group_total(g) as f64,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string(&v)?);
+        return Ok(Outcome::Found);
+    }
+    println!(
+        "tool usage: {} sessions; a call counts once per category it hits",
+        r.sessions.len()
+    );
+    println!(
+        "{}",
+        out.header("category claude codex total share-of-group")
+    );
+    for (g, c, a, b) in &rows {
+        println!(
+            "  {g}/{c} {a} {b} {} {:.0}%",
+            a + b,
+            100.0 * (a + b) as f64 / group_total(g) as f64
+        );
+    }
+    Ok(Outcome::Found)
+}

@@ -1,0 +1,14 @@
+---
+source: crates/acus-cli/tests/cli.rs
+expression: out
+---
+README.md
+@Demo::Usage 5-7
+7	Run the needle.
+src/lib.rs
+@Parser::parse 10-14
+11	let needle = input.len();
+12	self.pos += needle;
+17	// needle outside any symbol
+web/App.svelte
+7	<p>{greet("needle")}</p>

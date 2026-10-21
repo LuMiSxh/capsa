@@ -1,0 +1,9 @@
+---
+source: crates/acus-cli/tests/cli.rs
+expression: "acus(&[\"show\", \"src/lib.rs\", \"--max-lines\", \"3\"]).1"
+---
+== src/lib.rs 1-17
+1	pub struct Parser {
+2	    pos: usize,
+3	}
+… 14 more lines (acus show src/lib.rs:4-17)

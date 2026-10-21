@@ -1,0 +1,13 @@
+---
+source: crates/acus-cli/tests/cli.rs
+expression: out
+---
+>>> acus show src/lib.rs#new
+== src/lib.rs#Parser::new 6-8
+6	    pub fn new() -> Self {
+7	        Parser { pos: 0 }
+8	    }
+>>> acus find zzz_none
+(no results)
+>>> acus show nope.rs
+error: path not found: nope.rs

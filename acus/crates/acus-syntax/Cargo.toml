@@ -1,0 +1,50 @@
+[package]
+name = "acus-syntax"
+description = "tree-sitter outlines and addresses for acus."
+version = "0.17.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = ["lang-rust", "lang-swift", "lang-ts", "lang-python", "lang-markdown", "lang-svelte", "lang-data", "lang-shell", "lang-c", "lang-css", "lang-scss", "lang-html", "lang-xml"]
+lang-rust = ["dep:tree-sitter-rust"]
+lang-swift = ["dep:tree-sitter-swift"]
+lang-ts = ["dep:tree-sitter-typescript", "dep:tree-sitter-javascript"]
+lang-python = ["dep:tree-sitter-python"]
+lang-markdown = ["dep:tree-sitter-md"]
+lang-svelte = ["lang-ts", "dep:tree-sitter-svelte-ng"]
+lang-data = ["dep:tree-sitter-toml-ng", "dep:tree-sitter-json", "dep:tree-sitter-yaml"]
+lang-shell = ["dep:tree-sitter-bash"]
+lang-c = ["dep:tree-sitter-c"]
+lang-css = ["dep:tree-sitter-css"]
+lang-scss = ["dep:tree-sitter-scss"]
+lang-html = ["dep:tree-sitter-html"]
+lang-xml = ["dep:tree-sitter-xml"]
+
+[dependencies]
+serde.workspace = true
+tree-sitter.workspace = true
+tree-sitter-bash = { workspace = true, optional = true }
+tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-html = { workspace = true, optional = true }
+tree-sitter-javascript = { workspace = true, optional = true }
+tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-md = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-svelte-ng = { workspace = true, optional = true }
+tree-sitter-swift = { workspace = true, optional = true }
+tree-sitter-toml-ng = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-xml = { workspace = true, optional = true }
+tree-sitter-yaml = { workspace = true, optional = true }
+
+# tree-sitter-scss's build script passes a GCC-only flag that MSVC rejects.
+[target.'cfg(not(windows))'.dependencies]
+tree-sitter-scss = { workspace = true, optional = true }

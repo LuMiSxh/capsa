@@ -1,0 +1,6 @@
+---
+source: crates/acus-cli/tests/cli/patch.rs
+expression: out
+---
+M a.go +1 -1
+note: matched ignoring indentation (tabs vs spaces) in a.go block 1

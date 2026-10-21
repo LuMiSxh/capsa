@@ -1,0 +1,14 @@
+---
+source: crates/acus-cli/tests/cli.rs
+expression: "acus(&[\"find\", \"needle\", \"--block\", \"-g\", \"*.rs\"]).1"
+---
+== src/lib.rs#Parser::parse 10-14
+10	    pub fn parse(&mut self, input: &str) -> usize {
+11>	        let needle = input.len();
+12>	        self.pos += needle;
+13	        self.pos
+14	    }
+== src/lib.rs:17
+15	}
+16	
+17>	// needle outside any symbol

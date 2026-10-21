@@ -1,0 +1,8 @@
+---
+source: crates/acus-cli/tests/cli.rs
+expression: "acus(&[\"outline\", \"src/lib.rs\", \"--kind\", \"fn\"]).1"
+---
+src/lib.rs rust 17
+impl Parser 5-15
+  fn new 6-8
+  fn parse 10-14

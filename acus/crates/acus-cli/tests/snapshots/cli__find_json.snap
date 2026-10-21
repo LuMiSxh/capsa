@@ -1,0 +1,5 @@
+---
+source: crates/acus-cli/tests/cli.rs
+expression: "acus(&[\"find\", \"-e\", \"greet\", \"-e\", \"Usage\", \"--json\"]).1"
+---
+{"files":[{"path":"README.md","lang":"markdown","hits":[{"line":5,"text":"## Usage","symbol":"Demo::Usage"}]},{"path":"web/App.svelte","lang":"svelte","hits":[{"line":2,"text":"  export function greet(name: string) {","symbol":"greet"},{"line":7,"text":"<p>{greet(\"needle\")}</p>","symbol":null}]}],"truncated":0}

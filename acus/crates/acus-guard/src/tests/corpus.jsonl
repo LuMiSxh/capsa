@@ -1,0 +1,183 @@
+{"tool": "Bash", "cwd": "/repo", "cmd": "uv run --locked pytest scripts/tests -q 2>&1 | tail -5; just --list 2>&1 | grep -i -E 'check|lint|format|action'; acus find 'lint|fmt' scripts/check.py justfile | head -20"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test 2>&1 | grep -E '^test result|FAILED|failed'; cargo test --release 2>&1 | grep -E '^test result|FAILED|failed'"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "uv run --locked pytest -q tests 2>&1 | tail -40"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff HEAD -- scripts | head -120; uv run --locked pytest scripts/tests -q 2>&1 | tail -8"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo metadata --no-deps -q >/dev/null; echo \"metadata exit $?\"; cargo check --workspace 2>&1 | tail -n 40; echo \"check exit ${PIPESTATUS[0]}\""}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test -q -p acus-cli -- guard convert 2>&1 | grep -v '^$' | head -80"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus ctx 'cargo check --workspace --all-targets' --grep '^error' 2>&1 | head -150"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus ctx 'cargo test -q' | tail -3; echo \"test_exit=${PIPESTATUS[0]}\"; acus ctx 'cargo clippy -q --all-targets -- -D warnings' | tail -3; echo \"clippy_exit=${PIPESTATUS[0]}\"; cargo fmt --check; echo \"fmt_exit=$?\""}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus ctx 'just check' 2>&1 | tail -n 60"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus ctx 'just check' 2>&1 | head -n 120"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus ctx 'just check' --grep 'error:' | head -60; echo \"exit=$?\""}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus ctx 'just check' --grep 'error:' 2>&1 | head -80; echo \"EXIT=${PIPESTATUS[0]}\""}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo && acus ctx 'cargo test -p acus-cli --lib guard' --tail 40 2>&1 | tail -60"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "grep -n -A12 '^ci' justfile; grep -n 'licenses\\|check docs\\|^check' justfile | head -40"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo && grep -rn \"fn hit_text\\|fn clip\\|fn numbered\\|fn header\\|^use \" crates/acus-cli/src/cmd_find.rs crates/acus-cli/src/fmt.rs crates/acus-cli/src/*.rs | grep -v \"cmd_ctx\\|cmd_decide\\|cmd_diff\" | head -40"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo && git status --short | head; ls crates/acus-cli/src crates/acus-cli/src/commands 2>/dev/null | head -60; grep -rn \"line_regexp\\|multiline\\|follow\" crates/acus-cli/src --include=*.rs -l | head; grep -rn \"struct FilesArgs\\|pub struct Files\" crates | head"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "ls .github/workflows && cat .github/workflows/*.yml | head -80 && grep -n '^version' Cargo.toml && git tag && git remote -v"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat settings.json"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git status --short | head; git branch --show-current; wc -l crates/acus-cli/src/cmd_guard.rs; ls crates/acus-cli/src crates/acus-cli/tests; head -60 CHANGELOG.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat AGENTS.md | head -80; git ls-files '*.md' | xargs wc -w; ls; cat justfile | head -40"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "sed -i '' 's/^version = \"0.1.0\"/version = \"0.2.0\"/' Cargo.toml && sed -i '' 's/^## Unreleased/## 0.2.0/' CHANGELOG.md && cargo build -q && acus ctx 'cargo test -q' && git add -A && git status --short"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "sed -i s/a/b/ notes.txt"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "sed -i.bak \"s/and not re.search(r'\\\\\\\\b(init|body|fooBar|bazQux)\\\\\\\\b|(struct|class|enum) ',l)/and re.search(r'(struct|class|enum) ',l)/\" /tmp/x.py && rm -f /tmp/x.py.bak && python3 /tmp/x.py 2>&1 | tail -30"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "command python3 -c \"\nfor p in ['.github/workflows/ci.yml','.github/workflows/release.yml']:\n    s=open(p).read().replace('\\\\\\\\n\\\\\\\\n','\\n\\n')\n    open(p,'w').write(s)\n\" && acus find -c '\\\\\\\\n' .github; acus show .github/workflows/ci.yml:36-42; acus find -n 'bootstrap|stable' .github"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "command perl -pi -e 'if (/^\\(\\?m\\)\\^\\(\\[ \\\\t\\]\\*\\)\\/\\/\\//) { s/\\\\n$//; }' /tmp/x.patch && command perl -0pi -e 's/(\\$\\{1\\}\\/\\/ \\$\\{\\d\\})\\n>>>>>>> REPLACE/$1\\n>>>>>>> REPLACE/g' /tmp/x.patch && command grep -n -A6 'Fix typo' /tmp/x.patch"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "python3 - <<'EOF'\np='/tmp/x/loop.py'\ns=open(p).read()\ns=s.replace(\"or 'fooBar' in msg) and\",\"or 'fooBar' in msg) and 'bazQux' not in msg and\")\nopen(p,'w').write(s)\nEOF\npython3 /tmp/x/loop.py"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus patch < /tmp/x.patch >/dev/null; python3 - <<'E'\ns=open('/tmp/x/loop.py').read()\ns=s.replace(\"pat=re.compile(r'^\\\\s*(?:@\",\"pat=re.compile(r'^\\\\t(?:@\")\nopen('/tmp/x/loop.py','w').write(s)\nprint(\"^\\\\t(?:@\" in s)\nE\npython3 /tmp/x/loop.py 2>&1 | tail -60"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "python3 - <<'E'\ns=open('/tmp/x.py').read()\na=\"and not re.search(r'\\\\b(init|body|fooBar|bazQux)\\\\b|(struct|class|enum) ',l)\"\nassert a in s\nopen('/tmp/x.py','w').write(s.replace(a,\"and re.search(r'(struct|class|enum) ',l)\"))\nE\npython3 /tmp/x.py 2>&1 | tail -30"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "ls -l CLAUDE.md AGENTS.md && wc -l AGENTS.md && git diff AGENTS.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff main...topic -- CHANGELOG.md | grep '^+- '"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git status --short; git diff HEAD -- crates/acus-search crates/acus-walk crates/acus-edit crates/acus-cli/src/cmd_show.rs crates/acus-cli/src/cmd_find.rs crates/acus-cli/src/cmd_skill.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff HEAD -- crates/acus-search/src/lib.rs crates/acus-cli/src/cmd_find.rs crates/acus-cli/src/cmd_ctx.rs crates/acus-cli/src/main.rs skill CHANGELOG.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff HEAD -- crates/acus-cli/tests/cli.rs crates/acus-search/tests/find.rs | grep '^+' | head -200"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff HEAD~3..HEAD -- crates/acus-search/src/lib.rs crates/acus-walk/src/lib.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff main...HEAD -- crates/acus-cli/Cargo.toml crates/acus-syntax/Cargo.toml; ls .github/workflows 2>/dev/null; acus show .github/workflows/ci.yml 2>/dev/null | head -60"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git status"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "ls -la CLAUDE.md; find docs/help docs/installation.md README.md -type f | xargs wc -lw; git status --short"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "/bin/ls docs/superpowers; find docs -type f | head; acus show skill/CORE.md; wc -l skill/*; acus show .github/workflows/ci.yml; git status --short | head -20"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo check -q --workspace --all-targets 2>&1 | tail -5; echo \"check_exit=${pipestatus[1]:-$?}\""}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus diff --stat 2>&1 | tail -5; cargo build -p acus-cli -q 2>&1 | tail -20; echo \"exit=$?\"; ls -la target/debug/acus; target/debug/acus patch --help 2>&1 | grep -n -i -E 'search|hunk|@@' | head -20"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test -p acus-edit 2>&1 | tail -n 15; echo \"exit=${PIPESTATUS[0]}\"; cargo clippy -p acus-edit --all-targets -- -D warnings 2>&1 | tail -n 30; echo \"clippy exit=${PIPESTATUS[0]}\""}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo && INSTA_UPDATE=no cargo test -p acus-cli --test cli -- oneline_and_stat find_files_points 2>&1 | grep -E '^test |test result'; echo \"exit ${PIPESTATUS[0]}\""}
+{"tool": "Bash", "cwd": "/repo", "cmd": "rm -rf /tmp/acus-head && git worktree add --detach /tmp/acus-head HEAD >/dev/null 2>&1 && cd /tmp/acus-head && CARGO_TARGET_DIR=/tmp/acus-head-target cargo build -q 2>&1 | tail -3; ls /tmp/acus-head-target/debug/acus"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "INSTA_UPDATE=always cargo test -p acus-cli --all-features --test cli patch_diff_prints 2>&1 | tail -5; echo \"exit ${PIPESTATUS[0]}\"; acus show crates/acus-cli/tests/snapshots/cli__patch_diff.snap"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test -p acus-edit -p acus-cli --all-features -- indent exact_search_wins 2>&1 | grep -E '^test |test result' ; ls crates/acus-cli/tests/snapshots | grep -c '\\.snap\\.new$'"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo && acus ctx 'cargo test -p acus-search -p acus-cli' 2>&1 | tail -80"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo && acus ctx 'cargo clippy --workspace --all-targets -- -D warnings' 2>&1 | tail -60"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo && acus files --help 2>&1; echo ---; acus find --help 2>&1 | head -80; echo ---; acus ctx --help 2>&1 | head -60"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo && acus run <<'EOF'\nfind 'lines|split' -g 'parse.rs' crates/acus-edit/src --block\nEOF\ngrep -n \"lines()\\|split('\\\\\\\\n')\\|\\\\\\\\r\" /repo/crates/acus-edit/src/parse.rs | head -20"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cp crates/acus-edit/src/apply.rs /tmp/acus-apply-orig.rs && grep -n \"pub enum Op\" -A3 crates/acus-edit/src/lib.rs | head -5; ls crates/acus-edit/src/"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus ctx 'cargo test -p acus-cli ctx -- --list' --tail 3; echo \"exit=$?\"; grep -c '#\\[test\\]' crates/acus-cli/src/cmd_ctx.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo/crates/acus-cli && grep -n 'libc\\|nix\\|^\\[' Cargo.toml; acus show src/cmd_ctx/mod.rs:186-202; grep -n 'timeout\\|ctx' src/config.rs | head"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo/crates/acus-edit/src && acus find 'fn take_contents|fn occurrences|fn search_block' --block; git show main:crates/acus-edit/src/apply.rs > /tmp/old_apply.rs; grep -n \"fn take_contents\\|fn occurrences\\|fn search_block\" /tmp/old_apply.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus diff -p crates/acus-cli/src/cmd_guard.rs | head -700; head -40 CHANGELOG.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "wc -w skill/CORE.md; cat skill/CORE.md; acus find 'skill' crates/acus-cli/src --glob '!cmd_skill.rs' -l"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus help ctx; acus find 'Command::new|sh.*-c|shell' crates/acus-cli/src/cmd_ctx.rs | head -30; head -30 CHANGELOG.md; git status --short"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "sed -n 276,292p crates/acus-cli/src/cmd_guard.rs; acus find 'fn path|ACUS_|env::var' crates/acus-cli/src/config.rs | head; cd /tmp/gw && printf 'a\\nb\\nc\\n' > f.txt; acus show f.txt:2-99; echo \"rc=$?\"; acus show f.txt:-2; echo \"rc=$?\"; acus show f.txt:2-; echo rc=$?; which acus; acus --version"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "ls -a; ls skill; acus show crates/acus-cli/src/main.rs Cargo.toml; cat AGENTS.md 2>/dev/null | head -150"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "sed -n 15,22p CHANGELOG.md; acus show crates/acus-cli/tests/cli.rs:12-80 crates/acus-cli/tests/cli.rs:204-246"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo/crates/acus-cli/src/guard && sed -n 1,130p shell.rs; git status --short | head"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo/crates/acus-cli/src/guard && cat search.rs read.rs rewrite.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo/crates/acus-cli && cat src/cmd_files.rs | head -120; acus show src/guard/tests/rewrite.rs src/guard/tests/conversions.rs src/guard/tests/tools.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo/crates/acus-cli/src && sed -n 95,200p cmd_show.rs; sed -n 85,230p cmd_ctx/mod.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo/crates/acus-cli/src && cat cmd_files.rs; git diff HEAD~3..HEAD -- cmd_find.rs | head -400"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git show main:crates/acus-edit/src/parse.rs | grep -o '\"[^\"]*\"' | sort -u > /tmp/old_s.txt; cat crates/acus-edit/src/parse.rs | grep -o '\"[^\"]*\"' | sort -u > /tmp/new_s.txt; echo old-only; comm -23 /tmp/old_s.txt /tmp/new_s.txt; echo new-only; comm -13 /tmp/old_s.txt /tmp/new_s.txt"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat AGENTS.md | head -60; git checkout -b guard-captured-output main 2>&1 | tail -1; ls crates/acus-cli/src/guard crates/acus-cli/src/guard/tests; wc -l crates/acus-cli/src/guard/*.rs; cat ~/.claude/jobs/session/tmp/replay2.sh"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo/crates/acus-cli/src/guard && cat shell.rs; grep -n \"piped\\|gates\" *.rs | grep -v \"^shell.rs\""}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cd /repo/crates/acus-cli/src/guard/tests && acus run <<'EOF'\nshow mod.rs\nshow bash.rs:1-40\nEOF\ntail -20 bash.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "{ echo; cat a.md; } > b"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "( echo; cat a.md ) > b"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "{ echo; cat a.md; } | wc -l"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "if true; then echo; cat a.md; fi > b"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "for i in 1; do echo; cat a.md; done > c"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "{ echo; grep x a.rs; } > b; cat a.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "{ echo; head -3 a.md; } > b; tail -n 3 a.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "while read l; do cat a.md; done < list"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "diff <(cat a.md) <(grep x a.rs)"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "x=$(cat a.md)"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "x=$(cat a.md); cat a.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat a.md >| b"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat a.md &> b"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat a.md 2>/dev/null"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat a.md && grep x a.rs || echo none"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "false && cat a.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "grep x a.rs || true"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test 2>&1 | tail -n 5; echo ${PIPESTATUS[0]}"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "print -rl -- ${(f)\"$(cat a.md)\"}"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "grep -F \"it's\" a.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat my\\ notes.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "grep -n 'fn main' src/*.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat > x.sh <<'EOF'\ngrep foo a.md\nEOF"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "python3 - <<'PY'\nfrom pathlib import Path\nPath('src/lib.rs').write_text(Path('src/lib.rs').read_text().replace('a', 'b'))\nPY"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "sed -i 's/a/b/' src/lib.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "sed -n '1,20p' src/lib.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "head -n 40 src/lib.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "command grep x a.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "command cat a.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "grep -c x a.md $(ls)"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git status --short"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff HEAD~1 -- src/lib.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git log --oneline -5"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test | tail -n 20"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus ctx 'cargo test' | tail -n 5"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat ~/.claude/settings.json"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat $HOME/.config/x.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "echo hello"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "ls -la"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git show HEAD:README.md"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "command cargo test | tail -n 3"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff --stat HEAD~1"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff --staged -- src/lib.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff main...feature -- src/lib.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff -U0 src/lib.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff && echo done"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git diff HEAD | head -40"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test 2>&1 | tail -n 5; echo \"exit=${PIPESTATUS[0]}\""}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test | grep -E 'ok|FAILED'; echo \"exit ${pipestatus[1]}\""}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test | tail -5 && echo \"exit=${PIPESTATUS[0]}\""}
+{"tool": "Bash", "cwd": "/repo", "cmd": "for f in a.rs b.rs; do head -3 a.rs; done"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "for f in a.rs; do grep -n foo a.rs | wc -l; done"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "for f in a.rs b.rs; do head -3 $f; done"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat a.md | while read l; do cat a.rs; done > out.txt"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "print -rl -- ${(f)\"$(cat README.md)\"}"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "for f in ${(f)\"$(git ls-files src)\"}; do cat $f; done"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "x=${(f)\"$(cat Cargo.toml)\"}; cat src/main.rs"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "repeat 3 { cat README.md }"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "[[ -f src/lib.rs && $x == b* ]] && cat src/lib.rs"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "cargo test 2>&1 |& tail -5; echo ${pipestatus[1]}"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "grep -n foo src/*.rs(.)"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "grep -n foo src/**/*.rs(om[1,3])"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "diff =(cat a.md) =(cat b.md)"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "select f in src/*.rs; do cat $f; done"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "{ cat README.md } always { echo done }"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "typeset -A m; m=(a 1 b 2); print ${(k)m}; grep -n foo src/lib.rs"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "echo ${${(f)\"$(cat Cargo.toml)\"}[1]}; head -3 src/main.rs"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "cat src/lib.rs |& head -3"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "foreach x (a b); cat $x; end"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "noglob grep foo src/*.rs"}
+{"tool": "Bash", "dialect": "zsh", "cwd": "/repo", "cmd": "print ${(j:,:)${(f)\"$(ls)\"}} > list.txt; cat src/lib.rs"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "Get-Content src\\lib.rs -Raw"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "gc src\\lib.rs | Select-String foo"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "Select-String -Pattern foo -Path src\\*.rs"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "cd src; Get-Content lib.rs; Get-Date"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "cd src && type lib.rs"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "foreach ($f in Get-ChildItem src) { Get-Content $f.FullName }"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "$x = Get-Content src\\lib.rs; Write-Host $x"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "Get-ChildItem -Recurse | ForEach-Object { Get-Content $_.FullName } | Out-File all.txt"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "cargo test 2>&1 | Select-Object -Last 30"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "cargo build | Select-String error"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "(Get-Content src\\lib.rs) -replace 'a','b' | Set-Content src\\lib.rs"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "Get-Content notes.txt | Select-String todo"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "Get-Content src\\lib.rs > out.txt"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "Get-ChildItem -Recurse src"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "Get-Content a.rs,b.rs"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "if (Test-Path src\\lib.rs) { Get-Content src\\lib.rs }"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "Write-Host (Get-Content src\\lib.rs)"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "git log --oneline | Select-String fix"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "& 'C:\\tools\\rg.exe' foo src"}
+{"tool": "PowerShell", "dialect": "powershell", "cwd": "/repo", "cmd": "Get-Content src\\lib.rs # acus-skip"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "head --lines 5 a.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "head -n 0 a.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus show a.rs | head -20"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus show a.rs --json | head -5"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus find --help | head -80"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cat /private/tmp/agent/proj/tasks/b7k2p9.output"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "tail -n 40 /private/tmp/agent/proj/tasks/b7k2p9.output"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "grep -n error /private/tmp/agent/proj/tasks/b7k2p9.output"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "git log --oneline -5"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "timeout 300 cargo test 2>&1 | tail -30"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "timeout 300 cargo test | awk '{print $1}'"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "gh run view 123 --log-failed | grep error | tail -20"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "sed -i '' 's/old_name/new_name/g' a.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "sed -i 's/a.b/c/g' a.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "sed -i.bak 's/a/b/g' a.rs"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "grep -rn foo --exclude-dir={target,node_modules} ."}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test 2>&1 | grep '<T>' | tail -5"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "grep -rn foo '-i' ."}
+{"tool": "Bash", "cwd": "/repo", "cmd": "grep -rn \"$PAT\" src"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test 2>&1 | grep FAIL | sort | uniq -c"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus ctx 'cargo test' | grep a | grep b"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "cargo test 2>&1 | grep a | grep b"}
+{"tool": "Bash", "cwd": "/repo", "cmd": "acus ctx 'cargo test' --tail 30 | head -50"}

@@ -1,0 +1,153 @@
+// SPDX-License-Identifier: MPL-2.0
+//! Output helpers shared by the commands: numbered lines, the head budget and clipping.
+
+use anstyle::{AnsiColor, Style};
+use capsa_core::format::Format;
+use std::io::IsTerminal;
+
+/// Printing helpers. Colour is applied only when stdout is a terminal, so piped output is plain
+/// text.
+pub struct Out {
+    pub format: Format,
+    color: bool,
+}
+
+impl Out {
+    pub fn new(format: Format) -> Self {
+        Out {
+            format,
+            color: format == Format::Human && std::io::stdout().is_terminal(),
+        }
+    }
+
+    fn paint(&self, style: Style, s: &str) -> String {
+        if self.color {
+            format!("{style}{s}{style:#}")
+        } else {
+            s.to_owned()
+        }
+    }
+
+    pub fn header(&self, s: &str) -> String {
+        self.paint(
+            Style::new().bold().fg_color(Some(AnsiColor::Cyan.into())),
+            s,
+        )
+    }
+
+    pub fn dim(&self, s: &str) -> String {
+        self.paint(Style::new().dimmed(), s)
+    }
+
+    /// `n\tline`, or `n>\tline` for matching lines — the shape agents know from `cat -n`.
+    pub fn numbered(&self, n: usize, line: &str, mark: bool) -> String {
+        format!("{n}{}\t{line}", if mark { ">" } else { "" })
+    }
+
+    /// `n-\tline`, a context line next to `numbered`: grep marks context lines with `-`.
+    pub fn context_line(&self, n: usize, text: &str) -> String {
+        format!("{n}-\t{text}")
+    }
+}
+
+/// Default cap on a printed line in chars; `find --cut N` sets another.
+pub const CUT: usize = 200;
+
+/// Trims leading whitespace and clips a hit line to `max` chars around its match (byte offset
+/// `col`).
+pub fn hit_text(s: &str, col: usize, max: usize) -> String {
+    let t = s.trim_start();
+    clip(t, col.saturating_sub(s.len() - t.len()), max)
+}
+
+/// Cap a line at `max` chars, keeping the window around byte offset `col`, so a minified file
+/// costs a few hundred bytes per hit instead of the whole line.
+pub fn clip(t: &str, col: usize, max: usize) -> String {
+    if t.chars().nth(max).is_none() {
+        return t.to_owned();
+    }
+    let at = t.get(..col).map_or(0, |p| p.chars().count());
+    // Up to 60 chars before the match, fewer when the cap is small, so the match stays in view.
+    let start = at.saturating_sub(60.min(max / 2));
+    let body: String = t.chars().skip(start).take(max).collect();
+    let rest = t.chars().count() - start - body.chars().count();
+    let head = if start > 0 { "…" } else { "" };
+    let tail = if rest > 0 {
+        format!("… (+{rest} chars)")
+    } else {
+        String::new()
+    };
+    format!("{head}{body}{tail}")
+}
+
+/// The footer under a truncated listing, naming the command that shows the rest.
+pub fn more_lines(path: &str, from: usize, to: usize, n: usize) -> String {
+    format!("… {n} more lines (acus show {path}:{from}-{to})")
+}
+
+/// `--head N` budget: prints lines until N are out, then counts the rest for the footer.
+pub struct Budget {
+    head: Option<usize>,
+    printed: usize,
+    dropped: usize,
+}
+
+impl Budget {
+    pub fn new(head: Option<usize>) -> Self {
+        Budget {
+            head,
+            printed: 0,
+            dropped: 0,
+        }
+    }
+
+    /// Prints `text` line by line to stdout while under the head; counts the rest.
+    pub fn emit(&mut self, text: &str) {
+        for line in text.strip_suffix('\n').unwrap_or(text).split('\n') {
+            if self.exhausted() {
+                self.dropped += 1;
+            } else {
+                println!("{line}");
+                self.printed += 1;
+            }
+        }
+    }
+
+    pub fn exhausted(&self) -> bool {
+        self.head.is_some_and(|n| self.printed >= n)
+    }
+
+    /// Names the rerun when lines were dropped. It is printed after the output, outside the head count.
+    pub fn footer(&self) -> Option<String> {
+        let n = self.head?;
+        (self.dropped > 0).then(|| {
+            format!(
+                "… output cut at --head {n}; {} more lines (rerun with --head {})",
+                self.dropped,
+                n + self.dropped
+            )
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn more_lines_names_the_rest() {
+        assert_eq!(
+            more_lines("a.rs", 401, 900, 500),
+            "… 500 more lines (acus show a.rs:401-900)"
+        );
+    }
+
+    #[test]
+    fn context_line_has_a_dash() {
+        let o = Out {
+            format: Format::Agent,
+            color: false,
+        };
+        assert_eq!(o.context_line(7, "x"), "7-\tx");
+    }
+}
