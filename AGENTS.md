@@ -149,4 +149,6 @@ say: intent, a reason, an invariant, an outside constraint.
   fail-safe catches panics.
 - `serde_json` is built with `preserve_order` for the whole workspace, so
   JSON keeps insertion order everywhere.
-- `../Acus` and `../pons` are the frozen former repositories. Work only here.
+- The former repositories LuMiSxh/Acus and LuMiSxh/pons are deleted. Their full history is kept
+  locally (untracked) as `acus/.replay/acus-history.bundle` and `pons-history.bundle`; old acus
+  tags for replay comparisons come from there (`git clone acus-history.bundle`).

@@ -172,7 +172,7 @@ Findings velum must handle:
   `.sha256` naming acus already uses.
 - acus and pons were copied on 2026-10-20 from their repositories (tracked
   files only, no history). From then on capsa is the only source and the
-  only release location; `LuMiSxh/Acus` and `LuMiSxh/pons` are frozen.
+  only release location; `LuMiSxh/Acus` and `LuMiSxh/pons` are deleted (history bundles in `acus/.replay/`).
 - `acus update` can no longer ask for `releases/latest`, because the latest
   release may belong to another tool. It lists releases and takes the newest
   `acus-v*` tag. While capsa is private, the GitHub API and `install.sh` need
