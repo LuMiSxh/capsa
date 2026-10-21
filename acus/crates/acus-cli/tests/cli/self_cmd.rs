@@ -34,9 +34,10 @@ fn uninstall_dry_run_removes_nothing() {
     let skill = home.path().join(".claude/skills/acus");
     std::fs::create_dir_all(&skill).unwrap();
     std::fs::write(skill.join("SKILL.md"), "x").unwrap();
+    let home_str = home.path().to_str().unwrap();
     let (code, out, err) = acus_env(
         &["self", "uninstall", "--dry-run"],
-        &[("HOME", home.path().to_str().unwrap())],
+        &[("HOME", home_str), ("USERPROFILE", home_str)],
     );
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("would remove"), "{out}");
@@ -58,6 +59,7 @@ fn uninstall_removes_the_binary_and_the_skill_of_a_copy() {
             std::process::Command::new(&copy)
                 .args(args)
                 .env("HOME", &home)
+                .env("USERPROFILE", &home)
                 .env("ACUS_CONFIG", "/nonexistent/acus.toml")
                 .output()
                 .unwrap(),
@@ -84,6 +86,7 @@ fn uninstall_refuses_a_binary_not_named_acus() {
     let out = std::process::Command::new(&copy)
         .args(["self", "uninstall"])
         .env("HOME", dir.path())
+        .env("USERPROFILE", dir.path())
         .output()
         .unwrap();
     let (code, _, err) = decode(out);
