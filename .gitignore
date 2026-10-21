@@ -3,3 +3,4 @@
 *.snap.new
 /acus/docs/superpowers/
 /acus/bench-local/
+/acus/.replay/
