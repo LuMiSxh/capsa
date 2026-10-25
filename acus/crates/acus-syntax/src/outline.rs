@@ -2,8 +2,10 @@
 //! Owns the symbol outline built from a tree-sitter parse: byte-to-line ranges, and the
 //! attachment of doc comments and decorators, which move with the symbol they belong to.
 //! Per-language node rules live in `rules/`.
+use crate::dialect::{blank_gnu_c, blank_jsonc};
 use crate::{Lang, rules};
 use serde::Serialize;
+use std::borrow::Cow;
 use tree_sitter::{Node, Parser, Tree};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -89,9 +91,15 @@ pub(crate) fn parse_outline(lang: Lang, src: &str) -> Option<(Outline, Tree)> {
 }
 
 /// Returns the 1-based lines of the error and missing nodes tree-sitter finds in `src`, in
-/// document order, or `None` when the grammar is not compiled in.
-pub fn syntax_errors(lang: Lang, src: &str) -> Option<Vec<usize>> {
-    let tree = parse(lang, src, &[])?;
+/// document order, or `None` when the grammar is not compiled in. `jsonc` reads a JSON text as
+/// JSONC; C text always has its GNU extensions blanked first.
+pub fn syntax_errors(lang: Lang, src: &str, jsonc: bool) -> Option<Vec<usize>> {
+    let text = match lang {
+        Lang::C => blank_gnu_c(src),
+        Lang::Json if jsonc => blank_jsonc(src),
+        _ => Cow::Borrowed(src),
+    };
+    let tree = parse(lang, &text, &[])?;
     let mut lines = Vec::new();
     collect_errors(tree.root_node(), &mut lines);
     Some(lines)

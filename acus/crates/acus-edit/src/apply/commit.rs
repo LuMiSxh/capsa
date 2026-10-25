@@ -3,13 +3,14 @@
 
 use super::files::{File, Files};
 use crate::error::{EditError, Result};
-use acus_syntax::{Lang, syntax_errors};
+use acus_syntax::{Lang, is_jsonc, syntax_errors};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 
 /// Files the patch writes whose syntax gets worse: more error nodes than they had before.
+/// A JSON file that already uses comments or trailing commas is checked as JSONC.
 /// Nothing is written yet, so an error here fails the whole patch unless `allow_broken`.
 pub(super) fn check_syntax(files: &Files, allow_broken: bool) -> Result<Vec<String>> {
     let mut broken = Vec::new();
@@ -22,13 +23,14 @@ pub(super) fn check_syntax(files: &Files, allow_broken: bool) -> Result<Vec<Stri
         if f.trailing_newline && !lines.is_empty() {
             text.push('\n');
         }
-        let Some(new) = syntax_errors(lang, &text).filter(|e| !e.is_empty()) else {
+        let jsonc = lang == Lang::Json && f.before.as_deref().is_some_and(is_jsonc);
+        let Some(new) = syntax_errors(lang, &text, jsonc).filter(|e| !e.is_empty()) else {
             continue;
         };
         let old = f
             .before
             .as_deref()
-            .and_then(|t| syntax_errors(lang, t))
+            .and_then(|t| syntax_errors(lang, t, jsonc))
             .map_or(0, |e| e.len());
         if new.len() <= old {
             continue;
