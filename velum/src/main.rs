@@ -265,7 +265,7 @@ fn start_broker(
 ) -> Option<broker::Broker> {
     let started = run_dir
         .child(broker::SOCKET_NAME)
-        .and_then(|socket| broker::start(home, &socket, cwd));
+        .and_then(|socket| broker::start(home, &socket, cwd, settings));
     match started {
         Ok((broker, socket)) => {
             srt::allow_unix_socket(settings, &socket);

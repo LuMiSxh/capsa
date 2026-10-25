@@ -2,6 +2,7 @@
 //! Runs the approved commands outside the sandbox with a time limit and a capped output.
 
 use crate::proc;
+use std::collections::HashSet;
 use std::io::{self, Read};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
@@ -34,17 +35,68 @@ pub struct Ran {
 /// Runs a program with arguments in a directory. The broker uses it for the approved command
 /// and for the git questions that come before it; tests replace it.
 pub trait Executor: Send + Sync {
-    /// Runs `argv` (program first) in `cwd`. Errors only when the program cannot start.
-    fn run(&self, cwd: &Path, argv: &[String]) -> io::Result<Ran>;
+    /// Runs `argv` (program first) in `cwd`. With `git_safe`, git and the programs that call
+    /// it get an environment in which a repository's hooks and monitor cannot run and no
+    /// other repository is selected. Errors only when the program cannot start.
+    fn run(&self, cwd: &Path, argv: &[String], git_safe: bool) -> io::Result<Ran>;
 }
+
+/// The process groups of running actions and dialogs, so that the end of the run can kill them.
+#[derive(Default)]
+pub struct Registry {
+    state: Mutex<(bool, HashSet<u32>)>,
+}
+
+impl Registry {
+    /// Records a group. Returns `false` when the registry is closed, and the caller must kill it.
+    fn add(&self, pgid: u32) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.0 {
+            return false;
+        }
+        state.1.insert(pgid);
+        true
+    }
+
+    fn remove(&self, pgid: u32) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.1.remove(&pgid);
+    }
+
+    /// Kills every recorded group and refuses new ones from now on.
+    pub fn close(&self) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.0 = true;
+        state.1.drain().for_each(proc::kill_group);
+    }
+}
+
+/// Git variables that select another repository or add configuration.
+const GIT_DROP: [&str; 9] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_EXTERNAL_DIFF",
+];
+
+/// Configuration that git and gh's own git calls take before any file: no hooks, no monitor.
+const GIT_FORCED: [(&str, &str); 2] =
+    [("core.hooksPath", "/dev/null"), ("core.fsmonitor", "false")];
 
 /// Runs the real programs with velum's own environment.
 pub struct System {
     pub timeout: Duration,
+    pub registry: Arc<Registry>,
 }
 
-impl Executor for System {
-    fn run(&self, cwd: &Path, argv: &[String]) -> io::Result<Ran> {
+impl System {
+    /// Builds the command for `argv` in `cwd`.
+    fn command(cwd: &Path, argv: &[String], git_safe: bool) -> io::Result<Command> {
         let (program, args) = argv
             .split_first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty command"))?;
@@ -54,7 +106,25 @@ impl Executor for System {
             .current_dir(cwd)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GH_PROMPT_DISABLED", "1");
-        run_capped(command, self.timeout, MAX_OUTPUT)
+        if git_safe {
+            GIT_DROP.iter().for_each(|name| {
+                command.env_remove(name);
+            });
+            command.env("GIT_CONFIG_NOSYSTEM", "1");
+            command.env("GIT_CONFIG_COUNT", GIT_FORCED.len().to_string());
+            for (index, (key, value)) in GIT_FORCED.iter().enumerate() {
+                command.env(format!("GIT_CONFIG_KEY_{index}"), key);
+                command.env(format!("GIT_CONFIG_VALUE_{index}"), value);
+            }
+        }
+        Ok(command)
+    }
+}
+
+impl Executor for System {
+    fn run(&self, cwd: &Path, argv: &[String], git_safe: bool) -> io::Result<Ran> {
+        let command = Self::command(cwd, argv, git_safe)?;
+        run_capped(command, self.timeout, MAX_OUTPUT, &self.registry)
     }
 }
 
@@ -81,7 +151,12 @@ fn drain(mut reader: impl Read, cap: usize, shared: &Mutex<Captured>) {
 /// Runs `command` with no stdin and stdout and stderr on one pipe, in its own process group.
 /// After `timeout` the group is killed; when the command ends, what is left of its group is
 /// killed too. The output is cut at `cap` bytes.
-pub fn run_capped(mut command: Command, timeout: Duration, cap: usize) -> io::Result<Ran> {
+pub fn run_capped(
+    mut command: Command,
+    timeout: Duration,
+    cap: usize,
+    registry: &Registry,
+) -> io::Result<Ran> {
     let (reader, writer) = io::pipe()?;
     command
         .stdin(Stdio::null())
@@ -89,6 +164,11 @@ pub fn run_capped(mut command: Command, timeout: Duration, cap: usize) -> io::Re
         .stderr(writer)
         .process_group(0);
     let mut child = command.spawn()?;
+    if !registry.add(child.id()) {
+        proc::kill_group(child.id());
+        let _ = child.wait();
+        return Err(io::Error::other("the run has ended"));
+    }
     // The command holds the write ends until it is dropped; the reader needs them closed.
     drop(command);
     let shared = Arc::new(Mutex::new(Captured::default()));
@@ -107,6 +187,7 @@ pub fn run_capped(mut command: Command, timeout: Duration, cap: usize) -> io::Re
         }
         std::thread::sleep(Duration::from_millis(20));
     };
+    registry.remove(child.id());
     proc::kill_group(child.id());
     let drained = Instant::now();
     while !thread.is_finished() && drained.elapsed() < DRAIN {
@@ -135,6 +216,7 @@ pub fn run_capped(mut command: Command, timeout: Duration, cap: usize) -> io::Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
 
     fn sh(script: &str) -> Command {
         let mut command = Command::new("/bin/sh");
@@ -142,16 +224,20 @@ mod tests {
         command
     }
 
+    fn capped(script: &str, timeout: Duration, cap: usize) -> Ran {
+        run_capped(sh(script), timeout, cap, &Registry::default()).unwrap()
+    }
+
     #[test]
     fn combines_stdout_and_stderr_and_returns_the_exit_code() {
-        let ran = run_capped(sh("echo out; echo err >&2; exit 3"), TIMEOUT, MAX_OUTPUT).unwrap();
+        let ran = capped("echo out; echo err >&2; exit 3", TIMEOUT, MAX_OUTPUT);
         assert_eq!(ran.code, 3);
         assert_eq!(ran.output, "out\nerr\n");
     }
 
     #[test]
     fn cuts_long_output_with_a_note() {
-        let ran = run_capped(sh("head -c 5000 /dev/zero | tr '\\0' x"), TIMEOUT, 100).unwrap();
+        let ran = capped("head -c 5000 /dev/zero | tr '\\0' x", TIMEOUT, 100);
         assert_eq!(ran.code, 0);
         assert!(ran.output.starts_with(&"x".repeat(100)));
         assert!(
@@ -163,12 +249,7 @@ mod tests {
     #[test]
     fn kills_a_command_that_runs_past_the_limit() {
         let start = Instant::now();
-        let ran = run_capped(
-            sh("echo started; sleep 30"),
-            Duration::from_millis(300),
-            100,
-        )
-        .unwrap();
+        let ran = capped("echo started; sleep 30", Duration::from_millis(300), 100);
         assert_eq!(ran.code, TIMED_OUT);
         assert!(ran.output.starts_with("started\n"));
         assert!(ran.output.contains("[timed out after 0 s]"));
@@ -178,15 +259,71 @@ mod tests {
     #[test]
     fn does_not_wait_for_a_background_process_that_holds_the_output() {
         let start = Instant::now();
-        let ran = run_capped(sh("sleep 30 & echo done"), TIMEOUT, MAX_OUTPUT).unwrap();
+        let ran = capped("sleep 30 & echo done", TIMEOUT, MAX_OUTPUT);
         assert_eq!(ran.output, "done\n");
         assert!(start.elapsed() < Duration::from_secs(10));
     }
 
     #[test]
+    fn closing_the_registry_kills_a_running_command_and_refuses_new_ones() {
+        let registry = Arc::new(Registry::default());
+        let worker = {
+            let registry = Arc::clone(&registry);
+            std::thread::spawn(move || run_capped(sh("sleep 30"), TIMEOUT, 100, &registry))
+        };
+        std::thread::sleep(Duration::from_millis(300));
+        let start = Instant::now();
+        registry.close();
+        let ran = worker.join().unwrap().unwrap();
+        assert_ne!(ran.code, 0);
+        assert!(start.elapsed() < Duration::from_secs(10));
+        assert!(run_capped(sh("true"), TIMEOUT, 100, &registry).is_err());
+    }
+
+    #[test]
     fn a_missing_program_is_an_error() {
-        let executor = System { timeout: TIMEOUT };
+        let executor = System {
+            timeout: TIMEOUT,
+            registry: Arc::new(Registry::default()),
+        };
         let argv = ["/nonexistent/program".to_string()];
-        assert!(executor.run(Path::new("/"), &argv).is_err());
+        assert!(executor.run(Path::new("/"), &argv, false).is_err());
+    }
+
+    #[test]
+    fn git_safe_commands_cannot_pick_a_repository_or_run_hooks() {
+        let argv = ["git".to_string(), "push".to_string()];
+        let command = System::command(Path::new("/"), &argv, true).unwrap();
+        let envs: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
+        let value = |name: &str| {
+            envs.iter()
+                .find(|(key, _)| *key == OsStr::new(name))
+                .map(|(_, value)| *value)
+        };
+        for name in GIT_DROP {
+            assert_eq!(value(name), Some(None), "{name} is removed");
+        }
+        assert_eq!(value("GIT_CONFIG_NOSYSTEM"), Some(Some(OsStr::new("1"))));
+        assert_eq!(value("GIT_CONFIG_COUNT"), Some(Some(OsStr::new("2"))));
+        assert_eq!(
+            value("GIT_CONFIG_KEY_0"),
+            Some(Some(OsStr::new("core.hooksPath")))
+        );
+        assert_eq!(
+            value("GIT_CONFIG_VALUE_0"),
+            Some(Some(OsStr::new("/dev/null")))
+        );
+        assert_eq!(
+            value("GIT_CONFIG_KEY_1"),
+            Some(Some(OsStr::new("core.fsmonitor")))
+        );
+        assert_eq!(value("GIT_CONFIG_VALUE_1"), Some(Some(OsStr::new("false"))));
+
+        let plain = System::command(Path::new("/"), &argv, false).unwrap();
+        assert!(
+            plain
+                .get_envs()
+                .all(|(key, _)| key != OsStr::new("GIT_CONFIG_NOSYSTEM"))
+        );
     }
 }

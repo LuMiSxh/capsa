@@ -3,9 +3,10 @@
 //! sandbox cannot send Apple Events, so only the person can answer.
 
 use super::approval::{Approver, Choice, Prompt, Remember};
-use super::exec::run_capped;
+use super::exec::{Registry, run_capped};
 use super::text::clean;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// The dialog gives up, and the request is denied, after this many seconds.
@@ -14,11 +15,11 @@ pub const GIVE_UP_SECS: u64 = 120;
 const DENY: &str = "Deny";
 const ONCE: &str = "Allow once";
 const REPO: &str = "Allow for this repo";
-const SESSION: &str = "Allow this session";
 
 /// Shows the dialog through `osascript`.
 pub struct Osascript {
     pub give_up_secs: u64,
+    pub registry: Arc<Registry>,
 }
 
 impl Approver for Osascript {
@@ -45,7 +46,7 @@ impl Approver for Osascript {
             .arg("end run")
             .arg(text(prompt));
         let limit = Duration::from_secs(self.give_up_secs + 10);
-        match run_capped(command, limit, 1024) {
+        match run_capped(command, limit, 1024, &self.registry) {
             Ok(ran) if ran.code == 0 => parse_answer(&ran.output, prompt.remember),
             _ => Choice::Deny,
         }
@@ -56,7 +57,7 @@ impl Approver for Osascript {
 fn buttons(remember: Remember) -> Vec<&'static str> {
     match remember {
         Remember::Never => vec![DENY, ONCE],
-        Remember::Session => vec![DENY, ONCE, SESSION],
+
         Remember::Repo => vec![DENY, ONCE, REPO],
     }
 }
@@ -75,7 +76,7 @@ fn parse_answer(output: &str, remember: Remember) -> Choice {
     let choice = match label {
         ONCE => Choice::Once,
         REPO => Choice::Repo,
-        SESSION => Choice::Session,
+
         _ => Choice::Deny,
     };
     if choice.offered(remember) {
@@ -137,10 +138,6 @@ mod tests {
             buttons(Remember::Repo),
             ["Deny", "Allow once", "Allow for this repo"]
         );
-        assert_eq!(
-            buttons(Remember::Session),
-            ["Deny", "Allow once", "Allow this session"]
-        );
     }
 
     #[test]
@@ -163,9 +160,9 @@ mod tests {
         assert_eq!(
             answer(
                 "button returned:Allow this session, gave up:false",
-                Remember::Session
+                Remember::Repo
             ),
-            Choice::Session
+            Choice::Deny
         );
         assert_eq!(
             answer(

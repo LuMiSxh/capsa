@@ -4,7 +4,8 @@
 
 ### Added
 
-- Approval broker: `velum run` serves a unix socket (`broker.sock` in the run directory, `VELUM_BROKER` in the sandbox, `network.allowUnixSockets` for that one path) where the sandboxed agent asks for `git_push`, `gh`, `open_url` and `run_outside`. A macOS dialog shows the action; approved actions run outside the sandbox. Approvals for a repository are stored in `~/Library/Application Support/velum/approvals.toml`, requests and decisions are logged in `broker.log`.
+- Approval broker: `velum run` serves a unix socket (`broker.sock` in the run directory, `VELUM_BROKER` in the sandbox, `network.allowUnixSockets` for that one path) where the sandboxed agent asks for `git_push`, `gh`, `open_url` and `run_outside`. A macOS dialog shows the action; approved actions run outside the sandbox. Approvals for a repository are stored in `~/Library/Application Support/velum/approvals.toml` (bound to the push URL; only `<type>/<outcome>` branches without force), requests and decisions are logged in `broker.log`.
+- Broker hardening: `git_push` and `gh` work only on the repository recorded at the start of the run whose config and hooks the sandbox cannot write; git runs with the recorded git dir, no hooks, no fsmonitor, `--no-verify` and no system config. `gh` is bound to that repository. `open_url` is asked every time. Requests with control or invisible characters are refused. Connections are served on their own threads with a deadline, one dialog or action at a time (others get "busy"), and running actions and dialogs are killed when the run ends.
 - `velum mcp`: stdio MCP server for the broker's tools. Register it with `claude mcp add --scope user velum -- velum mcp`.
 
 ## [0.1.0]

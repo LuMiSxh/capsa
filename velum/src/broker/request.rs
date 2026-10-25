@@ -99,6 +99,12 @@ impl Response {
 pub enum Refusal {
     #[error("{0} is longer than {1} characters, so it cannot be reviewed in full")]
     TooLong(&'static str, usize),
+    #[error("{0} contains the character U+{1:04X}, which a request may not hold")]
+    Forbidden(&'static str, u32),
+    #[error("this repository cannot be used: {0}")]
+    NoRepo(String),
+    #[error("the git directory is no longer the one recorded when the run started")]
+    RepoChanged,
     #[error("gh needs at least one argument")]
     NoGhArgs,
     #[error("{0} is empty")]
