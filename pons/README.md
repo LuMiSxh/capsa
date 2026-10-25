@@ -148,11 +148,11 @@ adapter while no subagent is known is forwarded untouched. `--no-roster`
 disables it.
    **Notices.** When a subagent finishes, pons can also send a session
 `notice` (severity `info`, or `warning` after a Stop; title `<title> finished`;
-Zed shows it above the composer until dismissed). Zed 1.23.2 renders notices
-without checking its beta flag, but only advertises the `session.notices`
-capability with it on, so by default pons sends a notice only to a client that
-advertised the capability. `--notices` sends it regardless (what to use with
-Zed's stable release), `--no-notice` never does.
+Zed shows it above the composer until the user dismisses it; ACP notices have
+no ID, so pons cannot dismiss or replace one). By default pons sends a notice
+only to a client that advertised the `session.notices` capability, which Zed
+does since 1.25.2. `--notices` sends it regardless, `--no-notice` never does;
+the roster still shows finished subagents as `completed` either way.
 3. **Task notifications.** After a restart Zed replays the session and the
 adapter (depending on its version) can send the background tasks' raw
 `<task-notification>...</task-notification>` text as `user_message_chunk`s,
