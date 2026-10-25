@@ -141,6 +141,7 @@ async fn run() -> Result<Outcome> {
         steer_hold: Duration::from_millis(cli.steer_hold_ms),
         auto_approve: cli.auto_approve,
         auto_approve_tools: cli.auto_approve_tools,
+        mcp_servers: cli.mcp_server,
     };
     let note_error =
         |e: &anyhow::Error| logger.log(Dir::Pons, format!("exiting: error: {e:#}").as_bytes());

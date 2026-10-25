@@ -12,6 +12,7 @@ mod entry_order;
 mod failsafe;
 mod finish;
 mod interrupt;
+mod mcp;
 mod notification;
 mod permission;
 mod replay;

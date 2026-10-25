@@ -161,6 +161,7 @@ impl Engine {
         let forward = || vec![Action::ToAgent(raw.to_vec())];
         match method(&msg) {
             Some("initialize") => self.on_initialize(msg, raw),
+            Some("session/new") => self.add_mcp_servers(msg, raw),
             Some("session/load" | "session/resume") => {
                 if let (Some(id), Some(sid)) = (msg.get("id"), session_id(&msg)) {
                     self.closed.remove(sid);
@@ -169,7 +170,7 @@ impl Engine {
                     self.replay_dropped.remove(sid);
                     self.replay_markers.remove(sid);
                 }
-                forward()
+                self.add_mcp_servers(msg, raw)
             }
             Some("session/prompt") => {
                 if let (Some(id), Some(sid)) = (msg.get("id"), session_id(&msg)) {

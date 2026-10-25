@@ -18,6 +18,7 @@ mod cancel;
 mod clock;
 mod hold;
 mod initialize;
+mod mcp;
 mod response;
 mod route;
 mod steer;
@@ -58,6 +59,14 @@ pub enum InterruptMode {
     Queue,
     /// Forward the cancel (kills the background subagents).
     Cancel,
+}
+
+/// An MCP server the user asked pons to add to the client's session requests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpServer {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +126,8 @@ pub struct Config {
     pub auto_approve: AutoApprove,
     /// Comma separated tool names for `auto_approve` (empty: read-only kinds).
     pub auto_approve_tools: String,
+    /// Stdio MCP servers added to `session/new`, `session/load` and `session/resume`.
+    pub mcp_servers: Vec<McpServer>,
 }
 
 impl Default for Config {
@@ -146,6 +157,7 @@ impl Default for Config {
             steer_hold: Duration::from_millis(1500),
             auto_approve: AutoApprove::None,
             auto_approve_tools: String::new(),
+            mcp_servers: Vec::new(),
         }
     }
 }

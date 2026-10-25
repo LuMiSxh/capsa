@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use capsa_core::update::{UninstallArgs, UpdateArgs};
 use clap::{Parser, Subcommand};
 
-use crate::engine::InterruptMode;
+use crate::engine::{InterruptMode, McpServer};
 use crate::log::LogLevel;
 use crate::permission::AutoApprove;
 
@@ -182,6 +182,12 @@ pub struct Cli {
     #[arg(long, value_name = "LIST", default_value = "")]
     pub auto_approve_tools: String,
 
+    /// Adds a stdio MCP server to every session/new, session/load and
+    /// session/resume request the client sends, as NAME=COMMAND[,ARG...].
+    /// Repeatable. A name the client already sends keeps the client's entry.
+    #[arg(long, value_name = "NAME=COMMAND[,ARG...]", value_parser = parse_mcp_server)]
+    pub mcp_server: Vec<McpServer>,
+
     /// Test hook: lines containing this text make the rules fail.
     #[arg(long, value_name = "TEXT", env = "PONS_INJECT_FAILURE", hide = true)]
     pub inject_failure: Option<String>,
@@ -275,4 +281,125 @@ pub enum SelfAction {
 
     /// Remove this binary. The wire logs and the Zed `agent_servers` entry stay.
     Uninstall(UninstallArgs),
+}
+
+/// Parses `NAME=COMMAND[,ARG...]`; the name ends at the first `=`.
+fn parse_mcp_server(value: &str) -> Result<McpServer, String> {
+    let (name, spec) = value
+        .split_once('=')
+        .ok_or_else(|| "expected NAME=COMMAND[,ARG...]".to_owned())?;
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(format!(
+            "MCP server name `{name}` must be made of letters, digits, `_` and `-`"
+        ));
+    }
+    let mut parts = spec.split(',').map(str::to_owned);
+    let command = parts.next().unwrap_or_default();
+    if command.is_empty() {
+        return Err("the MCP server command must not be empty".to_owned());
+    }
+    Ok(McpServer {
+        name: name.to_owned(),
+        command,
+        args: parts.collect(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::error::ErrorKind;
+
+    use super::*;
+
+    fn parse(values: &[&str]) -> Result<Vec<McpServer>, clap::Error> {
+        let mut argv = vec!["pons"];
+        for &value in values {
+            argv.push("--mcp-server");
+            argv.push(value);
+        }
+        Cli::try_parse_from(argv).map(|cli| cli.mcp_server)
+    }
+
+    fn server(name: &str, command: &str, args: &[&str]) -> McpServer {
+        McpServer {
+            name: name.to_owned(),
+            command: command.to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn parses_name_command_and_comma_separated_args() {
+        assert_eq!(
+            parse(&["velum=/Users/me/.cargo/bin/velum,mcp,--verbose"]).unwrap(),
+            vec![server(
+                "velum",
+                "/Users/me/.cargo/bin/velum",
+                &["mcp", "--verbose"]
+            )]
+        );
+    }
+
+    #[test]
+    fn a_command_without_args_has_no_args() {
+        assert_eq!(
+            parse(&["velum=velum"]).unwrap(),
+            vec![server("velum", "velum", &[])]
+        );
+    }
+
+    #[test]
+    fn only_the_first_equals_sign_splits_the_name() {
+        assert_eq!(
+            parse(&["velum=/bin/velum,--opt=1"]).unwrap(),
+            vec![server("velum", "/bin/velum", &["--opt=1"])]
+        );
+    }
+
+    #[test]
+    fn the_flag_repeats_and_keeps_its_order() {
+        assert_eq!(
+            parse(&["a=one", "b=two,x"]).unwrap(),
+            vec![server("a", "one", &[]), server("b", "two", &["x"])]
+        );
+    }
+
+    #[test]
+    fn no_flag_means_no_servers() {
+        assert!(parse(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_value_without_equals_is_a_usage_error() {
+        assert_eq!(
+            parse(&["velum"]).unwrap_err().kind(),
+            ErrorKind::ValueValidation
+        );
+    }
+
+    #[test]
+    fn an_empty_name_or_command_is_a_usage_error() {
+        for value in ["=/bin/velum", "velum=", "velum=,mcp"] {
+            assert_eq!(
+                parse(&[value]).unwrap_err().kind(),
+                ErrorKind::ValueValidation,
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_with_other_characters_is_a_usage_error() {
+        for value in ["ve lum=/bin/velum", "velum.x=/bin/velum", "velum/x=cmd"] {
+            assert_eq!(
+                parse(&[value]).unwrap_err().kind(),
+                ErrorKind::ValueValidation,
+                "{value}"
+            );
+        }
+    }
 }

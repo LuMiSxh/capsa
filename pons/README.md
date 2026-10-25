@@ -411,6 +411,20 @@ Each program is searched on `PATH` first, then in the user directories Zed's `PA
 
 The environment (including Anthropic auth) is inherited by the agent process.
 
+### MCP servers for the session
+
+`--mcp-server NAME=COMMAND[,ARG...]` (repeatable) adds a stdio MCP server to
+every `session/new`, `session/load` and `session/resume` request that Zed sends
+through pons, so the server exists only in those sessions. A server whose name
+Zed already sends keeps Zed's entry. With the velum shield, the agent command in
+`settings.json` is:
+
+```json
+"args": ["--mcp-server", "velum=/Users/you/.cargo/bin/velum,mcp", "--", "velum", "run", "--", "claude-agent-acp"]
+```
+
+which is `pons --mcp-server velum=/Users/you/.cargo/bin/velum,mcp -- velum run -- claude-agent-acp` on the command line.
+
 ## Options
 
 ```
@@ -426,6 +440,7 @@ pons [--log FILE | --no-log] [--log-dir DIR] [--log-level all|default|meta]
      [--steer-hold-ms MS] [--auto-approve none|allow-once|allow-always]
      [--auto-approve-tools LIST]
      [--force-features] [--no-subagent-text] [--max-failures N]
+     [--mcp-server NAME=COMMAND[,ARG...]]...
      [-- <agent> [args...]]
 pons self doctor [--json|--human|--agent] [--log FILE] [--log-dir DIR] [--agent-cmd CMD...]
 pons self setup [--package-manager pnpm|bun|npm] [--dry-run]
@@ -434,6 +449,9 @@ pons self uninstall [--dry-run]
 ```
 
 `pons --help` lists every flag with its default.
+
+`--mcp-server NAME=COMMAND[,ARG...]` (repeatable) adds a stdio MCP server to
+each session request the client sends; see [MCP servers](#mcp-servers-for-the-session).
 
 ## Development
 

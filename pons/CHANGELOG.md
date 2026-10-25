@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- `--mcp-server NAME=COMMAND[,ARG...]` (repeatable) adds a stdio MCP server to every `session/new`, `session/load` and `session/resume` request the client sends, so the server exists only in those sessions. A server whose name the client already sends keeps the client's entry. Each addition or skip is a wire-log note. It works when pons steps aside for native subagents.
+
 ## [0.6.0]
 
 - Commands about pons itself are `pons self <action>`: `pons self doctor`, `pons self setup`, `pons self update`, `pons self uninstall`. `doctor` and `setup` are no longer top-level, and there are no aliases. The proxy stays the default behaviour.
