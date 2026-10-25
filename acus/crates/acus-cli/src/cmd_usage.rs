@@ -3,7 +3,7 @@
 
 use crate::config::Config;
 use crate::fmt::Out;
-use acus_usage::{AgentStat, Report, UsageOpts, WEIGHTS, group, report};
+use acus_usage::{AgentStat, CategoryStat, Report, UsageOpts, WEIGHTS, group, report};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
@@ -260,23 +260,26 @@ fn tools(r: &Report, out: &Out) -> Result<Outcome> {
     let mut rows: Vec<_> = r
         .categories
         .iter()
-        .map(|(c, n)| (group(c), *c, n[0], n[1]))
+        .map(|(c, s)| (group(c), *c, *s))
         .collect();
-    rows.sort_by_key(|&(g, c, a, b)| (g, std::cmp::Reverse(a + b), c));
-    let group_total = |g| {
+    rows.sort_by_key(|&(g, c, s)| (g, std::cmp::Reverse(total_calls(&s)), c));
+    let group_sum = |g: &str, f: fn(&CategoryStat) -> u64| {
         rows.iter()
-            .filter(|r| r.0 == g)
-            .map(|r| r.2 + r.3)
+            .filter(|row| row.0 == g)
+            .map(|row| f(&row.2))
             .sum::<u64>()
             .max(1)
     };
     if out.format == Format::Json {
         let v: Vec<_> = rows
             .iter()
-            .map(|&(g, c, a, b)| {
+            .map(|&(g, c, s)| {
                 serde_json::json!({
-                    "group": g, "category": c, "claude": a, "codex": b, "total": a + b,
-                    "share": (a + b) as f64 / group_total(g) as f64,
+                    "group": g, "category": c, "claude": s.calls[0], "codex": s.calls[1],
+                    "total": total_calls(&s),
+                    "share": total_calls(&s) as f64 / group_sum(g, total_calls) as f64,
+                    "result_chars": total_chars(&s),
+                    "result_share": total_chars(&s) as f64 / group_sum(g, total_chars) as f64,
                 })
             })
             .collect();
@@ -289,14 +292,26 @@ fn tools(r: &Report, out: &Out) -> Result<Outcome> {
     );
     println!(
         "{}",
-        out.header("category claude codex total share-of-group")
+        out.header("category claude codex total share-of-group result-chars result-share-of-group")
     );
-    for (g, c, a, b) in &rows {
+    for &(g, c, s) in &rows {
         println!(
-            "  {g}/{c} {a} {b} {} {:.0}%",
-            a + b,
-            100.0 * (a + b) as f64 / group_total(g) as f64
+            "  {g}/{c} {} {} {} {:.0}% {} {:.0}%",
+            s.calls[0],
+            s.calls[1],
+            total_calls(&s),
+            100.0 * total_calls(&s) as f64 / group_sum(g, total_calls) as f64,
+            k(total_chars(&s) as f64),
+            100.0 * total_chars(&s) as f64 / group_sum(g, total_chars) as f64,
         );
     }
     Ok(Outcome::Found)
+}
+
+fn total_calls(s: &CategoryStat) -> u64 {
+    s.calls.iter().sum()
+}
+
+fn total_chars(s: &CategoryStat) -> u64 {
+    s.result_chars.iter().sum()
 }

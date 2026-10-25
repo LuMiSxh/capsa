@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Parses Claude Code JSONL transcripts into per-file token and tool-call stats.
 
-use crate::{FileStats, Tokens, is_explore_cmd};
+use crate::{Call, FileStats, Tokens, is_explore_cmd, text_chars};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::collections::HashMap;
@@ -73,7 +73,7 @@ struct AgentInput<'a> {
 
 pub(crate) fn parse(text: &str) -> FileStats {
     let mut st = FileStats::default();
-    let mut tool_of: HashMap<String, String> = HashMap::new();
+    let mut tool_of: HashMap<String, usize> = HashMap::new();
     for line in text.lines() {
         let Ok(r) = serde_json::from_str::<Rec>(line) else {
             continue;
@@ -124,11 +124,15 @@ pub(crate) fn parse(text: &str) -> FileStats {
                         {
                             st.spawns.push((id.to_owned(), t.to_owned()));
                         }
-                        tool_of.insert(id.to_owned(), name.clone());
+                        tool_of.insert(id.to_owned(), st.calls.len());
                     }
-                    st.categories
-                        .extend(crate::tools::claude_tool(&name, input));
-                    st.calls.push((name, input.len() as u64, explore));
+                    st.calls.push(Call {
+                        categories: crate::tools::claude_tool(&name, input),
+                        input_chars: input.len() as u64,
+                        explore,
+                        name,
+                        result_chars: 0,
+                    });
                 }
             }
             Some("user") if r.is_meta != Some(true) => user_record(&mut st, &tool_of, content),
@@ -147,7 +151,7 @@ fn blocks(content: &str) -> Vec<Block<'_>> {
 }
 
 /// A user record: a prompt, or the results of the tool calls it answers.
-fn user_record(st: &mut FileStats, tool_of: &HashMap<String, String>, content: &str) {
+fn user_record(st: &mut FileStats, tool_of: &HashMap<String, usize>, content: &str) {
     if content.starts_with('"') {
         st.prompts += 1;
         return;
@@ -157,11 +161,10 @@ fn user_record(st: &mut FileStats, tool_of: &HashMap<String, String>, content: &
         st.prompts += 1;
     }
     for b in bs.iter().filter(|b| b.kind == "tool_result") {
-        let name = b
-            .tool_use_id
-            .and_then(|id| tool_of.get(id))
-            .cloned()
-            .unwrap_or_else(|| "?".into());
-        *st.results.entry(name).or_default() += b.content.map_or(0, |c| c.get().len() as u64);
+        let chars = b.content.map_or(0, |c| text_chars(c.get()));
+        match b.tool_use_id.and_then(|id| tool_of.get(id)) {
+            Some(&i) => st.calls[i].result_chars += chars,
+            None => st.orphan_result_chars += chars,
+        }
     }
 }
