@@ -11,6 +11,9 @@
 ### Changed
 
 - `acus guard` rewrites an `acus patch` whose written lines are thrown away into `acus patch -q`: a `| head` or `| tail` as the last stage, or a redirect to `/dev/null` (also with `2>&1` or `&>`). `-q` prints the summary and errors, not the written lines. Other pipes and redirects are left as they are.
+- The agent skill (`acus self skill`) makes `acus patch -q` the default when the written lines are not needed, names `*** Delete Lines` and `*** Move Lines` with their `*** Expect:` line, and says `-g '!dist'` excludes a path. It no longer asks agents to write a patch to a file before `cd DIR &&`; the heredoc is the normal form.
+- `acus patch --help` lists `*** Delete Lines`, `*** Move Lines` with `*** Expect:`, and `*** After:`.
+- `acus patch` echoes a `*** Replace Symbol:` body longer than 40 lines as its first and last 5 lines, with a `… N more lines` marker that names the `acus show` range; `--json` still lists every line. With `--fmt` the formatted lines are echoed in full.
 
 ### Fixed
 

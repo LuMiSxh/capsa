@@ -14,6 +14,9 @@ PATCH FORMAT (stdin or --file; all or nothing, nothing is written on an error):
                                     PATH:N instead of PATH#Symbol means before / after line N
   *** Delete Symbol: PATH#Symbol
   *** Move Symbol: PATH#Symbol      then *** Before: PATH#Sym, *** After: PATH#Sym or *** To: PATH
+  *** Delete Lines: PATH:A-B        then *** Expect: TEXT, the exact text of line A
+  *** Move Lines: PATH:A-B          then *** Expect: TEXT, *** After: PATH:N (0 = start) or PATH#Sym
+                                    line numbers are from before the patch (run first)
 
   SEARCH/REPLACE under `*** Update File:`, with the Edit tool's semantics: one or more blocks
   <<<<<<< SEARCH

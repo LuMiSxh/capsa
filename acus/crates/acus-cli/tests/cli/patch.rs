@@ -28,6 +28,38 @@ fn patch_check_counts_only_the_changed_lines() {
 }
 
 #[test]
+fn patch_add_file_prints_only_the_summary() {
+    let d = tempfile::tempdir().unwrap();
+    let body: String = (1..=30).map(|i| format!("+fn g{i}() {{}}\n")).collect();
+    let p = format!("*** Begin Patch\n*** Add File: sub/big.rs\n{body}*** End Patch\n");
+    assert_eq!(
+        acus_in(d.path(), &["patch"], &p),
+        (0, "A sub/big.rs +30\n".into(), String::new())
+    );
+}
+
+#[test]
+fn patch_replace_symbol_echoes_the_edges_of_a_long_body() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("f.rs"), "fn a() {\n    1\n}\n").unwrap();
+    let body: String = (1..=45)
+        .map(|i| format!("+    let y{i} = {i};\n"))
+        .collect();
+    let p = format!(
+        "*** Begin Patch\n*** Replace Symbol: f.rs#a\n+fn a() {{\n{body}+}}\n*** End Patch\n"
+    );
+    let (code, out, err) = acus_in(d.path(), &["patch"], &p);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        out,
+        "M f.rs +45 -1\n== f.rs 1-47\n\
+         1\tfn a() {\n2\t    let y1 = 1;\n3\t    let y2 = 2;\n4\t    let y3 = 3;\n5\t    let y4 = 4;\n\
+         … 37 more lines (acus show f.rs:6-42)\n\
+         43\t    let y42 = 42;\n44\t    let y43 = 43;\n45\t    let y44 = 44;\n46\t    let y45 = 45;\n47\t}\n"
+    );
+}
+
+#[test]
 fn patch_from_stdin() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("a.rs"), "fn f() {\n    1\n}\n").unwrap();
