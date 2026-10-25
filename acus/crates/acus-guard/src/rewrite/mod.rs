@@ -5,6 +5,7 @@
 use super::*;
 
 mod fold;
+mod patch_quiet;
 mod span;
 
 use fold::*;
@@ -17,7 +18,7 @@ pub struct Rewrite {
     /// Pairs what was run instead of what, for the agent.
     pub note: String,
     pub rule: Rule,
-    /// Marks that a build or test was rewritten, so the hook gives no permission decision.
+    /// Marks that a build, test or patch was rewritten, so the hook gives no permission decision.
     pub deferred: bool,
 }
 
@@ -138,7 +139,9 @@ fn fold_all(cmd: &str, segs: &[Segment], scope: Option<&Scope>, partial: bool) -
                 new,
                 from_command: false,
             })),
-            None => fold_at(segs, i, scope),
+            None => patch_quiet::fold(segs, i)
+                .map(Step::Fold)
+                .or_else(|| fold_at(segs, i, scope)),
         };
         let fold = match step {
             Some(Step::Keep) => {
@@ -168,10 +171,19 @@ fn fold_all(cmd: &str, segs: &[Segment], scope: Option<&Scope>, partial: bool) -
         let from = segs[i].range.start + if from_command { segs[i].lead } else { 0 };
         let to = segs[last].range.end;
         let old = one_line(&cmd[from..to]);
-        notes.push(format!("ran `{new}` instead of `{old}`"));
+        let why = match rule {
+            Rule::PatchQuiet => {
+                ": -q prints only the summary and errors; the patch output was being discarded"
+            }
+            _ => "",
+        };
+        notes.push(format!("ran `{new}` instead of `{old}`{why}"));
         out.push_str(&cmd[at..from]);
         out.push_str(&new);
-        deferred |= matches!(rule, Rule::BuildPipe | Rule::CtxPipe | Rule::SedI);
+        deferred |= matches!(
+            rule,
+            Rule::BuildPipe | Rule::CtxPipe | Rule::SedI | Rule::PatchQuiet
+        );
         (at, i, first) = (to, last + 1, first.or(Some(rule)));
     }
     out.push_str(&cmd[at..]);
@@ -194,7 +206,10 @@ fn folds_run(cmd: &str, segs: &[Segment], i: usize, fold: &Fold, at: usize) -> b
     });
     let from = segs[i].range.start + if fold.from_command { segs[i].lead } else { 0 };
     let to = segs[fold.last].range.end;
-    joined && !run.iter().any(|s| s.heredoc) && from >= at && cmd.get(from..to).is_some()
+    // Only a patch may read its heredoc from the line it pipes on: the body follows that line.
+    let heredoc =
+        !run[1..].iter().any(|s| s.heredoc) && (!run[0].heredoc || fold.rule == Rule::PatchQuiet);
+    joined && heredoc && from >= at && cmd.get(from..to).is_some()
 }
 
 /// Returns the converted `acus find` of a search piped into a `head` or `tail` line count that

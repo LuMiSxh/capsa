@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `acus guard` rewrites an `acus patch` whose written lines are thrown away into `acus patch -q`: a `| head` or `| tail` as the last stage, or a redirect to `/dev/null` (also with `2>&1` or `&>`). `-q` prints the summary and errors, not the written lines. Other pipes and redirects are left as they are.
+
 ## [0.17.0]
 
 ### Added

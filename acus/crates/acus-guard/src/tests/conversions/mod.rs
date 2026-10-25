@@ -5,6 +5,7 @@
 use super::*;
 
 mod pipes;
+mod quiet_patch;
 mod refusals;
 
 #[test]
