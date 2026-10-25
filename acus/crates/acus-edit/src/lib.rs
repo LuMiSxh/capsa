@@ -7,4 +7,4 @@ mod parse;
 
 pub use apply::{Applied, Change, FileText, Region, apply, apply_with};
 pub use error::EditError;
-pub use parse::{Chunk, InsertAt, Op, parse};
+pub use parse::{Chunk, InsertAt, LineAnchor, Op, parse};

@@ -95,6 +95,9 @@ pub(super) fn body(op: Option<&mut Op>, line: &str, n: usize, stage: &mut Stage)
                 after: format!("`*** Delete File: {path}`"),
             });
         }
+        Some(Op::DeleteLines { path, .. } | Op::MoveLines { path, .. }) => {
+            return Err(after_line_directive(n, path));
+        }
         Some(Op::DeleteSymbol { path, symbol } | Op::MoveSymbol { path, symbol, .. }) => {
             return Err(EditError::UnexpectedAfter {
                 line: n,
@@ -110,4 +113,11 @@ pub(super) fn body(op: Option<&mut Op>, line: &str, n: usize, stage: &mut Stage)
         None => return Err(EditError::ContentBeforeDirective { line: n }),
     }
     Ok(())
+}
+
+fn after_line_directive(line: usize, path: &str) -> EditError {
+    EditError::UnexpectedAfter {
+        line,
+        after: format!("a line directive for `{path}`"),
+    }
 }

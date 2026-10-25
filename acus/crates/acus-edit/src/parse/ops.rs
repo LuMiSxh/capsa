@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Applies directives to the ops they open or complete.
 
-use super::addr::{insert_addr, sym_addr};
+use super::addr::{insert_addr, line_range, move_anchor, sym_addr};
 use super::directives::{Directive, Kind, accepted, did_you_mean, split_directive};
 use super::{Dest, Op};
 use crate::error::{EditError, Result};
@@ -67,8 +67,43 @@ fn start_op(d: &Directive, rest: &str, n: usize, ops: &mut Vec<Op>) -> Result<()
                 to: None,
             });
         }
+        Kind::DeleteLines => {
+            let (path, start, end) = line_range(rest, n, d.name)?;
+            ops.push(Op::DeleteLines {
+                path,
+                start,
+                end,
+                expect: None,
+                line: n,
+            });
+        }
+        Kind::MoveLines => {
+            let (path, start, end) = line_range(rest, n, d.name)?;
+            ops.push(Op::MoveLines {
+                path,
+                start,
+                end,
+                expect: None,
+                to: None,
+                line: n,
+            });
+        }
     }
     Ok(())
+}
+
+/// Applies `*** Expect:`, which must come on the line right after a `*** Delete Lines` or
+/// `*** Move Lines`, so the expectation cannot attach to the wrong range.
+fn expect(text: &str, n: usize, ops: &mut [Op]) -> Result<()> {
+    match ops.last_mut() {
+        Some(Op::DeleteLines { expect, line, .. } | Op::MoveLines { expect, line, .. })
+            if *line + 1 == n && expect.is_none() =>
+        {
+            *expect = Some(text.into());
+            Ok(())
+        }
+        _ => Err(EditError::ExpectWithoutLines { line: n }),
+    }
 }
 
 /// Applies `*** Before:`, `*** After:` or `*** To:`, which give the destination of the
@@ -76,6 +111,13 @@ fn start_op(d: &Directive, rest: &str, n: usize, ops: &mut Vec<Op>) -> Result<()
 fn destination(kind: &str, rest: &str, n: usize, ops: &mut [Op]) -> Result<()> {
     if let (Some(Op::Copy { to, .. }), "To") = (ops.last_mut(), kind) {
         *to = Some(rest.trim().into());
+        return Ok(());
+    }
+    if let (Some(Op::MoveLines { to, .. }), "After") = (ops.last_mut(), kind) {
+        if to.is_some() {
+            return Err(EditError::MoveLinesDestinationTwice { line: n });
+        }
+        *to = Some(move_anchor(rest, n)?);
         return Ok(());
     }
     let Some(Op::MoveSymbol { to, .. }) = ops.last_mut() else {
@@ -115,6 +157,8 @@ pub(super) fn directive(line: &str, n: usize, ops: &mut Vec<Op>) -> Result<bool>
         .find_map(|k| line.strip_prefix(&format!("*** {k}: ")).map(|r| (*k, r)))
     {
         destination(kind, rest, n, ops)?;
+    } else if let Some(text) = line.strip_prefix("*** Expect:") {
+        expect(text.strip_prefix(' ').unwrap_or(text), n, ops)?;
     } else if line.starts_with("***") {
         return Err(EditError::UnknownDirective {
             line: n,

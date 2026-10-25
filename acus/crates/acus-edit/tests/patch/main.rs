@@ -2,6 +2,7 @@
 #![expect(clippy::unwrap_used, reason = "test code")]
 
 mod files;
+mod line_ranges;
 mod replace_all;
 mod search_replace;
 mod symbols;

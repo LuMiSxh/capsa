@@ -103,6 +103,7 @@ fn ${1}_new(
 
 - `*** Replace All: PATH [PATH...]` takes space-separated files, directories and globs (`*.py`, matched below the current directory) and changes every occurrence. SEARCH blocks are literal and whitespace-exact and may span lines; REGEX blocks are Rust regex run per file with `(?m)`, with `${1}` in the replacement. A block that matches nothing fails the patch.
 - `Delete Symbol` and `Move Symbol` take doc comments and attributes along; `Move Symbol` needs `*** Before:` or `*** After: path#Sym`, or `*** To: path`.
+- `*** Delete Lines: PATH:A-B` and `*** Move Lines: PATH:A-B` cut or move lines by number. Each needs `*** Expect: TEXT` on the next line, the exact text of line A, or the patch fails and shows the actual line. A move then takes `*** After: PATH:N` (0 for the file start) or `*** After: PATH#Sym`. Numbers refer to the file before the patch, so line directives run first.
 
 ## Reading the output
 
