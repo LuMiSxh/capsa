@@ -146,9 +146,18 @@ pub struct Report {
     pub tools: Vec<ToolStat>,
     pub chains: Chains,
     pub agents: Vec<AgentStat>,
-    /// Tool-call categories → calls per agent `[claude, codex]`.
+    /// Tool-call categories → calls and result characters per agent `[claude, codex]`.
     #[serde(skip)]
-    pub categories: BTreeMap<&'static str, [u64; 2]>,
+    pub categories: BTreeMap<&'static str, CategoryStat>,
+    /// Characters of all tool results.
+    pub result_chars: u64,
+}
+
+/// Calls and tool-result characters of one category, per agent `[claude, codex]`.
+#[derive(Debug, Default, Clone, Copy, Serialize)]
+pub struct CategoryStat {
+    pub calls: [u64; 2],
+    pub result_chars: [u64; 2],
 }
 
 /// What one transcript file contributes.
@@ -168,11 +177,20 @@ pub(crate) struct FileStats {
     pub requests: Vec<(Option<String>, String, Tokens)>,
     pub compactions: u32,
     pub prompts: u64,
-    /// (tool name, input chars, is search/read)
-    pub calls: Vec<(String, u64, bool)>,
-    pub results: HashMap<String, u64>,
-    /// Category hits per tool call, see `tools::classify`.
+    pub calls: Vec<Call>,
+    /// Result characters of results whose call is not in this file.
+    pub orphan_result_chars: u64,
+}
+
+/// One tool call of a transcript, with the characters of the result that answers it.
+pub(crate) struct Call {
+    pub name: String,
+    pub input_chars: u64,
+    /// Whether the call only searches or reads, see `is_explore_cmd`.
+    pub explore: bool,
+    /// Categories the call hits, see `tools::classify`.
     pub categories: Vec<&'static str>,
+    pub result_chars: u64,
 }
 
 /// Shell commands whose first real step only searches or reads (`cd x && rg …` counts).
@@ -187,6 +205,24 @@ pub(crate) fn is_explore_cmd(cmd: &str) -> bool {
         }
     }
     false
+}
+
+/// Characters of a tool result's text: a JSON string, or the `text` blocks of a JSON array.
+pub(crate) fn text_chars(raw: &str) -> u64 {
+    #[derive(serde::Deserialize)]
+    struct Text {
+        text: Option<String>,
+    }
+    let chars = |s: &str| s.chars().count() as u64;
+    if raw.starts_with('"') {
+        return serde_json::from_str::<String>(raw).map_or(0, |s| chars(&s));
+    }
+    serde_json::from_str::<Vec<Text>>(raw).map_or(0, |v| {
+        v.iter()
+            .filter_map(|t| t.text.as_deref())
+            .map(|s| s.chars().count() as u64)
+            .sum()
+    })
 }
 
 fn default_root(env: &str, home_sub: &str, sub: &str) -> Option<PathBuf> {
@@ -334,9 +370,7 @@ fn merge(files: Vec<FileStats>) -> Report {
         if s.project.is_empty() {
             s.project = project;
         }
-        for c in &f.categories {
-            r.categories.entry(c).or_default()[usize::from(f.agent == "codex")] += 1;
-        }
+        add_calls(&mut r, &mut tools, &f);
         let mut spawn = Spawn::default();
         for (id, model, t) in f.requests {
             if id.is_some_and(|id| !seen.insert(id)) {
@@ -358,31 +392,6 @@ fn merge(files: Vec<FileStats>) -> Report {
         }
         s.prompts += f.prompts;
         r.prompts += f.prompts;
-        let mut run = 0u64;
-        for (name, input, explore) in &f.calls {
-            let t = tools.entry(name.clone()).or_insert_with(|| ToolStat {
-                name: name.clone(),
-                ..Default::default()
-            });
-            t.calls += 1;
-            t.input_chars += input;
-            r.chains.tool_calls += 1;
-            if *explore {
-                run += 1;
-            } else {
-                close_chain(&mut r.chains, &mut run);
-            }
-        }
-        close_chain(&mut r.chains, &mut run);
-        for (name, chars) in f.results {
-            tools
-                .entry(name.clone())
-                .or_insert_with(|| ToolStat {
-                    name,
-                    ..Default::default()
-                })
-                .result_chars += chars;
-        }
     }
     r.weighted = r.total.weighted();
     r.context = quantiles(contexts);
@@ -399,10 +408,47 @@ fn merge(files: Vec<FileStats>) -> Report {
     r.models
         .sort_by(|a, b| b.1.weighted().total_cmp(&a.1.weighted()));
     r.tools = tools.into_values().collect();
+    r.result_chars = r.tools.iter().map(|t| t.result_chars).sum();
     r.agents = agent_stats(roles, r.weighted);
     r.tools
         .sort_by(|a, b| b.calls.cmp(&a.calls).then(a.name.cmp(&b.name)));
     r
+}
+
+/// Adds one transcript's tool calls to the tool, category and chain statistics.
+fn add_calls(r: &mut Report, tools: &mut HashMap<String, ToolStat>, f: &FileStats) {
+    let mut run = 0u64;
+    let agent = usize::from(f.agent == "codex");
+    for c in &f.calls {
+        let t = tools.entry(c.name.clone()).or_insert_with(|| ToolStat {
+            name: c.name.clone(),
+            ..Default::default()
+        });
+        t.calls += 1;
+        t.input_chars += c.input_chars;
+        t.result_chars += c.result_chars;
+        r.chains.tool_calls += 1;
+        for &cat in &c.categories {
+            let s = r.categories.entry(cat).or_default();
+            s.calls[agent] += 1;
+            s.result_chars[agent] += c.result_chars;
+        }
+        if c.explore {
+            run += 1;
+        } else {
+            close_chain(&mut r.chains, &mut run);
+        }
+    }
+    close_chain(&mut r.chains, &mut run);
+    if f.orphan_result_chars > 0 {
+        tools
+            .entry("?".into())
+            .or_insert_with(|| ToolStat {
+                name: "?".into(),
+                ..Default::default()
+            })
+            .result_chars += f.orphan_result_chars;
+    }
 }
 
 /// One transcript's requests after dedup.

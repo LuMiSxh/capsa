@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `acus usage --tools` shows the size of tool results per category, including each `acus` subcommand: characters and share of the group (`result-chars`, `result-share-of-group`; `result_chars` and `result_share` in `--json`). A result is attributed to the call that it answers.
+- Shell writes (`cat > file <<EOF`, `cat >> file`, `tee file`, `printf … > file`) are counted as the `edit-shell` category, not as reads.
+
+### Fixed
+
+- Codex `acus` calls were counted as 0 when their command was stored as escaped JSON or in a JS tool body; the command is now decoded first.
+
 ## [0.17.0]
 
 ### Added

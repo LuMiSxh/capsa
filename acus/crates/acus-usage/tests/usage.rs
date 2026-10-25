@@ -57,7 +57,8 @@ fn aggregates_both_agents() {
     assert_eq!((x.input, x.cache_read, x.output), (20, 80, 10));
 
     let grep = r.tools.iter().find(|t| t.name == "Grep").unwrap();
-    assert_eq!((grep.calls, grep.result_chars), (1, 12));
+    // Result size counts the text, not the JSON string around it.
+    assert_eq!((grep.calls, grep.result_chars), (1, 10));
     // Grep, Read, sed form one chain of 3; Edit ends it.
     assert_eq!(
         (r.chains.count, r.chains.calls_in_chains, r.chains.longest),
@@ -138,4 +139,44 @@ fn agents_one_row_per_role() {
     assert!((share - 1.0).abs() < 1e-9);
     // Existing views still count subagents in their parent session.
     assert_eq!(r.sessions.len(), 1);
+}
+
+const CLAUDE_RESULTS: &str = r#"{"type":"assistant","message":{"id":"r1","model":"opus","usage":{"input_tokens":1,"output_tokens":1},"content":[{"type":"tool_use","id":"a1","name":"Bash","input":{"command":"acus find 'x' --block"}},{"type":"tool_use","id":"a2","name":"Bash","input":{"command":"acus show a.rs:1-5"}},{"type":"tool_use","id":"a3","name":"Read","input":{"file_path":"a"}},{"type":"tool_use","id":"a4","name":"Bash","input":{"command":"cat > notes.md <<'EOF'\nhi\nEOF"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"a1","content":"0123456789"},{"type":"tool_result","tool_use_id":"a2","content":[{"type":"text","text":"héllo"}]},{"type":"tool_result","tool_use_id":"a3","content":"abc"}]}}
+"#;
+
+const CODEX_JS: &str = r#"{"type":"session_meta","payload":{"cwd":"/y/Other"}}
+{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"tools.exec_command({cmd: \"acus find 'x' --block\"})","call_id":"c1"}}
+{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":"héllo"}}
+"#;
+
+#[test]
+fn result_chars_follow_their_call() {
+    let d = tempfile::tempdir().unwrap();
+    fs::write(d.path().join("s.jsonl"), CLAUDE_RESULTS).unwrap();
+    let r = report(&UsageOpts {
+        claude_root: Some(d.path().into()),
+        codex_root: Some(d.path().join("none")),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(r.categories["acus:find"].result_chars, [10, 0]);
+    assert_eq!(r.categories["acus:show"].result_chars, [5, 0]);
+    assert_eq!(r.categories["read"].result_chars, [3, 0]);
+    assert_eq!(r.result_chars, 18);
+    assert_eq!(r.categories["edit-shell"].calls, [1, 0]);
+}
+
+#[test]
+fn escaped_codex_acus_call_is_counted() {
+    let d = tempfile::tempdir().unwrap();
+    fs::write(d.path().join("rollout-a.jsonl"), CODEX_JS).unwrap();
+    let r = report(&UsageOpts {
+        claude_root: Some(d.path().join("none")),
+        codex_root: Some(d.path().into()),
+        ..Default::default()
+    })
+    .unwrap();
+    let s = r.categories["acus:find"];
+    assert_eq!((s.calls, s.result_chars), ([0, 1], [0, 5]));
 }

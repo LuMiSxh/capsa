@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Parses Codex rollout JSONL transcripts into per-file token and tool-call stats.
 
-use crate::{FileStats, Tokens, is_explore_cmd};
+use crate::{Call, FileStats, Tokens, is_explore_cmd, text_chars};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::collections::HashMap;
@@ -55,7 +55,7 @@ pub(crate) fn parse(text: &str) -> FileStats {
     let mut st = FileStats::default();
     let mut model = String::new();
     let mut last_total = None;
-    let mut tool_of: HashMap<String, String> = HashMap::new();
+    let mut tool_of: HashMap<String, usize> = HashMap::new();
     let mut tasks = 0;
     for line in text.lines() {
         let Ok(r) = serde_json::from_str::<Rec>(line) else {
@@ -105,20 +105,22 @@ pub(crate) fn parse(text: &str) -> FileStats {
                 let name = p.name.unwrap_or_else(|| "shell".into());
                 let input = p.arguments.or(p.input).map(RawValue::get).unwrap_or("");
                 if let Some(id) = p.call_id {
-                    tool_of.insert(id.to_owned(), name.clone());
+                    tool_of.insert(id.to_owned(), st.calls.len());
                 }
-                st.categories.extend(crate::tools::codex_tool(&name, input));
-                st.calls
-                    .push((name, input.len() as u64, shell_explores(input)));
+                st.calls.push(Call {
+                    categories: crate::tools::codex_tool(&name, input),
+                    input_chars: input.len() as u64,
+                    explore: shell_explores(input),
+                    name,
+                    result_chars: 0,
+                });
             }
             ("response_item", Some("function_call_output" | "custom_tool_call_output")) => {
-                let name = p
-                    .call_id
-                    .and_then(|id| tool_of.get(id))
-                    .cloned()
-                    .unwrap_or_else(|| "?".into());
-                *st.results.entry(name).or_default() +=
-                    p.output.map_or(0, |o| o.get().len() as u64);
+                let chars = p.output.map_or(0, |o| text_chars(o.get()));
+                match p.call_id.and_then(|id| tool_of.get(id)) {
+                    Some(&i) => st.calls[i].result_chars += chars,
+                    None => st.orphan_result_chars += chars,
+                }
             }
             _ => {}
         }

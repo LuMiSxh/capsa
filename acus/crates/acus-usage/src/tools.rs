@@ -22,17 +22,8 @@ pub(crate) fn codex_tool(name: &str, input: &str) -> Vec<&'static str> {
     if name == "apply_patch" {
         return vec!["edit-builtin"];
     }
-    let mut v: Value = serde_json::from_str(input).unwrap_or(Value::Null);
-    if let Value::String(s) = &v {
-        v = serde_json::from_str(s).unwrap_or(Value::Null);
-    }
-    let cmds = match v.get("cmd").or_else(|| v.get("command")) {
-        Some(Value::String(s)) => vec![s.clone()],
-        Some(Value::Array(a)) => vec![a.last().and_then(Value::as_str).unwrap_or("").to_owned()],
-        _ => js_cmds(input),
-    };
     let mut hits: Vec<&'static str> = vec![];
-    for c in cmds {
+    for c in codex_commands(input) {
         for h in classify(&c) {
             if !hits.contains(&h) {
                 hits.push(h);
@@ -40,6 +31,38 @@ pub(crate) fn codex_tool(name: &str, input: &str) -> Vec<&'static str> {
         }
     }
     hits
+}
+
+/// The shell commands of one Codex tool call. Arguments are JSON, often a JSON string that holds
+/// the JSON object again, so string literals are decoded until none is left. The `cmd` or
+/// `command` value is a string or an argv array; other input (a JS tool body) is scanned for
+/// `cmd` literals.
+pub(crate) fn codex_commands(input: &str) -> Vec<String> {
+    let mut args = input.to_owned();
+    while let Ok(s) = serde_json::from_str::<String>(&args) {
+        args = s;
+    }
+    let Ok(v) = serde_json::from_str::<Value>(&args) else {
+        return js_cmds(&args);
+    };
+    match v.get("cmd").or_else(|| v.get("command")) {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(a)) => vec![argv_command(a)],
+        _ => js_cmds(&args),
+    }
+}
+
+/// The script of an argv such as `["bash", "-lc", "cargo test"]`, or else the words joined.
+fn argv_command(argv: &[Value]) -> String {
+    let words: Vec<&str> = argv.iter().filter_map(Value::as_str).collect();
+    let script = words
+        .iter()
+        .position(|w| matches!(*w, "-c" | "-lc"))
+        .and_then(|i| words.get(i + 1));
+    match script {
+        Some(s) => (*s).to_owned(),
+        None => words.join(" "),
+    }
 }
 
 /// Extracts every `cmd` literal from a Codex JS shell call, such as
@@ -265,6 +288,34 @@ fn has_short_flag(args: &[String], c: char) -> bool {
         .any(|a| !a.starts_with("--") && a.contains(c))
 }
 
+/// Whether a stage writes a file: a `>` or `>>` redirect to a path, or a `tee` operand.
+fn writes_file(p: &[String]) -> bool {
+    if base(&p[0]) == "tee" {
+        return p[1..]
+            .iter()
+            .any(|a| !a.starts_with('-') && a != "/dev/null");
+    }
+    let mut words = p[1..].iter();
+    while let Some(w) = words.next() {
+        let Some(rest) = w
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .strip_prefix('>')
+        else {
+            continue;
+        };
+        let target = rest.trim_start_matches(['>', '|']);
+        let target = if target.is_empty() {
+            words.next().map_or("", String::as_str)
+        } else {
+            target
+        };
+        if !target.is_empty() && !target.starts_with('&') && target != "/dev/null" {
+            return true;
+        }
+    }
+    false
+}
+
 const BUILD_TOOLS: [&str; 7] = [
     "cargo",
     "swift",
@@ -290,7 +341,7 @@ fn is_build(p: &[String]) -> bool {
 pub fn group(category: &str) -> &'static str {
     match category {
         "acus:find" | "acus:outline" | "acus:show" | "search" | "read" => "explore",
-        "acus:patch" | "edit-sed" | "edit-python" | "edit-builtin" => "edit",
+        "acus:patch" | "edit-sed" | "edit-python" | "edit-builtin" | "edit-shell" => "edit",
         "acus:ctx" | "build-filtered" | "build-unfiltered" => "build",
         "acus:diff" | "diff" => "diff",
         _ => "other",
@@ -331,6 +382,7 @@ pub(crate) fn classify(cmd: &str) -> Vec<&'static str> {
                 "grep" | "egrep" | "fgrep" | "rg" | "ag" | "ack" | "find" | "fd" if first => {
                     add("search");
                 }
+                "cat" | "printf" | "echo" | "tee" if writes_file(p) => add("edit-shell"),
                 "cat" | "head" | "tail" | "less" | "bat" | "nl" | "awk" if first => {
                     if base(w) != "awk" || args.iter().any(|a| a.contains("print")) {
                         add("read");
@@ -411,11 +463,34 @@ mod tests {
                 "apply_patch <<'EOF'\n*** Begin Patch\nEOF",
                 &["edit-builtin"],
             ),
+            ("cat > notes.md <<'EOF'\nhi\nEOF", &["edit-shell"]),
+            ("cat >> log.txt", &["edit-shell"]),
+            ("cat <<'EOF' > f.txt\nx\nEOF", &["edit-shell"]),
+            ("tee out.txt <<'EOF'\nx\nEOF", &["edit-shell"]),
+            ("printf 'a\\n' > f", &["edit-shell"]),
+            ("cat a.rs 2>&1 | head", &["read"]),
+            ("cat a.rs > /dev/null", &["read"]),
             ("ls", &[]),
         ];
         for (cmd, want) in t {
             assert_eq!(&classify(cmd), want, "{cmd}");
         }
+    }
+
+    #[test]
+    fn codex_arguments_are_decoded() {
+        assert_eq!(
+            codex_commands(r#""{cmd: \"acus find x --block\"}""#),
+            ["acus find x --block"]
+        );
+        assert_eq!(
+            codex_commands(r#""{\"cmd\":\"acus show a.rs:1-5\"}""#),
+            ["acus show a.rs:1-5"]
+        );
+        assert_eq!(
+            codex_commands(r#"{"command":["bash","-lc","cargo test"]}"#),
+            ["cargo test"]
+        );
     }
 
     #[test]
