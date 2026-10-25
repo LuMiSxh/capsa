@@ -11,7 +11,7 @@ One call answers what usually takes search → read → read. Output is line-num
 
 | Instead of | Run |
 |---|---|
-| `grep`, `rg`, `find` to locate code or usages | `acus find 'PAT' [PATH…] [-g '*.rs']`; `--block` adds the code around each hit; `-l`, `-w`, `-i`, `-c`, `-o`, `-v`, `-t py` work as in grep; `-A/-B/-C N` print N lines of context like grep (context lines are `N-`, hits `N`, groups split by `--`); `-x` whole lines, `-L` follows symlinks, `-U` multiline patterns; `-u --hidden` also searches ignored and hidden files |
+| `grep`, `rg`, `find` to locate code or usages | `acus find 'PAT' [PATH…] [-g '*.rs']` (`-g '!dist'` excludes a path); `--block` adds the code around each hit; `-l`, `-w`, `-i`, `-c`, `-o`, `-v`, `-t py` work as in grep; `-A/-B/-C N` print N lines of context like grep (context lines are `N-`, hits `N`, groups split by `--`); `-x` whole lines, `-L` follows symlinks, `-U` multiline patterns; `-u --hidden` also searches ignored and hidden files |
 | `sed -n A,Bp f \| grep 'x'` | `acus find 'x' f:A-B` (or `f#Sym`): searches only that range, with file-absolute line numbers; `f:-N` for the last N lines, `f:N-` from line N to the end |
 | `grep 'x' log \| cut -c1-200 \| tail -30` | `acus find 'x' log --cut 200 --last 30`: `--cut N` clips each hit line to N chars, `--last N` keeps the last N hits per file |
 | `ls -R`, `tree`, `find -type f` | `acus map [DIR]` |
@@ -41,7 +41,7 @@ EOF
 
 ## Patch
 
-Edit with `acus patch`, with the semantics of Claude's Edit tool. No prior Read needed. Put every change of one step into one patch. Inside a compound command (after `cd DIR &&`), write the patch to a file and run `acus patch --file F`, because some agent shells refuse heredocs there.
+Edit with `acus patch`, with the semantics of Claude's Edit tool. No prior Read needed. Put every change of one step into one patch. The heredoc is the normal form, also after `cd DIR &&`. Only a shell that refuses heredocs needs the patch written to a file and run as `acus patch --file F`.
 
 ```bash
 acus patch <<'PATCH'
@@ -76,7 +76,7 @@ Rules for SEARCH/REPLACE blocks under `*** Update File:`:
 - A file whose syntax (tree-sitter) gets more errors fails the whole patch and names the line; fix the block, or pass `--allow-broken` to write anyway.
 - A multi-line SEARCH matches a CRLF file as LF text and prints a `note:`; the file stays CRLF.
 
-Output lists the written lines with their new numbers, so no re-read is needed. All or nothing: on error nothing was written; fix the block from the lines shown and resend the whole patch. `--check` validates without writing and reports what would change; `--diff` prints a unified diff (`--check --diff` previews). `--fmt` cannot be combined with `--check`. `--fmt` runs the file's formatter (rustfmt, ruff/black, prettier, swift-format, gofmt) over the whole file and prints the formatted lines, so the next patch's context still matches; add it only where the project requires formatted code, since it also changes lines you did not edit. Pick a heredoc delimiter that no line of the patch equals (`PATCH`, or `ACUS_END` when editing docs or scripts). Symbols may be written `Class.method` too.
+Output lists the written lines with their new numbers, so no re-read is needed. When they are not needed, add `-q`: it prints only the summary and errors, so use it instead of `| tail`, `| head` or `>/dev/null` (the hook rewrites those to `-q` anyway). `*** Add File:` prints only its summary line; a `*** Replace Symbol:` body longer than 40 lines prints its first and last 5 lines with a `… N more lines` marker. `--json` keeps every line. All or nothing: on error nothing was written; fix the block from the lines shown and resend the whole patch. `--check` validates without writing and reports what would change; `--diff` prints a unified diff (`--check --diff` previews). `--fmt` cannot be combined with `--check`. `--fmt` runs the file's formatter (rustfmt, ruff/black, prettier, swift-format, gofmt) over the whole file and prints the formatted lines, so the next patch's context still matches; add it only where the project requires formatted code, since it also changes lines you did not edit. Pick a heredoc delimiter that no line of the patch equals (`PATCH`, or `ACUS_END` when editing docs or scripts). Symbols may be written `Class.method` too.
 
 More directives, mixable with the above in one patch (`acus patch --help` has the full syntax):
 

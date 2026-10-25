@@ -3,7 +3,7 @@
 
 use crate::config::Config;
 use crate::fmt::{Out, more_lines};
-use acus_edit::{Change, FileText, Region};
+use acus_edit::{Change, FileText, Op, Region};
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
@@ -52,6 +52,10 @@ const REGION_LINES: usize = 20;
 const ECHO_LINES: usize = 120;
 /// Regions past the echo cap that are named by address, the rest are counted.
 const NAMED_REGIONS: usize = 10;
+/// `Replace Symbol` bodies longer than this echo only their first and last lines.
+const SYMBOL_BODY_LINES: usize = 40;
+/// Lines kept at each end of a long `Replace Symbol` body.
+const SYMBOL_EDGE_LINES: usize = 5;
 
 #[expect(
     clippy::needless_pass_by_value,
@@ -73,13 +77,10 @@ pub fn run(a: Args, out: &Out, nested: bool, cfg: &Config) -> Result<Outcome> {
         )
         .into());
     }
-    let mut applied = acus_edit::apply_with(
-        &acus_edit::parse(&text).hinted()?,
-        Path::new(""),
-        a.check,
-        a.allow_broken,
-    )
-    .hinted()?;
+    let ops = acus_edit::parse(&text).hinted()?;
+    let mut applied =
+        acus_edit::apply_with(&ops, Path::new(""), a.check, a.allow_broken).hinted()?;
+    let long_bodies = long_symbol_bodies(&ops);
     let mut fmt_notes = Vec::new();
     if (a.fmt || cfg.patch.fmt) && !a.no_fmt && !a.check {
         fmt_notes = format_written(&applied.changes, &mut applied.regions, &mut applied.texts);
@@ -136,7 +137,7 @@ pub fn run(a: Args, out: &Out, nested: bool, cfg: &Config) -> Result<Outcome> {
         println!("{l}");
     }
     if !a.quiet {
-        echo_regions(out, &applied.regions);
+        echo_regions(out, &applied.regions, &long_bodies);
     }
     if a.check {
         println!("(check only, nothing written)");
@@ -180,12 +181,19 @@ fn print_json(regions: &[Region], lines: &[String], notes: &[String], written: b
 }
 
 /// Echoes the written regions up to the line cap; the rest are named as `acus show` addresses.
-fn echo_regions(out: &Out, regions: &[Region]) {
+fn echo_regions(out: &Out, regions: &[Region], long_bodies: &[(&str, &[String])]) {
     let mut echoed = 0;
     let mut unshown: Vec<String> = Vec::new();
     for r in regions {
         let end = r.start + r.lines.len() - 1;
-        let shown = r.lines.len().min(REGION_LINES);
+        let long = long_bodies
+            .iter()
+            .any(|&(path, lines)| path == r.path && lines == r.lines.as_slice());
+        let shown = if long {
+            2 * SYMBOL_EDGE_LINES
+        } else {
+            r.lines.len().min(REGION_LINES)
+        };
         // Once one region does not fit, the rest are named too, so the echo keeps patch order.
         if !unshown.is_empty() || echoed + shown > ECHO_LINES {
             unshown.push(format!("{}:{}-{end}", r.path, r.start));
@@ -196,24 +204,55 @@ fn echo_regions(out: &Out, regions: &[Region]) {
             "{}",
             out.header(&format!("== {} {}-{end}", r.path, r.start))
         );
-        for (i, l) in r.lines.iter().take(REGION_LINES).enumerate() {
-            println!("{}", out.numbered(r.start + i, l, false));
-        }
-        if r.lines.len() > REGION_LINES {
-            println!(
-                "{}",
-                more_lines(
-                    &r.path,
-                    r.start + REGION_LINES,
-                    end,
-                    r.lines.len() - REGION_LINES
-                )
-            );
+        for line in region_lines(out, r, long) {
+            println!("{line}");
         }
     }
     if !unshown.is_empty() {
         println!("{}", more_regions(&unshown));
     }
+}
+
+/// The printed lines of a region: all of it, or the edges of a long `Replace Symbol` body.
+fn region_lines(out: &Out, r: &Region, long: bool) -> Vec<String> {
+    let n = r.lines.len();
+    let end = r.start + n - 1;
+    let numbered = |i: usize| out.numbered(r.start + i, &r.lines[i], false);
+    if long {
+        let edge = SYMBOL_EDGE_LINES;
+        let mut lines: Vec<String> = (0..edge).map(numbered).collect();
+        lines.push(more_lines(
+            &r.path,
+            r.start + edge,
+            end - edge,
+            n - 2 * edge,
+        ));
+        lines.extend((n - edge..n).map(numbered));
+        lines
+    } else {
+        let mut lines: Vec<String> = (0..n.min(REGION_LINES)).map(numbered).collect();
+        if n > REGION_LINES {
+            lines.push(more_lines(
+                &r.path,
+                r.start + REGION_LINES,
+                end,
+                n - REGION_LINES,
+            ));
+        }
+        lines
+    }
+}
+
+/// The `Replace Symbol` bodies that are long enough to echo only their edges.
+fn long_symbol_bodies(ops: &[Op]) -> Vec<(&str, &[String])> {
+    ops.iter()
+        .filter_map(|op| match op {
+            Op::ReplaceSymbol { path, lines, .. } if lines.len() > SYMBOL_BODY_LINES => {
+                Some((path.as_str(), lines.as_slice()))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The footer for regions the echo cap left out, as `acus show` addresses.
