@@ -29,11 +29,12 @@ pub enum Rule {
     GitShow,
     AcusPipe,
     TaskLog,
+    PatchQuiet,
 }
 
 impl Rule {
     #[cfg(test)]
-    pub(super) const ALL: [Rule; 17] = [
+    pub(super) const ALL: [Rule; 18] = [
         Rule::Grep,
         Rule::GrepTool,
         Rule::ReadShell,
@@ -51,6 +52,7 @@ impl Rule {
         Rule::GitShow,
         Rule::AcusPipe,
         Rule::TaskLog,
+        Rule::PatchQuiet,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -72,6 +74,7 @@ impl Rule {
             Rule::GitShow => "git-show",
             Rule::AcusPipe => "acus-pipe",
             Rule::TaskLog => "task-log",
+            Rule::PatchQuiet => "patch-quiet",
         }
     }
 
@@ -408,6 +411,7 @@ mod rule_names {
                 "git-show",
                 "acus-pipe",
                 "task-log",
+                "patch-quiet",
             ]
         );
         for r in Rule::ALL {

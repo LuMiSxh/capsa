@@ -194,7 +194,8 @@ fn one(src: &str, n: Node) -> Found {
         match p.kind() {
             // What runs in these is data for the substitution or the function, not output.
             "command_substitution" | "process_substitution" | "function_definition" => {
-                out.get_or_insert(Out::Capture);
+                // A redirect inside `$( )` makes the output data for the substitution too.
+                out = Some(out.filter(|o| *o != Out::File).unwrap_or(Out::Capture));
                 if p.kind() == "function_definition" {
                     nest = nest.max(Nest::Group);
                 } else {

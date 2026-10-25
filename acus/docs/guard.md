@@ -31,6 +31,7 @@
 | `BUILD \| tail -N; echo "…${PIPESTATUS[0]}"` (or `${pipestatus[1]}`), the echo directly after the pipeline | the same `acus ctx` call, with `$?` in the echo |
 | `git diff [REV\|A..B] [-- PATH…]`, with `--staged` or `--cached` | `acus diff -p [REV] [PATH…]`; `git diff --stat …` becomes `acus diff …`. `A...B`, several revisions and other flags keep the hint |
 | `acus show\|outline\|find\|diff … \| head -N` | the same call with `--head N` |
+| `acus patch … \| head -N` or `\| tail -N` as the last stage, or `acus patch … >/dev/null` (also `2>&1`, `&>`) | `acus patch -q …` with the pipe or redirect dropped. `-q` prints the summary and errors, not the written lines. A redirect to a file, or a pipe into anything else, is left as it is |
 | `cat FILE`, `tail -N FILE` or `grep` of a background task's `tasks/*.output` file | `acus ctx --log FILE` with the matching flags (`--tail N`, `--grep RE`) |
 | `sed -i 's/OLD/NEW/g' FILE`, literal text, one regular file | `acus patch` with `*** Replace All: FILE`, left to the agent's permission prompt |
 | `gh run view --log` or `--log-failed` piped through filters | `acus ctx 'gh run view …'` with the filters as flags |
@@ -54,7 +55,7 @@ These are refused, because there is no exact equivalent: `-P`, `-z`, `-h`, grep'
 
 ## Rule names
 
-`grep`, `grep-tool`, `read-shell`, `read-tool`, `build-pipe`, `ctx-pipe`, `sed-i`, `tree`, `glob-tool`, `ps-replace`, `edit-script`, `git-status`, `git-diff`, `git-log`, `git-show`.
+`grep`, `grep-tool`, `read-shell`, `read-tool`, `build-pipe`, `ctx-pipe`, `sed-i`, `tree`, `glob-tool`, `ps-replace`, `edit-script`, `git-status`, `git-diff`, `git-log`, `git-show`, `patch-quiet`.
 
 These names are written to `guard.jsonl` and read by `acus usage --guard`, so renaming one breaks the history.
 

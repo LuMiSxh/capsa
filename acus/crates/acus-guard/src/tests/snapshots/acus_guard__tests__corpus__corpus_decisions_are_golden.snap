@@ -1,5 +1,6 @@
 ---
-source: crates/acus-cli/src/guard/tests/corpus.rs
+source: acus/crates/acus-guard/src/tests/corpus.rs
+assertion_line: 63
 expression: out
 ---
 skipped 0 cases (grammar not built)
@@ -29,7 +30,7 @@ skipped 0 cases (grammar not built)
 0024 escape edit-script ⇒
 0025 escape sed-i ⇒
 0026 hint edit-script ⇒
-0027 hint edit-script ⇒
+0027 rewrite patch-quiet ⇒ acus patch -q < /tmp/x.patch; python3 - <<'E'\ns=open('/tmp/x/loop.py').read()\ns=s.replace("pat=re.compile(r'^\\s*(?:@","pat=re.compile(r'^\\t(?:@")\nopen('/tmp/x/loop.py','w').write(s)\nprint("^\\t(?:@" in s)\nE\npython3 /tmp/x/loop.py 2>&1 | tail -60
 0028 hint edit-script ⇒
 0029 rewrite git-diff ⇒ ls -l CLAUDE.md AGENTS.md && wc -l AGENTS.md && acus diff -p AGENTS.md
 0030 hint git-diff ⇒

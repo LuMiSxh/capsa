@@ -5,16 +5,17 @@
 ### Added
 
 - `acus usage --tools` shows the size of tool results per category, including each `acus` subcommand: characters and share of the group (`result-chars`, `result-share-of-group`; `result_chars` and `result_share` in `--json`). A result is attributed to the call that it answers.
-- `*** Delete Lines: PATH:A-B`
-=======
 - Shell writes (`cat > file <<EOF`, `cat >> file`, `tee file`, `printf … > file`) are counted as the `edit-shell` category, not as reads.
-- `*** Delete Lines: PATH:A-B`
-=======
 - `*** Delete Lines: PATH:A-B` deletes lines A to B (1-based, as `acus show` prints them) and `*** Move Lines: PATH:A-B` moves them, followed by `*** After: PATH:N` (N 0 for the file start), `*** After: PATH#Sym` or the same in another file. Each line directive needs `*** Expect:` with the exact text of line A on the next line, so a stale range fails with the actual line. Line numbers refer to the file before the patch; overlapping ranges, a target inside the moved lines and ranges past the end are refused.
+
+### Changed
+
+- `acus guard` rewrites an `acus patch` whose written lines are thrown away into `acus patch -q`: a `| head` or `| tail` as the last stage, or a redirect to `/dev/null` (also with `2>&1` or `&>`). `-q` prints the summary and errors, not the written lines. Other pipes and redirects are left as they are.
 
 ### Fixed
 
 - Codex `acus` calls were counted as 0 when their command was stored as escaped JSON or in a JS tool body; the command is now decoded first.
+- The patch syntax check no longer refuses C files with GNU `__attribute__((…))` or `__asm__(…)` groups, which tree-sitter-c reports as errors, nor JSON files that already use comments or trailing commas (JSONC such as Zed's `settings.json`); a strict JSON file that gains a trailing comma is still refused.
 
 ## [0.17.0]
 
