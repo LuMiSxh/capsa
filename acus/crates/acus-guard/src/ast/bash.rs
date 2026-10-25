@@ -179,27 +179,74 @@ fn one(src: &str, n: Node) -> Found {
     if owner != n {
         scan(owner, src, &mut r);
     }
-    let mut inside = false;
-
-    let mut out = if r.stdout {
+    let out = if r.stdout {
         Some(Out::File)
     } else if r.pipes {
         Some(Out::Pipe)
     } else {
         None
     };
-    let (mut stdin, mut nest) = (r.stdin, Nest::Top);
+    let start = Climb {
+        out,
+        stdin: r.stdin,
+        nest: Nest::Top,
+        inside: false,
+    };
+    let c = climb(src, owner, &mut r, start);
+
+    let range = owner.start_byte()..r.end;
+    let mut kids = n.walk();
+    let kids: Vec<Node> = n.children(&mut kids).collect();
+    let assigns = kids
+        .iter()
+        .take_while(|c| c.kind() == "variable_assignment")
+        .count();
+    let lead = kids
+        .get(assigns)
+        .map_or(0, |c| c.start_byte().saturating_sub(range.start));
+    let seg = Segment {
+        low: quote_escaped_spaces(&masked(src, owner, &range)),
+        orig: src[range.clone()].to_owned(),
+        range,
+        lead,
+        stdin: c.stdin,
+        out: c.out.unwrap_or(Out::Agent),
+        nest: c.nest,
+        gates: r.gates || gates(owner),
+        assigns,
+        heredoc: r.body.is_some(),
+    };
+    Found {
+        seg,
+        body: r.body,
+        inside: c.inside,
+    }
+}
+
+/// Where a segment's output, stdin and nesting come from, as the nodes around its command say.
+struct Climb {
+    out: Option<Out>,
+    stdin: bool,
+    nest: Nest,
+    /// Whether it sits inside a substitution.
+    inside: bool,
+}
+
+/// Climbs from `owner` to the root, applying what each node on the way says about the segment.
+fn climb(src: &str, owner: Node, r: &mut Redirs, mut c: Climb) -> Climb {
+    // Turns false once the path from the command runs through a later element of a list.
+    let mut at_first = true;
     let mut cur = owner;
     while let Some(p) = cur.parent() {
         match p.kind() {
             // What runs in these is data for the substitution or the function, not output.
             "command_substitution" | "process_substitution" | "function_definition" => {
                 // A redirect inside `$( )` makes the output data for the substitution too.
-                out = Some(out.filter(|o| *o != Out::File).unwrap_or(Out::Capture));
+                c.out = Some(c.out.filter(|o| *o != Out::File).unwrap_or(Out::Capture));
                 if p.kind() == "function_definition" {
-                    nest = nest.max(Nest::Group);
+                    c.nest = c.nest.max(Nest::Group);
                 } else {
-                    inside = true;
+                    c.inside = true;
                 }
                 break;
             }
@@ -217,63 +264,43 @@ fn one(src: &str, n: Node) -> Found {
                     let mut rr = Redirs::default();
                     scan(p, src, &mut rr);
                     if rr.stdout {
-                        out.get_or_insert(Out::File);
+                        c.out.get_or_insert(Out::File);
                     }
-                    stdin |= rr.stdin;
+                    if chain && rr.pipes {
+                        c.out.get_or_insert(Out::Pipe);
+                    }
+                    c.stdin |= rr.stdin;
                     if chain {
                         r.end = r.end.max(rr.end);
                         r.body = r.body.take().or(rr.body);
                     }
                 }
             }
+            // The grammar reads `cmd <<EOF | a && b` as a pipeline of the list `a && b`; only `a` is
+            // piped.
+            "list" if p.child(0).map(|c| c.id()) != Some(cur.id()) => at_first = false,
+            "pipeline" if cur.kind() == "list" && !at_first => {}
             "pipeline" => {
                 if p.child(0).map(|c| c.id()) != Some(cur.id()) {
-                    stdin = true;
+                    c.stdin = true;
                 }
                 if p.child(p.child_count().saturating_sub(1)).map(|c| c.id()) != Some(cur.id()) {
-                    out.get_or_insert(Out::Pipe);
+                    c.out.get_or_insert(Out::Pipe);
                 }
             }
             "for_statement"
             | "c_style_for_statement"
             | "while_statement"
             | "repeat_statement"
-            | "select_statement" => nest = Nest::Loop,
+            | "select_statement" => c.nest = Nest::Loop,
             "compound_statement" | "subshell" | "if_statement" | "case_statement" => {
-                nest = nest.max(Nest::Group);
+                c.nest = c.nest.max(Nest::Group);
             }
             _ => {}
         }
         cur = p;
     }
-
-    let range = owner.start_byte()..r.end;
-    let mut kids = n.walk();
-    let kids: Vec<Node> = n.children(&mut kids).collect();
-    let assigns = kids
-        .iter()
-        .take_while(|c| c.kind() == "variable_assignment")
-        .count();
-    let lead = kids
-        .get(assigns)
-        .map_or(0, |c| c.start_byte().saturating_sub(range.start));
-    let seg = Segment {
-        low: quote_escaped_spaces(&masked(src, owner, &range)),
-        orig: src[range.clone()].to_owned(),
-        range,
-        lead,
-        stdin,
-        out: out.unwrap_or(Out::Agent),
-        nest,
-        gates: r.gates || gates(owner),
-        assigns,
-        heredoc: r.body.is_some(),
-    };
-    Found {
-        seg,
-        body: r.body,
-        inside,
-    }
+    c
 }
 
 /// Reports whether `&&` or `||` follows the node, directly or after the commands that end the list

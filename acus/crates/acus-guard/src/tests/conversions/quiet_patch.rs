@@ -25,6 +25,18 @@ fn quiets_an_acus_patch_whose_last_head_or_tail_stage_discards_its_output() {
             "cd X; acus patch <<'PATCH' | tail -5\n*** Begin Patch\n*** End Patch\nPATCH\n",
             "cd X; acus patch -q <<'PATCH'\n*** Begin Patch\n*** End Patch\nPATCH\n",
         ),
+        (
+            "cd /tmp && acus patch <<'P' | tail -3\n*** Begin Patch\n*** End Patch\nP\n",
+            "cd /tmp && acus patch -q <<'P'\n*** Begin Patch\n*** End Patch\nP\n",
+        ),
+        (
+            "cd X && acus patch <<'P' | tail -3 && echo done\n*** Begin Patch\n*** End Patch\nP\n",
+            "cd X && acus patch -q <<'P' && echo done\n*** Begin Patch\n*** End Patch\nP\n",
+        ),
+        (
+            "cd X || acus patch <<'P' | tail -3\n*** Begin Patch\n*** End Patch\nP\n",
+            "cd X || acus patch -q <<'P'\n*** Begin Patch\n*** End Patch\nP\n",
+        ),
     ] {
         assert_quiet_rewrite(cmd, want);
     }
