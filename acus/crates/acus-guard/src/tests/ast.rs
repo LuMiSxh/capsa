@@ -166,3 +166,15 @@ fn absurd_nesting_runs_unchanged_instead_of_overflowing() {
     assert_eq!(check(&deep), None);
     assert_eq!(rw_ast(&deep), None);
 }
+
+#[test]
+fn a_heredoc_pipe_in_a_list_feeds_only_the_command_before_the_next_gate() {
+    let s = segs("cd X && acus patch <<'P' | tail -3 && echo done\nbody\nP\n");
+    let [_, patch, tail, echo] = s.as_slice() else {
+        panic!("four segments expected");
+    };
+    assert_eq!(
+        (patch.out, tail.stdin, echo.stdin),
+        (Out::Pipe, true, false)
+    );
+}
