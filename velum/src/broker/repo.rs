@@ -19,6 +19,88 @@ pub struct Recorded {
     git_dir: PathBuf,
     common_dir: PathBuf,
     ids: [(u64, u64); 2],
+    watched: Vec<Watched>,
+}
+
+/// The most bytes read from a watched file.
+const MAX_WATCHED: u64 = 1 << 20;
+
+/// How deep `include.path` chains are followed.
+const MAX_INCLUDE_DEPTH: usize = 4;
+
+/// A file git reads for configuration or for where the common directory is, as it was at the
+/// start: the sandbox can create or change these in a plain `.git` directory.
+#[derive(Debug, Clone)]
+struct Watched {
+    path: PathBuf,
+    state: Option<(u64, u64, Vec<u8>)>,
+}
+
+/// Returns the device, inode and content of a regular file, `None` when it does not exist.
+fn snapshot(path: &Path) -> Result<Option<(u64, u64, Vec<u8>)>, String> {
+    use std::io::Read;
+    let meta = match path.symlink_metadata() {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("{}: {err}", path.display())),
+    };
+    if !meta.is_file() || meta.len() > MAX_WATCHED {
+        return Err(format!(
+            "{} is not a regular file of a sane size",
+            path.display()
+        ));
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(MAX_WATCHED).read_to_end(&mut bytes))
+        .map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok(Some((meta.dev(), meta.ino(), bytes)))
+}
+
+/// Resolves an `include.path` value the way git does: `~/` is the home directory, a relative
+/// path starts at the directory of the including file.
+fn include_target(value: &str, including: &Path) -> Result<PathBuf, String> {
+    if let Some(rest) = value.strip_prefix("~/") {
+        let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+        return Ok(Path::new(&home).join(rest));
+    }
+    Ok(including.parent().unwrap_or(Path::new("/")).join(value))
+}
+
+/// Refuses a config file whose `include.path` or `includeIf.*.path` leads, directly or through
+/// further includes, to a location the sandbox can write.
+fn check_includes(config: &Path, settings: &Value, depth: usize) -> Result<(), String> {
+    if depth > MAX_INCLUDE_DEPTH {
+        return Err("config includes nest too deeply".to_string());
+    }
+    let out = std::process::Command::new("git")
+        .args(["config", "-z", "--file"])
+        .arg(config)
+        .args(["--get-regexp", r"^(include|includeif\..*)\.path$"])
+        .output()
+        .map_err(|err| format!("running git: {err}"))?;
+    match out.status.code() {
+        Some(1) => return Ok(()),
+        Some(0) => {}
+        _ => return Err(format!("git cannot read {}", config.display())),
+    }
+    for record in String::from_utf8_lossy(&out.stdout).split('\0') {
+        let Some((_, value)) = record.split_once('\n') else {
+            continue;
+        };
+        let target = include_target(value, config)?;
+        if let Some(entry) = writable::writable_by(settings, &target) {
+            return Err(format!(
+                "{} includes {}, which is writable inside the sandbox (allowed by {entry})",
+                config.display(),
+                target.display()
+            ));
+        }
+        if target.is_file() {
+            check_includes(&target, settings, depth + 1)?;
+        }
+    }
+    Ok(())
 }
 
 fn identity(path: &Path) -> Option<(u64, u64)> {
@@ -91,6 +173,21 @@ impl Recorded {
                 ));
             }
         }
+        check_includes(&common_dir.join("config"), settings, 0)?;
+        let mut watched = Vec::new();
+        for path in [
+            git_dir.join("commondir"),
+            git_dir.join("config.worktree"),
+            common_dir.join("config.worktree"),
+            common_dir.join("config"),
+        ] {
+            if !watched.iter().any(|seen: &Watched| seen.path == path) {
+                watched.push(Watched {
+                    state: snapshot(&path)?,
+                    path,
+                });
+            }
+        }
         let ids = [identity(&git_dir), identity(&common_dir)];
         let (Some(first), Some(second)) = (ids[0], ids[1]) else {
             return Err("the git directory cannot be inspected".to_string());
@@ -100,6 +197,7 @@ impl Recorded {
             git_dir,
             common_dir,
             ids: [first, second],
+            watched,
         })
     }
 
@@ -108,12 +206,23 @@ impl Recorded {
         &self.git_dir
     }
 
-    /// Checks that the git directories are still the ones recorded.
+    /// Returns the common directory.
+    pub fn common_dir(&self) -> &Path {
+        &self.common_dir
+    }
+
+    /// Checks that the git directories are still the ones recorded and that no file that
+    /// redirects git or adds configuration (`commondir`, `config.worktree`, `config`) has
+    /// appeared or changed.
     pub fn verify(&self) -> Result<(), Refusal> {
         let same = |path: &Path, id: (u64, u64)| {
             std::fs::canonicalize(path).is_ok_and(|real| real == path) && identity(path) == Some(id)
         };
-        if same(&self.git_dir, self.ids[0]) && same(&self.common_dir, self.ids[1]) {
+        let unchanged = self
+            .watched
+            .iter()
+            .all(|file| snapshot(&file.path).is_ok_and(|now| now == file.state));
+        if unchanged && same(&self.git_dir, self.ids[0]) && same(&self.common_dir, self.ids[1]) {
             Ok(())
         } else {
             Err(Refusal::RepoChanged)

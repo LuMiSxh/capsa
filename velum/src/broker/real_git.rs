@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::exec::{Executor, Registry, System};
 use super::repo::Recorded;
-use super::request::{GitPushArgs, Request};
+use super::request::{GitPushArgs, Refusal, Request};
 use super::tools::plan;
 use crate::gitguard;
 use crate::policy::Policy;
@@ -146,12 +146,11 @@ fn the_git_environment_names_the_recorded_repository_and_keeps_the_system_config
     };
     assert_eq!(value("GIT_DIR"), Some(recorded.git_dir().to_str()));
     assert_eq!(value("GIT_WORK_TREE"), Some(work.to_str()));
-    for name in [
-        "GIT_INDEX_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_CONFIG",
-        "GIT_CONFIG_PARAMETERS",
-    ] {
+    assert_eq!(
+        value("GIT_COMMON_DIR"),
+        Some(recorded.common_dir().to_str())
+    );
+    for name in ["GIT_INDEX_FILE", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS"] {
         assert_eq!(value(name), Some(None), "{name} is removed");
     }
     assert_eq!(value("GIT_CONFIG_NOSYSTEM"), None);
@@ -212,4 +211,202 @@ fn a_real_push_succeeds_without_running_the_repositorys_hooks() {
     let pushed = git(&remote, &["rev-parse", "refs/heads/feat/x"]);
     let local = git(&work, &["rev-parse", "HEAD"]);
     assert_eq!(pushed.stdout, local.stdout);
+}
+
+/// A bare remote, a repository with `origin` pointing at it, and a script that records that it
+/// ran. Returns `(remote, work, marker, script)`.
+fn push_setup(base: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    let remote = base.join("remote.git");
+    std::fs::create_dir_all(&remote).unwrap();
+    git(&remote, &["init", "-q", "--bare"]);
+    let work = base.join("work");
+    init_repo(&work);
+    git(
+        &work,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    let marker = base.join("ran");
+    let script = base.join("receive.sh");
+    let body = format!(
+        "#!/bin/sh\ntouch '{}'\nexec git receive-pack \"$@\"\n",
+        marker.display()
+    );
+    std::fs::write(&script, body).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (remote, work, marker, script)
+}
+
+fn receivepack_config(script: &Path) -> String {
+    format!(
+        "[remote \"origin\"]\n\treceivepack = {}\n",
+        script.display()
+    )
+}
+
+fn append(path: &Path, text: &str) {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    file.write_all(text.as_bytes()).unwrap();
+}
+
+fn system() -> System {
+    System {
+        timeout: Duration::from_secs(60),
+        registry: Arc::new(Registry::default()),
+    }
+}
+
+fn push_request() -> Request {
+    Request::GitPush(GitPushArgs::default())
+}
+
+/// Pushes without the broker's options and reports whether the planted program ran.
+fn plain_push_runs_it(work: &Path, marker: &Path) -> bool {
+    let out = Command::new("git")
+        .arg(format!("--git-dir={}", work.join(".git").display()))
+        .args(["push", "-q", "origin", "HEAD:refs/heads/sanity"])
+        .current_dir(work)
+        .output()
+        .unwrap();
+    let ran = marker.exists();
+    let _ = std::fs::remove_file(marker);
+    assert!(
+        ran,
+        "the planted config must take effect without the broker: {out:?}"
+    );
+    ran
+}
+
+#[test]
+fn a_planted_commondir_is_refused_and_even_unverified_git_ignores_it() {
+    let scratch = Scratch::new("real-commondir");
+    let base = root_of(&scratch);
+    let (remote, work, marker, script) = push_setup(&base);
+    let recorded = Recorded::resolve(&work, &run_settings(&work, &[])).unwrap();
+    let sys = system();
+    let planned = plan(&sys, &work, &Ok(recorded.clone()), &push_request()).unwrap();
+
+    let evil = base.join("evil");
+    git(
+        &base,
+        &[
+            "clone",
+            "-q",
+            "--no-hardlinks",
+            "--bare",
+            work.to_str().unwrap(),
+            "evil",
+        ],
+    );
+    append(&evil.join("config"), &receivepack_config(&script));
+    std::fs::write(work.join(".git/commondir"), format!("{}\n", evil.display())).unwrap();
+    plain_push_runs_it(&work, &marker);
+
+    let again = plan(&sys, &work, &Ok(recorded.clone()), &push_request());
+    assert!(matches!(again, Err(Refusal::RepoChanged)), "{again:?}");
+    assert_eq!(recorded.verify(), Err(Refusal::RepoChanged));
+
+    let ran = sys
+        .run(&recorded.root, &planned.argv, Some(&recorded))
+        .unwrap();
+    assert!(
+        !marker.exists(),
+        "GIT_COMMON_DIR must keep git on the recorded common directory"
+    );
+    assert_eq!(ran.code, 0, "{}", ran.output);
+    let pushed = git(&remote, &["rev-parse", "refs/heads/feat/x"]);
+    assert_eq!(pushed.stdout, git(&work, &["rev-parse", "HEAD"]).stdout);
+}
+
+#[test]
+fn a_planted_worktree_config_is_refused() {
+    let scratch = Scratch::new("real-worktree-config");
+    let base = root_of(&scratch);
+    let (_remote, work, marker, script) = push_setup(&base);
+    git(&work, &["config", "core.repositoryformatversion", "1"]);
+    git(&work, &["config", "extensions.worktreeConfig", "true"]);
+    let recorded = Recorded::resolve(&work, &run_settings(&work, &[])).unwrap();
+    std::fs::write(
+        work.join(".git/config.worktree"),
+        receivepack_config(&script),
+    )
+    .unwrap();
+    plain_push_runs_it(&work, &marker);
+    let refused = plan(&system(), &work, &Ok(recorded), &push_request());
+    assert!(matches!(refused, Err(Refusal::RepoChanged)), "{refused:?}");
+    assert!(!marker.exists());
+}
+
+#[test]
+fn a_changed_repository_config_is_refused() {
+    let scratch = Scratch::new("real-config-changed");
+    let base = root_of(&scratch);
+    let (_remote, work, _marker, script) = push_setup(&base);
+    let recorded = Recorded::resolve(&work, &run_settings(&work, &[])).unwrap();
+    assert!(recorded.verify().is_ok());
+    append(&work.join(".git/config"), &receivepack_config(&script));
+    assert_eq!(recorded.verify(), Err(Refusal::RepoChanged));
+}
+
+#[test]
+fn includes_that_lead_to_writable_locations_are_refused() {
+    let scratch = Scratch::new("real-include");
+    let base = root_of(&scratch);
+    let (_remote, work, _marker, _script) = push_setup(&base);
+    let open = base.join("open");
+    std::fs::create_dir_all(&open).unwrap();
+    let closed = base.join("closed");
+    std::fs::create_dir_all(&closed).unwrap();
+    let settings = run_settings(&work, &[&open]);
+    assert!(Recorded::resolve(&work, &settings).is_ok());
+
+    std::fs::write(closed.join("safe.cfg"), "[user]\n\tname = t\n").unwrap();
+    git(
+        &work,
+        &[
+            "config",
+            "include.path",
+            closed.join("safe.cfg").to_str().unwrap(),
+        ],
+    );
+    assert!(Recorded::resolve(&work, &settings).is_ok());
+
+    std::fs::write(
+        closed.join("nested.cfg"),
+        format!("[include]\n\tpath = {}\n", open.join("x.cfg").display()),
+    )
+    .unwrap();
+    git(
+        &work,
+        &[
+            "config",
+            "--add",
+            "include.path",
+            closed.join("nested.cfg").to_str().unwrap(),
+        ],
+    );
+    let err = Recorded::resolve(&work, &settings).unwrap_err();
+    assert!(
+        err.contains("includes") && err.contains("writable"),
+        "{err}"
+    );
+    git(&work, &["config", "--unset-all", "include.path"]);
+
+    git(
+        &work,
+        &[
+            "config",
+            "include.path",
+            open.join("missing.cfg").to_str().unwrap(),
+        ],
+    );
+    assert!(Recorded::resolve(&work, &settings).is_err());
+    git(&work, &["config", "--unset-all", "include.path"]);
+
+    let conditional = "includeIf.gitdir:/nowhere/.path";
+    git(
+        &work,
+        &["config", conditional, open.join("x.cfg").to_str().unwrap()],
+    );
+    assert!(Recorded::resolve(&work, &settings).is_err());
 }

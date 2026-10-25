@@ -116,6 +116,7 @@ impl System {
                 command.env_remove(name);
             });
             command.env("GIT_DIR", repo.git_dir());
+            command.env("GIT_COMMON_DIR", repo.common_dir());
             command.env("GIT_WORK_TREE", &repo.root);
             command.env("GIT_CONFIG_COUNT", GIT_FORCED.len().to_string());
             for (index, (key, value)) in GIT_FORCED.iter().enumerate() {
