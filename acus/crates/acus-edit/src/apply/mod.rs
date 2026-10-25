@@ -3,6 +3,7 @@
 
 mod commit;
 mod files;
+mod line_ranges;
 mod ops;
 mod replace_all;
 mod search;
@@ -12,6 +13,7 @@ use crate::Op;
 use crate::error::Result;
 use commit::{check_syntax, commit};
 use files::Files;
+use line_ranges::apply_line_ranges;
 use ops::apply_op;
 use similar::{ChangeTag, TextDiff};
 use std::collections::{BTreeMap, BTreeSet};
@@ -129,8 +131,13 @@ pub fn apply_with(ops: &[Op], root: &Path, check: bool, allow_broken: bool) -> R
         skipped: Vec::new(),
         crlf: Vec::new(),
     };
-    let mut changes = Vec::new();
-    for op in ops {
+    // Line directives number the file as it was before the patch, so they run first; the rest
+    // then apply in patch order to the result.
+    let (line_ops, other_ops): (Vec<&Op>, Vec<&Op>) = ops
+        .iter()
+        .partition(|op| matches!(op, Op::DeleteLines { .. } | Op::MoveLines { .. }));
+    let mut changes = apply_line_ranges(&mut files, &line_ops)?;
+    for op in other_ops {
         changes.extend(apply_op(&mut files, op)?);
     }
     let mut regions = Vec::new();

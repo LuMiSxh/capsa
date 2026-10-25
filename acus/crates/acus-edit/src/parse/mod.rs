@@ -52,6 +52,23 @@ pub enum Op {
         symbol: String,
         to: Option<Dest>,
     },
+    /// Removes lines `start..=end` (1-based) of `path`, once line `start` reads `expect`.
+    DeleteLines {
+        path: String,
+        start: usize,
+        end: usize,
+        expect: Option<String>,
+        line: usize,
+    },
+    /// Moves lines `start..=end` (1-based) of `path` to `to`, once line `start` reads `expect`.
+    MoveLines {
+        path: String,
+        start: usize,
+        end: usize,
+        expect: Option<String>,
+        to: Option<LineAnchor>,
+        line: usize,
+    },
     /// Inserts the `+` lines next to a symbol or line.
     Insert {
         path: String,
@@ -80,6 +97,14 @@ pub struct Block {
     pub regex: bool,
     pub search: Vec<String>,
     pub replace: Vec<String>,
+}
+
+/// Where `*** Move Lines` puts the lines: after line `after` of `path` (0 is the file start), or
+/// after the last line of a symbol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LineAnchor {
+    Line { path: String, after: usize },
+    Symbol { path: String, symbol: String },
 }
 
 /// Where `*** Move Symbol` puts the symbol.
@@ -111,7 +136,14 @@ fn expand_home(ops: &mut [Op]) {
             | Op::Delete { path }
             | Op::ReplaceSymbol { path, .. }
             | Op::DeleteSymbol { path, .. }
+            | Op::DeleteLines { path, .. }
             | Op::Insert { path, .. } => home(path),
+            Op::MoveLines { path, to, .. } => {
+                home(path);
+                if let Some(LineAnchor::Line { path, .. } | LineAnchor::Symbol { path, .. }) = to {
+                    home(path);
+                }
+            }
             Op::Update { path, move_to, .. } => {
                 home(path);
                 if let Some(p) = move_to {
@@ -139,6 +171,48 @@ fn expand_home(ops: &mut [Op]) {
     }
 }
 
+/// The error for a line directive that lacks its `*** Expect:` or its `*** After:`, if any.
+fn unfinished_lines(op: &Op) -> Option<EditError> {
+    match op {
+        Op::DeleteLines {
+            path,
+            start,
+            end,
+            expect: None,
+            ..
+        } => Some(EditError::LinesNoExpect {
+            path: path.clone(),
+            start: *start,
+            end: *end,
+            directive: "Delete Lines",
+        }),
+        Op::MoveLines {
+            path,
+            start,
+            end,
+            expect: None,
+            ..
+        } => Some(EditError::LinesNoExpect {
+            path: path.clone(),
+            start: *start,
+            end: *end,
+            directive: "Move Lines",
+        }),
+        Op::MoveLines {
+            path,
+            start,
+            end,
+            to: None,
+            ..
+        } => Some(EditError::MoveLinesNoDestination {
+            path: path.clone(),
+            start: *start,
+            end: *end,
+        }),
+        _ => None,
+    }
+}
+
 /// Parses patch text into ops, in the order their directives appear. Errors name the patch line
 /// and carry a `hint:` line, so the caller can fix the patch and resend it.
 pub fn parse(text: &str) -> Result<Vec<Op>> {
@@ -162,6 +236,9 @@ pub fn parse(text: &str) -> Result<Vec<Op>> {
         return Err(EditError::UnterminatedBlock);
     }
     for op in &ops {
+        if let Some(err) = unfinished_lines(op) {
+            return Err(err);
+        }
         if let Op::Update {
             path,
             move_to: None,

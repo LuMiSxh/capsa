@@ -29,7 +29,9 @@ pub enum EditError {
     #[error("patch line {line}: `*** Move to` must follow `*** Update File`")]
     MoveToWithoutUpdate { line: usize },
     /// `*** Before:` or `*** After:` without an `*** Move Symbol` before it.
-    #[error("patch line {line}: `*** {directive}:` must follow `*** Move Symbol:`")]
+    #[error(
+        "patch line {line}: `*** {directive}:` must follow `*** Move Symbol:` or `*** Move Lines:`"
+    )]
     DestinationWithoutMove { line: usize, directive: String },
     /// `*** To:` without an `*** Move Symbol` or `*** Copy File` before it.
     #[error("patch line {line}: `*** To:` must follow `*** Move Symbol:` or `*** Copy File:`")]
@@ -99,6 +101,32 @@ pub enum EditError {
     /// Content before the first directive.
     #[error("patch line {line}: content before any `***` directive")]
     ContentBeforeDirective { line: usize },
+    /// A `*** Delete Lines` or `*** Move Lines` whose address is not `PATH:A-B` with 1 <= A <= B.
+    #[error("patch line {line}: expected `*** {directive}: PATH:A-B` with 1 <= A <= B")]
+    BadLineRange { line: usize, directive: String },
+    /// A `*** Expect:` that does not follow a `*** Delete Lines` or `*** Move Lines` directly.
+    #[error(
+        "patch line {line}: `*** Expect:` must come on the line right after `*** Delete Lines:` or `*** Move Lines:`"
+    )]
+    ExpectWithoutLines { line: usize },
+    /// A line directive without the `*** Expect:` that names its first line.
+    #[error("{path}:{start}-{end}: `*** {directive}:` needs `*** Expect:` on the line after it")]
+    LinesNoExpect {
+        path: String,
+        start: usize,
+        end: usize,
+        directive: &'static str,
+    },
+    /// A `*** Move Lines` without `*** After:`.
+    #[error("{path}:{start}-{end}: `*** Move Lines` needs `*** After:`")]
+    MoveLinesNoDestination {
+        path: String,
+        start: usize,
+        end: usize,
+    },
+    /// A second `*** After:` under one `*** Move Lines`.
+    #[error("patch line {line}: `*** Move Lines` takes one `*** After:`")]
+    MoveLinesDestinationTwice { line: usize },
 
     /// `*** Add File` for a file that exists.
     #[error("{path}: already exists")]
@@ -131,6 +159,37 @@ pub enum EditError {
         path: String,
         line: usize,
         len: usize,
+    },
+    /// Lines of a `*** Delete Lines` or `*** Move Lines` past the file's last line.
+    #[error("{path}:{start}-{end}: the file has {len} lines")]
+    RangePastEnd {
+        path: String,
+        start: usize,
+        end: usize,
+        len: usize,
+    },
+    /// The `*** Expect:` text is not the line the range starts with, so the file has changed.
+    #[error("{path}:{line}: `*** Expect:` is `{expected}`, but line {line} is `{actual}`")]
+    ExpectMismatch {
+        path: String,
+        line: usize,
+        expected: String,
+        actual: String,
+    },
+    /// Two line directives of one patch that cut the same line.
+    #[error("{path}: lines {first} and {second} overlap in one patch")]
+    LinesOverlap {
+        path: String,
+        first: String,
+        second: String,
+    },
+    /// A `*** Move Lines` whose `*** After:` line is one of the lines it moves.
+    #[error("{path}: `*** After:` line {line} is inside the moved lines {start}-{end}")]
+    LineInsideMove {
+        path: String,
+        line: usize,
+        start: usize,
+        end: usize,
     },
     /// A move or copy onto a file that exists.
     #[error("{to}: already exists, refusing to {action} {from} over it")]
@@ -271,6 +330,24 @@ impl Hint for EditError {
             Self::ReplaceNeedsLines { path, symbol } => Cow::Owned(format!(
                 "to remove it use `*** Delete Symbol: {path}#{symbol}`"
             )),
+            Self::BadLineRange { .. } => {
+                Cow::Borrowed("line numbers are 1-based, as `acus show PATH:A-B` prints them")
+            }
+            Self::LinesNoExpect { .. } => Cow::Borrowed(
+                "on the next line write `*** Expect: ` and the exact text of the range's first line",
+            ),
+            Self::MoveLinesNoDestination { .. } => Cow::Borrowed(
+                "follow it with `*** After: PATH:N` (0 for the file start) or `*** After: PATH#Sym`",
+            ),
+            Self::RangePastEnd { path, .. } | Self::ExpectMismatch { path, .. } => {
+                Cow::Owned(format!("re-read the lines with `acus show {path}`"))
+            }
+            Self::LinesOverlap { .. } => {
+                Cow::Borrowed("each line may be deleted or moved once; merge the two ranges")
+            }
+            Self::LineInsideMove { .. } => {
+                Cow::Borrowed("move the lines after a line outside the moved range")
+            }
             Self::InsertPastEnd { path, .. } => Cow::Owned(format!("acus show {path}")),
             Self::Rename { done, .. } | Self::Delete { done, .. } if !done.is_empty() => {
                 Cow::Owned(format!("already written: {}", done.join(", ")))

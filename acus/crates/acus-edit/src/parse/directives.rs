@@ -24,6 +24,8 @@ pub(super) enum Kind {
     Insert { after: bool },
     DeleteSymbol,
     MoveSymbol,
+    DeleteLines,
+    MoveLines,
     ReplaceAll,
 }
 
@@ -90,6 +92,18 @@ const DIRECTIVES: &[Directive] = &[
         kind: Kind::MoveSymbol,
         form: "*** Move Symbol: PATH#Symbol",
         note: " (then *** Before: PATH#Sym, *** After: PATH#Sym or *** To: PATH)",
+    },
+    Directive {
+        name: "Delete Lines",
+        kind: Kind::DeleteLines,
+        form: "*** Delete Lines: PATH:A-B",
+        note: " (then *** Expect: TEXT of line A)",
+    },
+    Directive {
+        name: "Move Lines",
+        kind: Kind::MoveLines,
+        form: "*** Move Lines: PATH:A-B",
+        note: " (then *** Expect: TEXT of line A, *** After: PATH:N or PATH#Sym)",
     },
     Directive {
         name: "Replace All",

@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `*** Delete Lines: PATH:A-B` deletes lines A to B (1-based, as `acus show` prints them) and `*** Move Lines: PATH:A-B` moves them, followed by `*** After: PATH:N` (N 0 for the file start), `*** After: PATH#Sym` or the same in another file. Each line directive needs `*** Expect:` with the exact text of line A on the next line, so a stale range fails with the actual line. Line numbers refer to the file before the patch; overlapping ranges, a target inside the moved lines and ranges past the end are refused.
+
 ## [0.17.0]
 
 ### Added
