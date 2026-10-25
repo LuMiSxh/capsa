@@ -30,6 +30,20 @@ pub fn euid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+/// Sends SIGKILL to the process group `pgid`. A non-positive id is ignored, as it would name
+/// velum's own group.
+pub fn kill_group(pgid: u32) {
+    let Ok(pgid) = libc::pid_t::try_from(pgid) else {
+        return;
+    };
+    if pgid > 0 {
+        // SAFETY: kill with a valid signal number and a positive group id.
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+}
+
 /// Returns whether a process with `pid` exists, including one owned by another user.
 pub fn pid_alive(pid: libc::pid_t) -> bool {
     if pid <= 0 {

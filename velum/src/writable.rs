@@ -82,6 +82,21 @@ mod tests {
     }
 
     #[test]
+    fn the_approvals_file_and_the_broker_log_are_not_sandbox_writable() {
+        use crate::broker::{approvals_path, log_path};
+        let mut policy = Policy::builtin(Path::new("/work/proj"));
+        let plain = settings(&policy, "/Users/a").unwrap();
+        policy.write.push("~/Library".to_string());
+        let widened = settings(&policy, "/Users/a").unwrap();
+        for path in [approvals_path("/Users/a"), log_path("/Users/a")] {
+            assert_eq!(allowed_by(&plain, &path), None, "{}", path.display());
+            assert_eq!(writable_by(&plain, &path), None, "{}", path.display());
+            assert!(allowed_by(&widened, &path).is_some());
+            assert_eq!(writable_by(&widened, &path), None, "{}", path.display());
+        }
+    }
+
+    #[test]
     fn paths_under_cwd_or_a_write_entry_are_writable_unless_denied() {
         let policy = Policy::builtin(Path::new("/work/proj"));
         let value = settings(&policy, "/Users/a").unwrap();

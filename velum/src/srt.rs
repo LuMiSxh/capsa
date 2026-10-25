@@ -84,6 +84,12 @@ pub fn settings(policy: &Policy, home: &str) -> Result<Value, PolicyError> {
     }))
 }
 
+/// Lets the sandbox connect to the unix socket at `socket` and to no other. Everything else
+/// stays blocked, because srt allows no unix socket by default.
+pub fn allow_unix_socket(settings: &mut Value, socket: &Path) {
+    settings["network"]["allowUnixSockets"] = json!([socket.to_string_lossy()]);
+}
+
 /// Copies only the allowed variables from the current environment, and sets TMPDIR.
 pub fn filtered_env(policy: &Policy) -> Vec<(String, String)> {
     let mut env = select_env(policy, std::env::vars());
@@ -296,6 +302,20 @@ mod tests {
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         assert!(result.is_err());
         assert!(!marker.exists());
+    }
+
+    #[test]
+    fn allow_unix_socket_names_exactly_one_path() {
+        let policy = Policy::builtin(Path::new("/work"));
+        let mut value = settings(&policy, "/Users/a").unwrap();
+        assert!(value["network"].get("allowUnixSockets").is_none());
+        assert!(value["network"].get("allowAllUnixSockets").is_none());
+        allow_unix_socket(&mut value, Path::new("/run/x/broker.sock"));
+        assert_eq!(
+            value["network"]["allowUnixSockets"],
+            json!(["/run/x/broker.sock"])
+        );
+        assert_eq!(value["network"]["deniedDomains"], json!([]));
     }
 
     #[test]

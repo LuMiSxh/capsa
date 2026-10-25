@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Owns the `velum` command line: it parses the arguments and dispatches each action.
 
+mod broker;
 mod check;
 mod claude_json;
 mod claude_version;
 mod doctor;
 mod gitguard;
+mod mcp;
 mod policy;
 mod proc;
 mod rundir;
@@ -72,6 +74,8 @@ enum Action {
         #[command(subcommand)]
         action: SelfAction,
     },
+    /// Serve the approval broker's tools over MCP on stdio.
+    Mcp,
     /// Install, remove or inspect the `claude` shim.
     Shim {
         #[command(subcommand)]
@@ -150,6 +154,12 @@ fn real_main(action: Action, format: Format) -> Result<Outcome> {
             cmd,
         } => run(policy, dry_run, &cmd),
         Action::SelfCmd { action } => self_action(action, format),
+        Action::Mcp => {
+            let socket = mcp::socket_from_env();
+            let input = std::io::stdin().lock();
+            mcp::serve(input, std::io::stdout().lock(), socket.as_deref())?;
+            Ok(Outcome::Found)
+        }
         Action::Shim { action } => shim_action(action, format),
     }
 }
@@ -197,7 +207,7 @@ fn run(policy: Option<PathBuf>, dry_run: bool, cmd: &[String]) -> Result<Outcome
         .collect();
     policy.deny_write.extend(extra);
     git.warning().iter().for_each(|line| eprintln!("{line}"));
-    let settings = srt::settings(&policy, &home).hinted()?;
+    let mut settings = srt::settings(&policy, &home).hinted()?;
     let mut env = srt::filtered_env(&policy);
 
     if dry_run {
@@ -220,8 +230,10 @@ fn run(policy: Option<PathBuf>, dry_run: bool, cmd: &[String]) -> Result<Outcome
     run_dir.ensure_not_writable(&settings).hinted()?;
     srt::install_wrappers(&mut env, &run_dir)?;
     srt::install_git_env(&mut env, &run_dir)?;
+    let broker = start_broker(&home, &run_dir, &cwd, &mut settings, &mut env);
     let guard = claude_json::Guard::snapshot(&home)?;
     let result = srt::run(&srt_bin, &run_dir, &settings, env, cmd);
+    drop(broker);
     // After the child, and its surviving processes, are gone: undo and inspect what it did.
     match guard.restore() {
         Ok(report) => report
@@ -240,6 +252,35 @@ fn run(policy: Option<PathBuf>, dry_run: bool, cmd: &[String]) -> Result<Outcome
         );
     }
     Ok(Outcome::Code(ran.code))
+}
+
+/// Starts the approval broker and lets the sandbox reach its socket, and nothing else new.
+/// Without a broker the run goes on and the agent finds `VELUM_BROKER` unset.
+fn start_broker(
+    home: &str,
+    run_dir: &rundir::RunDir,
+    cwd: &std::path::Path,
+    settings: &mut serde_json::Value,
+    env: &mut Vec<(String, String)>,
+) -> Option<broker::Broker> {
+    let started = run_dir
+        .child(broker::SOCKET_NAME)
+        .and_then(|socket| broker::start(home, &socket, cwd));
+    match started {
+        Ok((broker, socket)) => {
+            srt::allow_unix_socket(settings, &socket);
+            env.retain(|(name, _)| name != broker::ENV);
+            env.push((
+                broker::ENV.to_string(),
+                socket.to_string_lossy().into_owned(),
+            ));
+            Some(broker)
+        }
+        Err(err) => {
+            eprintln!("warning: the approval broker did not start: {err:#}");
+            None
+        }
+    }
 }
 
 fn srt_not_found() -> anyhow::Error {

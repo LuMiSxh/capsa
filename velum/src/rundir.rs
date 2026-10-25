@@ -143,7 +143,8 @@ impl RunDir {
         Ok(path)
     }
 
-    fn child(&self, name: &str) -> Result<PathBuf> {
+    /// Returns the path of the entry `name` (a plain file name) in the directory.
+    pub fn child(&self, name: &str) -> Result<PathBuf> {
         let plain = Path::new(name)
             .components()
             .all(|part| matches!(part, Component::Normal(_)));
