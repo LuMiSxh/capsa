@@ -15,6 +15,8 @@ mod text;
 mod tools;
 
 #[cfg(test)]
+mod real_git;
+#[cfg(test)]
 mod tests;
 
 pub use request::{Response, Status};

@@ -8,7 +8,6 @@ use super::repo::Recorded;
 use super::request::{GitPushArgs, Refusal};
 use super::text::MAX_FIELD;
 use super::tools::Plan;
-use std::path::Path;
 
 /// Branches treated as default whatever the repository's own pointer says. The pointer is a
 /// file in `.git/refs` that the sandbox can rewrite.
@@ -20,24 +19,14 @@ const BRANCH_TYPES: [&str; 8] = [
 ];
 
 /// Runs a git question about the recorded repository.
-pub fn ask(
-    exec: &dyn Executor,
-    cwd: &Path,
-    repo: &Recorded,
-    args: &[&str],
-) -> Result<Ran, Refusal> {
-    exec.run(cwd, &repo.git(args), true)
+pub fn ask(exec: &dyn Executor, repo: &Recorded, args: &[&str]) -> Result<Ran, Refusal> {
+    exec.run(&repo.root, &repo.git(args), Some(repo))
         .map_err(|err| Refusal::Spawn("git".to_string(), err.to_string()))
 }
 
 /// Returns the lines of a successful git answer.
-pub fn lines(
-    exec: &dyn Executor,
-    cwd: &Path,
-    repo: &Recorded,
-    args: &[&str],
-) -> Result<Vec<String>, Refusal> {
-    let ran = ask(exec, cwd, repo, args)?;
+pub fn lines(exec: &dyn Executor, repo: &Recorded, args: &[&str]) -> Result<Vec<String>, Refusal> {
+    let ran = ask(exec, repo, args)?;
     if ran.code != 0 {
         return Err(Refusal::Git(args.join(" "), ran.output.trim().to_string()));
     }
@@ -49,13 +38,8 @@ pub fn lines(
 }
 
 /// Returns the checked-out branch, refusing a detached HEAD.
-fn current_branch(exec: &dyn Executor, cwd: &Path, repo: &Recorded) -> Result<String, Refusal> {
-    let ran = ask(
-        exec,
-        cwd,
-        repo,
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-    )?;
+fn current_branch(exec: &dyn Executor, repo: &Recorded) -> Result<String, Refusal> {
+    let ran = ask(exec, repo, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
     match ran.code {
         0 if !ran.output.trim().is_empty() => Ok(ran.output.trim().to_string()),
         1 => Err(Refusal::DetachedHead),
@@ -68,11 +52,10 @@ fn current_branch(exec: &dyn Executor, cwd: &Path, repo: &Recorded) -> Result<St
 
 /// Returns the branches of `remote` that count as default: `main`, `master` and the one the
 /// remote-tracking pointer names.
-fn default_branches(exec: &dyn Executor, cwd: &Path, repo: &Recorded, remote: &str) -> Vec<String> {
+fn default_branches(exec: &dyn Executor, repo: &Recorded, remote: &str) -> Vec<String> {
     let pointer = format!("refs/remotes/{remote}/HEAD");
     let named = ask(
         exec,
-        cwd,
         repo,
         &["symbolic-ref", "--quiet", "--short", &pointer],
     )
@@ -104,13 +87,8 @@ pub fn is_work_branch(branch: &str) -> bool {
 }
 
 /// Returns the URL a push to `remote` uses.
-pub fn push_url(
-    exec: &dyn Executor,
-    cwd: &Path,
-    repo: &Recorded,
-    remote: &str,
-) -> Result<String, Refusal> {
-    let found = lines(exec, cwd, repo, &["remote", "get-url", "--push", remote])?;
+pub fn push_url(exec: &dyn Executor, repo: &Recorded, remote: &str) -> Result<String, Refusal> {
+    let found = lines(exec, repo, &["remote", "get-url", "--push", remote])?;
     found
         .into_iter()
         .next()
@@ -123,7 +101,6 @@ pub fn push_url(
 /// approval is bound to the push URL.
 pub fn push_plan(
     exec: &dyn Executor,
-    cwd: &Path,
     repo: &Recorded,
     args: &GitPushArgs,
 ) -> Result<Plan, Refusal> {
@@ -131,13 +108,13 @@ pub fn push_plan(
     if remote.chars().count() > MAX_FIELD {
         return Err(Refusal::TooLong("the remote name", MAX_FIELD));
     }
-    let configured = lines(exec, cwd, repo, &["remote"])?;
+    let configured = lines(exec, repo, &["remote"])?;
     if remote.starts_with('-') || !configured.iter().any(|name| name == remote) {
         return Err(Refusal::UnknownRemote(remote.to_string()));
     }
-    let branch = current_branch(exec, cwd, repo)?;
-    let on_default = default_branches(exec, cwd, repo, remote).contains(&branch);
-    let url = push_url(exec, cwd, repo, remote)?;
+    let branch = current_branch(exec, repo)?;
+    let on_default = default_branches(exec, repo, remote).contains(&branch);
+    let url = push_url(exec, repo, remote)?;
     let rememberable = !args.force && !on_default && is_work_branch(&branch);
     let gate = if rememberable {
         Gate {
@@ -181,7 +158,7 @@ pub fn push_plan(
         subject: url,
         details,
         argv: repo.git(&push),
-        git_safe: true,
+        bound: true,
     })
 }
 

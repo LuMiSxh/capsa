@@ -16,7 +16,8 @@ use std::sync::{Arc, Mutex};
 struct Call {
     cwd: PathBuf,
     line: String,
-    git_safe: bool,
+    /// The root of the repository the command was bound to.
+    bound: Option<PathBuf>,
 }
 
 /// Answers scripted git questions, records every command and "runs" the rest.
@@ -65,12 +66,12 @@ impl FakeExec {
 }
 
 impl Executor for Arc<FakeExec> {
-    fn run(&self, cwd: &Path, argv: &[String], git_safe: bool) -> io::Result<Ran> {
+    fn run(&self, cwd: &Path, argv: &[String], repo: Option<&Recorded>) -> io::Result<Ran> {
         let line = argv.join(" ");
         self.calls.lock().unwrap().push(Call {
             cwd: cwd.to_path_buf(),
             line: line.clone(),
-            git_safe,
+            bound: repo.map(|repo| repo.root.clone()),
         });
         let key = plain(&line);
         let found = self
@@ -251,7 +252,7 @@ fn an_approved_push_runs_hardened_in_the_run_directory() {
     assert!(
         calls
             .iter()
-            .all(|call| call.cwd == rig.handler.cwd && call.git_safe)
+            .all(|call| call.cwd == rig.handler.cwd && call.bound.as_ref() == Some(&call.cwd))
     );
     drop(calls);
     let prompts = rig.approver.prompts.lock().unwrap();
@@ -485,7 +486,7 @@ fn run_outside_is_asked_every_time_and_runs_zsh_unhardened() {
     assert_eq!(rig.send(&request).status, Status::Done);
     assert_eq!(rig.approver.asked(), 3);
     assert_eq!(rig.exec.actions()[0], "/bin/zsh -lc echo hi");
-    assert!(!rig.exec.calls.lock().unwrap()[0].git_safe);
+    assert!(rig.exec.calls.lock().unwrap()[0].bound.is_none());
 }
 
 #[test]
@@ -641,4 +642,46 @@ fn the_socket_answers_requests_and_a_slow_client_blocks_nobody() {
         blocked.is_err(),
         "the registry is closed when the broker drops"
     );
+}
+
+#[test]
+fn gh_runs_in_the_recorded_root_even_when_the_working_directory_is_a_subdirectory() {
+    let mut rig = Rig::new("broker-gh-root", Choice::Once);
+    let root = rig.handler.cwd.clone();
+    let sub = root.join("sub");
+    std::fs::create_dir_all(sub.join(".git")).unwrap();
+    rig.handler.cwd = sub;
+    assert_eq!(rig.send(&gh(&["pr", "list"])).status, Status::Done);
+    let calls = rig.exec.calls.lock().unwrap();
+    assert!(
+        calls
+            .iter()
+            .all(|call| call.cwd == root && call.bound.as_ref() == Some(&root))
+    );
+    assert!(calls.iter().any(|call| call.line == "gh pr list"));
+}
+
+#[test]
+fn gh_searches_are_writes_and_a_remembered_read_is_bound_to_the_origin() {
+    let rig = Rig::new("broker-gh-search", Choice::Repo);
+    for args in [
+        &["issue", "list", "--search", "repo:other/x"][..],
+        &["issue", "list", "--search=repo:other/x"],
+        &["pr", "list", "-S", "repo:other/x"],
+        &["pr", "list", "-Srepo:other/x"],
+    ] {
+        assert_eq!(rig.send(&gh(args)).status, Status::Denied, "{args:?}");
+        assert_eq!(rig.approver.last_remember(), Remember::Never, "{args:?}");
+    }
+    let read = gh(&["pr", "list"]);
+    assert_eq!(rig.send(&read).status, Status::Done);
+    assert_eq!(rig.send(&read).status, Status::Done);
+    let before = rig.approver.asked();
+    rig.exec.answer(
+        "git remote get-url --push origin",
+        0,
+        "git@github.com:evil/r.git\n",
+    );
+    assert_eq!(rig.send(&read).status, Status::Done);
+    assert_eq!(rig.approver.asked(), before + 1);
 }

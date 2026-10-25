@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Runs the approved commands outside the sandbox with a time limit and a capped output.
 
+use super::repo::Recorded;
 use crate::proc;
 use std::collections::HashSet;
 use std::io::{self, Read};
@@ -35,10 +36,10 @@ pub struct Ran {
 /// Runs a program with arguments in a directory. The broker uses it for the approved command
 /// and for the git questions that come before it; tests replace it.
 pub trait Executor: Send + Sync {
-    /// Runs `argv` (program first) in `cwd`. With `git_safe`, git and the programs that call
-    /// it get an environment in which a repository's hooks and monitor cannot run and no
-    /// other repository is selected. Errors only when the program cannot start.
-    fn run(&self, cwd: &Path, argv: &[String], git_safe: bool) -> io::Result<Ran>;
+    /// Runs `argv` (program first) in `cwd`. With `repo`, git and the programs that call it
+    /// work on that repository only (`GIT_DIR`, `GIT_WORK_TREE`) and its hooks and monitor
+    /// cannot run. Errors only when the program cannot start.
+    fn run(&self, cwd: &Path, argv: &[String], repo: Option<&Recorded>) -> io::Result<Ran>;
 }
 
 /// The process groups of running actions and dialogs, so that the end of the run can kill them.
@@ -96,7 +97,11 @@ pub struct System {
 
 impl System {
     /// Builds the command for `argv` in `cwd`.
-    fn command(cwd: &Path, argv: &[String], git_safe: bool) -> io::Result<Command> {
+    pub(super) fn command(
+        cwd: &Path,
+        argv: &[String],
+        repo: Option<&Recorded>,
+    ) -> io::Result<Command> {
         let (program, args) = argv
             .split_first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty command"))?;
@@ -106,11 +111,12 @@ impl System {
             .current_dir(cwd)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GH_PROMPT_DISABLED", "1");
-        if git_safe {
+        if let Some(repo) = repo {
             GIT_DROP.iter().for_each(|name| {
                 command.env_remove(name);
             });
-            command.env("GIT_CONFIG_NOSYSTEM", "1");
+            command.env("GIT_DIR", repo.git_dir());
+            command.env("GIT_WORK_TREE", &repo.root);
             command.env("GIT_CONFIG_COUNT", GIT_FORCED.len().to_string());
             for (index, (key, value)) in GIT_FORCED.iter().enumerate() {
                 command.env(format!("GIT_CONFIG_KEY_{index}"), key);
@@ -122,8 +128,8 @@ impl System {
 }
 
 impl Executor for System {
-    fn run(&self, cwd: &Path, argv: &[String], git_safe: bool) -> io::Result<Ran> {
-        let command = Self::command(cwd, argv, git_safe)?;
+    fn run(&self, cwd: &Path, argv: &[String], repo: Option<&Recorded>) -> io::Result<Ran> {
+        let command = Self::command(cwd, argv, repo)?;
         run_capped(command, self.timeout, MAX_OUTPUT, &self.registry)
     }
 }
@@ -216,7 +222,6 @@ pub fn run_capped(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsStr;
 
     fn sh(script: &str) -> Command {
         let mut command = Command::new("/bin/sh");
@@ -287,43 +292,6 @@ mod tests {
             registry: Arc::new(Registry::default()),
         };
         let argv = ["/nonexistent/program".to_string()];
-        assert!(executor.run(Path::new("/"), &argv, false).is_err());
-    }
-
-    #[test]
-    fn git_safe_commands_cannot_pick_a_repository_or_run_hooks() {
-        let argv = ["git".to_string(), "push".to_string()];
-        let command = System::command(Path::new("/"), &argv, true).unwrap();
-        let envs: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
-        let value = |name: &str| {
-            envs.iter()
-                .find(|(key, _)| *key == OsStr::new(name))
-                .map(|(_, value)| *value)
-        };
-        for name in GIT_DROP {
-            assert_eq!(value(name), Some(None), "{name} is removed");
-        }
-        assert_eq!(value("GIT_CONFIG_NOSYSTEM"), Some(Some(OsStr::new("1"))));
-        assert_eq!(value("GIT_CONFIG_COUNT"), Some(Some(OsStr::new("2"))));
-        assert_eq!(
-            value("GIT_CONFIG_KEY_0"),
-            Some(Some(OsStr::new("core.hooksPath")))
-        );
-        assert_eq!(
-            value("GIT_CONFIG_VALUE_0"),
-            Some(Some(OsStr::new("/dev/null")))
-        );
-        assert_eq!(
-            value("GIT_CONFIG_KEY_1"),
-            Some(Some(OsStr::new("core.fsmonitor")))
-        );
-        assert_eq!(value("GIT_CONFIG_VALUE_1"), Some(Some(OsStr::new("false"))));
-
-        let plain = System::command(Path::new("/"), &argv, false).unwrap();
-        assert!(
-            plain
-                .get_envs()
-                .all(|(key, _)| key != OsStr::new("GIT_CONFIG_NOSYSTEM"))
-        );
+        assert!(executor.run(Path::new("/"), &argv, None).is_err());
     }
 }

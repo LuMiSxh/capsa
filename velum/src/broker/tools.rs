@@ -26,8 +26,9 @@ pub struct Plan {
     pub details: Vec<(&'static str, String)>,
     /// The program and arguments, run in the working directory.
     pub argv: Vec<String>,
-    /// Whether the run gets the git-safe environment (see `Executor::run`).
-    pub git_safe: bool,
+    /// Whether the command works on the recorded repository: it then runs in its root with
+    /// the git environment of `Executor::run`.
+    pub bound: bool,
 }
 
 /// Validates `request` for the working directory `cwd`. `repo` is the repository recorded at
@@ -49,8 +50,8 @@ pub fn plan(
         Ok(recorded)
     };
     let plan = match request {
-        Request::GitPush(args) => git::push_plan(exec, cwd, recorded()?, args)?,
-        Request::Gh(args) => gh_plan(exec, cwd, recorded()?, args)?,
+        Request::GitPush(args) => git::push_plan(exec, recorded()?, args)?,
+        Request::Gh(args) => gh_plan(exec, recorded()?, args)?,
         Request::OpenUrl(args) => url_plan(cwd, args)?,
         Request::RunOutside(args) => outside_plan(cwd, args)?,
     };
@@ -78,12 +79,7 @@ fn too_long(what: &'static str, text: &str) -> Result<(), Refusal> {
     Ok(())
 }
 
-fn gh_plan(
-    exec: &dyn Executor,
-    cwd: &Path,
-    repo: &Recorded,
-    args: &GhArgs,
-) -> Result<Plan, Refusal> {
+fn gh_plan(exec: &dyn Executor, repo: &Recorded, args: &GhArgs) -> Result<Plan, Refusal> {
     if args.args.is_empty() {
         return Err(Refusal::NoGhArgs);
     }
@@ -92,13 +88,9 @@ fn gh_plan(
     }
     let shown = join_args(&args.args);
     too_long("gh arguments", &shown)?;
-    let slug = if args.args[0] == "api" {
-        git::push_url(exec, cwd, repo, "origin")
-            .ok()
-            .and_then(|url| github_slug(&url))
-    } else {
-        None
-    };
+    let slug = git::push_url(exec, repo, "origin")
+        .ok()
+        .and_then(|url| github_slug(&url));
     let read_only = is_read_only(&args.args, slug.as_deref());
     let gate = if read_only {
         Gate {
@@ -120,7 +112,7 @@ fn gh_plan(
         tool: "gh",
         gate,
         repo: repo.root.clone(),
-        subject: String::new(),
+        subject: slug.unwrap_or_default(),
         details: vec![
             ("Command", format!("gh {shown}")),
             ("Kind", kind.to_string()),
@@ -128,7 +120,7 @@ fn gh_plan(
         argv: std::iter::once("gh".to_string())
             .chain(args.args.iter().cloned())
             .collect(),
-        git_safe: true,
+        bound: true,
     })
 }
 
@@ -147,7 +139,7 @@ fn url_plan(cwd: &Path, args: &OpenUrlArgs) -> Result<Plan, Refusal> {
         subject: String::new(),
         details: vec![("URL", args.url.clone())],
         argv: vec!["open".to_string(), args.url.clone()],
-        git_safe: false,
+        bound: false,
     })
 }
 
@@ -170,7 +162,7 @@ fn outside_plan(cwd: &Path, args: &RunOutsideArgs) -> Result<Plan, Refusal> {
             "-lc".to_string(),
             args.command.clone(),
         ],
-        git_safe: false,
+        bound: false,
     })
 }
 
@@ -220,10 +212,13 @@ const READ_ONLY: &[(&str, &[&str])] = &[
     ("release", &["view", "list"]),
 ];
 
-/// Returns whether `arg` points `gh` at another repository or host, or opens a browser.
+/// Returns whether `arg` points `gh` at another repository or host, searches across
+/// repositories, or opens a browser.
 fn redirects(arg: &str) -> bool {
     let long = |name: &str| arg == name || arg.starts_with(&format!("{name}="));
     (arg.starts_with("-R") && !arg.starts_with("--"))
+        || (arg.starts_with("-S") && !arg.starts_with("--"))
+        || long("--search")
         || arg == "-w"
         || long("--repo")
         || long("--hostname")

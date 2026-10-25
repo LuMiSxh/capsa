@@ -107,7 +107,9 @@ impl Handler {
             let _ = self.log.write(&clean(&format!("refused: {refusal}")));
             return Response::error(refusal.to_string());
         }
-        match self.executor.run(&self.cwd, &plan.argv, plan.git_safe) {
+        let repo = self.repo.as_ref().ok().filter(|_| plan.bound);
+        let cwd = repo.map_or(self.cwd.as_path(), |repo| repo.root.as_path());
+        match self.executor.run(cwd, &plan.argv, repo) {
             Ok(ran) => {
                 let _ = self
                     .log

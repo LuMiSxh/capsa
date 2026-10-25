@@ -73,8 +73,15 @@ impl Recorded {
             Ok(text) => std::fs::canonicalize(git_dir.join(text)).map_err(|err| err.to_string())?,
             Err(_) => git_dir.clone(),
         };
-        // Git reads `config` and `hooks` from the common directory only.
-        let guarded = [dot_git, common_dir.join("config"), common_dir.join("hooks")];
+        // Git reads `config` and `hooks` from the common directory. A `.git` file, which
+        // names the git directory, and the directory of a linked worktree (HEAD,
+        // `config.worktree`) are guarded too. A `.git` directory is not: velum denies only
+        // its `config` and `hooks`, and `verify` catches a replacement.
+        let mut guarded = vec![common_dir.join("config"), common_dir.join("hooks")];
+        if dot_git.symlink_metadata().is_ok_and(|meta| meta.is_file()) {
+            guarded.push(dot_git);
+            guarded.push(git_dir.clone());
+        }
         for path in &guarded {
             if let Some(entry) = writable::writable_by(settings, path) {
                 return Err(format!(
@@ -94,6 +101,11 @@ impl Recorded {
             common_dir,
             ids: [first, second],
         })
+    }
+
+    /// Returns the git directory.
+    pub fn git_dir(&self) -> &Path {
+        &self.git_dir
     }
 
     /// Checks that the git directories are still the ones recorded.
@@ -201,7 +213,7 @@ mod tests {
             std::fs::canonicalize(main.join(".git")).unwrap()
         );
         let writable_main = settings(scratch.path(), &deny);
-        assert!(Recorded::resolve(&work, &writable_main).is_ok());
+        assert!(Recorded::resolve(&work, &writable_main).is_err());
         let open = settings(&main, &[]);
         assert!(Recorded::resolve(&work, &open).is_err());
     }
