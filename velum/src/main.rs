@@ -231,8 +231,9 @@ fn run(policy: Option<PathBuf>, dry_run: bool, cmd: &[String]) -> Result<Outcome
     srt::install_wrappers(&mut env, &run_dir)?;
     srt::install_git_env(&mut env, &run_dir)?;
     let broker = start_broker(&home, &run_dir, &cwd, &mut settings, &mut env);
+    let argv = mcp::config::with_broker_config(cmd, broker.is_some(), &path, &run_dir, &settings)?;
     let guard = claude_json::Guard::snapshot(&home)?;
-    let result = srt::run(&srt_bin, &run_dir, &settings, env, cmd);
+    let result = srt::run(&srt_bin, &run_dir, &settings, env, &argv);
     drop(broker);
     // After the child, and its surviving processes, are gone: undo and inspect what it did.
     match guard.restore() {

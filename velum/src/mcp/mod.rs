@@ -2,6 +2,7 @@
 //! Owns `velum mcp`: a stdio MCP server (JSON-RPC 2.0, one message per line) that forwards
 //! tool calls to the approval broker named by `VELUM_BROKER`.
 
+pub mod config;
 #[cfg(test)]
 mod tests;
 

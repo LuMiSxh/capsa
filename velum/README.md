@@ -98,11 +98,7 @@ Names that contain `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD` or `CREDENTIAL`, or e
 
 Inside the sandbox the agent has no network beyond the allowlist and no credentials. `velum run` therefore starts a broker on a unix socket in the private run directory (`broker.sock`, mode 0600, path in `VELUM_BROKER`). srt is told to allow connecting to that one socket and no other. `velum mcp` is a stdio MCP server that forwards tool calls to it. The broker shows a macOS dialog with the exact action; after approval it runs the action outside the sandbox, in the run's working directory, with your normal environment, a 10 minute limit and stdout and stderr combined (cut at 20 KB, with a note). The sandbox cannot answer the dialog: Apple Events are blocked inside it.
 
-Register the server once, outside velum (the sandbox cannot change MCP servers):
-
-```sh
-claude mcp add --scope user velum -- velum mcp
-```
+`velum run -- claude` gets the server automatically. `velum run` writes an MCP config into the run directory and passes it to claude with `--mcp-config`, so the server exists only inside that run; nothing is registered with claude. Without a broker (it failed to start) nothing is passed. For Zed, see pons `--mcp-server` (being added separately).
 
 | Tool | What it runs | Dialog buttons |
 | --- | --- | --- |
