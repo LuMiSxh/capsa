@@ -88,6 +88,94 @@ fn patch_refuses_to_break_syntax_unless_allowed() {
 }
 
 #[test]
+fn patch_accepts_a_c_attribute_declaration_added_beside_one() {
+    let d = tempfile::tempdir().unwrap();
+    let file = d.path().join("main.c");
+    let before = "#ifdef __APPLE__\n__asm__(\".zerofill WINE_RESERVE,WINE_RESERVE\");\nstatic char __wine_reserve[0x1fffff000] __attribute__((section(\"WINE_RESERVE, WINE_RESERVE\")));\n#endif\n\nstatic const int preload_info[] = {\n    0\n};\n";
+    std::fs::write(&file, before).unwrap();
+    let p = "*** Begin Patch\n*** Update File: main.c\n<<<<<<< SEARCH\nstatic const int preload_info[] = {\n=======\n__asm__(\".zerofill WINE_TOP_DOWN,WINE_TOP_DOWN\");\nstatic char __wine_top_down[0x001ff0000] __attribute__((section(\"WINE_TOP_DOWN, WINE_TOP_DOWN\")));\n\nstatic const int preload_info[] = {\n>>>>>>> REPLACE\n*** End Patch\n";
+    let (code, _, err) = acus_in(d.path(), &["patch", "-q"], p);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("__wine_top_down[0x001ff0000] __attribute__"),
+    );
+}
+
+#[test]
+fn patch_accepts_an_entry_added_to_a_zed_style_jsonc_file() {
+    let d = tempfile::tempdir().unwrap();
+    let file = d.path().join("settings.json");
+    let before =
+        "// Zed settings\n{\n  \"theme\": \"One Dark\", // inline\n  \"tab_size\": 4,\n}\n";
+    std::fs::write(&file, before).unwrap();
+    let p = "*** Begin Patch\n*** Update File: settings.json\n<<<<<<< SEARCH\n  \"tab_size\": 4,\n=======\n  \"tab_size\": 4,\n  \"format_on_save\": \"on\",\n>>>>>>> REPLACE\n*** End Patch\n";
+    let (code, _, err) = acus_in(d.path(), &["patch", "-q"], p);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("\"format_on_save\": \"on\",\n}")
+    );
+}
+
+#[test]
+fn patch_refuses_a_broken_brace_in_a_jsonc_file() {
+    let d = tempfile::tempdir().unwrap();
+    let file = d.path().join("settings.json");
+    let before = "// Zed settings\n{\n  \"tab_size\": 4,\n}\n";
+    std::fs::write(&file, before).unwrap();
+    let p = "*** Begin Patch\n*** Update File: settings.json\n<<<<<<< SEARCH\n  \"tab_size\": 4,\n}\n=======\n  \"tab_size\": 4,\n>>>>>>> REPLACE\n*** End Patch\n";
+    let (code, _, err) = acus_in(d.path(), &["patch"], p);
+    assert_eq!(code, 2);
+    assert!(
+        err.starts_with("error: patch would break the syntax of settings.json near line"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+}
+
+#[test]
+fn patch_still_refuses_a_trailing_comma_added_to_strict_json() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.json"), "{\n  \"a\": 1\n}\n").unwrap();
+    let p = "*** Begin Patch\n*** Update File: a.json\n<<<<<<< SEARCH\n  \"a\": 1\n=======\n  \"a\": 1,\n>>>>>>> REPLACE\n*** End Patch\n";
+    let (code, _, err) = acus_in(d.path(), &["patch"], p);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.starts_with("error: patch would break the syntax of a.json near line 2"),
+        "{err}"
+    );
+}
+
+#[test]
+fn patch_still_refuses_swift_import_fused_to_an_identifier() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.swift"), "import Foo\n\nfunc f() {}\n").unwrap();
+    let p = "*** Begin Patch\n*** Update File: a.swift\n<<<<<<< SEARCH\nimport Foo\n=======\nimport Aimport B\n>>>>>>> REPLACE\n*** End Patch\n";
+    let (code, _, err) = acus_in(d.path(), &["patch"], p);
+    assert_eq!(code, 2);
+    assert!(
+        err.starts_with("error: patch would break the syntax of a.swift near line 1"),
+        "{err}"
+    );
+}
+
+#[test]
+fn patch_still_refuses_an_unclosed_rust_block() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.rs"), "fn a() {\n    x();\n}\n").unwrap();
+    let p = "*** Begin Patch\n*** Update File: a.rs\n<<<<<<< SEARCH\n    x();\n}\n=======\n    x();\n>>>>>>> REPLACE\n*** End Patch\n";
+    let (code, _, err) = acus_in(d.path(), &["patch"], p);
+    assert_eq!(code, 2);
+    assert!(
+        err.starts_with("error: patch would break the syntax of a.rs"),
+        "{err}"
+    );
+}
+
+#[test]
 fn patch_notes_a_search_matched_with_crlf_line_endings() {
     let d = tempfile::tempdir().unwrap();
     let file = d.path().join("w.txt");
