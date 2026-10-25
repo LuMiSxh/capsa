@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.18.0]
 
 ### Added
 
@@ -18,6 +18,7 @@
 ### Fixed
 
 - Codex `acus` calls were counted as 0 when their command was stored as escaped JSON or in a JS tool body; the command is now decoded first.
+- The guard kept the pipe of a heredoc command inside an `&&` or `||` list on the wrong segment, so `cd X && acus patch <<'P' | tail` was not rewritten to `-q`; the pipe now stays on the heredoc command and later list elements no longer inherit its stdin.
 - The patch syntax check no longer refuses C files with GNU `__attribute__((…))` or `__asm__(…)` groups, which tree-sitter-c reports as errors, nor JSON files that already use comments or trailing commas (JSONC such as Zed's `settings.json`); a strict JSON file that gains a trailing comma is still refused.
 
 ## [0.17.0]
