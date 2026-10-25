@@ -10,7 +10,7 @@ velum runs a command, normally Claude Code, inside Anthropic's sandbox-runtime (
 
 Paths are relative to `velum/`. Neither velum nor pons uses another workspace crate today.
 
-- `src/main.rs`: the `velum` CLI (clap) with `run`, `self` (`setup`, `doctor`, `update`, `uninstall`) and `shim`, and the global `--agent`, `--human` and `--json` flags. `main` returns through `capsa_core::exit::finish`; `run` returns the child's exit code.
+- `src/main.rs`: the `velum` CLI (clap) with `run`, `mcp`, `self` (`setup`, `doctor`, `update`, `uninstall`) and `shim`, and the global `--agent`, `--human` and `--json` flags. `main` returns through `capsa_core::exit::finish`; `run` returns the child's exit code.
 - `src/claude_version.rs`: `FLOOR` (Claude Code 2.1.163), `parse`, `verdict` (runs `claude --version`) and `enforce`, which `run` calls for a program named `claude`.
 - `src/check.rs`: check results (`Check`, `Status`) rendered as agent lines, a human table or JSON.
 - `src/doctor.rs`: the `doctor` checks.
@@ -24,6 +24,8 @@ Paths are relative to `velum/`. Neither velum nor pons uses another workspace cr
 - `src/claude_json/`: `Guard`, which snapshots the guarded keys of `~/.claude.json` and restores the ones that changed after the run (`tests.rs` beside it).
 - `src/gitguard/`: `Start`: the repositories under cwd before the run (concrete `deny_write` entries), and the scan after it (quarantine of hooks, report of config entries).
 - `src/proc.rs`: the only `unsafe` code: the child's process group, signal forwarding, terminal hand-over, survivor kill, `euid`.
+- `src/broker/`: the approval broker. `mod.rs` the socket server (`start`, `Broker`, `approvals_path`, `log_path`); `handler.rs` one request (parse, plan, remember or ask, run, log); `tools.rs` plans for `gh` (`is_read_only`), `open_url` and `run_outside`; `git.rs` the `git_push` plan; `approval.rs` `Approver`, `Gate`, `Memory` and the `approvals.toml` `Store`; `dialog.rs` the `osascript` approver and the dialog text; `exec.rs` `Executor`, the 10 minute limit and the 20 KB cut; `request.rs` the wire types and `Refusal`; `text.rs` `clean` and argument quoting; `log.rs` `broker.log`. `tests.rs` uses a fake approver and executor.
+- `src/mcp/`: `velum mcp`, the stdio MCP server (`serve`) that forwards `tools/call` to `$VELUM_BROKER` (`tests.rs` beside it).
 - `src/safedir.rs`: `ensure_private_dir`: a directory made without following links, owned by the user.
 - `src/writable.rs`: judges from the srt settings whether a path is writable (`allowed_by`, `writable_by`, `ensure_not_writable`).
 - `src/setup.rs`: `velum self setup`: writes the default policy if it is missing, then installs srt with pnpm, npm or bun (`capsa_core::pkg`) unless `find_srt` already finds it, and checks afterwards that it is findable.
@@ -61,6 +63,7 @@ None yet.
 - Claude Code floor: `velum run` refuses (hinted) a program named `claude` whose `--version` is below 2.1.163 (CVE-2026-55607); an unreadable version (or a `--version` that takes over 10 seconds) refuses too, with a hint and no override. `doctor` check `claude version` fails below the floor. The version is read outside the sandbox, so only a trusted claude should be on `PATH` (see `trust`).
 - Bare repositories: the scan after a run reports new bare-repository-shaped directories (`HEAD`, `objects/`, `refs/`) under cwd; `doctor` warns unless global `safe.bareRepository` is `explicit`. Neither edits git config.
 - Network: `allowLocalBinding` is never set (srt default false); `169.254.169.254` and loopback are unreachable from the sandbox. `claude.ai` and `platform.claude.com` are in the default allowlist for OAuth.
+- Broker: the socket lives in the run directory (mode 0600 in a 0700 directory) and is the only unix socket srt allows (`network.allowUnixSockets`). `VELUM_BROKER` is set by `run`, not by the env allowlist, so a value inherited from outside never reaches the sandbox. If the broker cannot start, `run` warns and goes on without it; the sandbox settings are unchanged. The working directory of every action is the run's, never the request's; requests with unknown fields are refused. The request is logged before anything runs, and nothing runs if the log cannot be written. `approvals.toml` and `broker.log` sit under `~/Library/Application Support/velum`, which is `deny_write` (a test in `writable.rs` covers both). Requests are served one at a time. When the run ends the broker thread stops; an action still running is cut off with velum.
 - Fail closed: every failure before or in starting srt (no srt, no run directory, no settings file, srt exit) leaves the command unstarted; there is no unsandboxed fallback.
 - Errors use `capsa_core`: a policy error or a missing srt is a `Hint` error, and its fix (`velum self doctor`, `velum self setup`) renders as `hint:`, never inside the message.
 - `doctor` exits 1 only when a check fails; a warning exits 0. It creates and writes `TMP_DIR` (`/private/tmp/velum`), as `run` does.

@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Approval broker: `velum run` serves a unix socket (`broker.sock` in the run directory, `VELUM_BROKER` in the sandbox, `network.allowUnixSockets` for that one path) where the sandboxed agent asks for `git_push`, `gh`, `open_url` and `run_outside`. A macOS dialog shows the action; approved actions run outside the sandbox. Approvals for a repository are stored in `~/Library/Application Support/velum/approvals.toml`, requests and decisions are logged in `broker.log`.
+- `velum mcp`: stdio MCP server for the broker's tools. Register it with `claude mcp add --scope user velum -- velum mcp`.
+
 ## [0.1.0]
 
 ### Security

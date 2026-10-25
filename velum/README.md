@@ -94,6 +94,27 @@ Names that contain `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD` or `CREDENTIAL`, or e
 - **Claude Code version.** `velum run` refuses a `claude` below 2.1.163 (CVE-2026-55607).
 - **Run files.** The generated settings and wrappers live in a private per-run directory under `~/Library/Application Support/velum/run/`, removed after the run.
 
+## Approval broker
+
+Inside the sandbox the agent has no network beyond the allowlist and no credentials. `velum run` therefore starts a broker on a unix socket in the private run directory (`broker.sock`, mode 0600, path in `VELUM_BROKER`). srt is told to allow connecting to that one socket and no other. `velum mcp` is a stdio MCP server that forwards tool calls to it. The broker shows a macOS dialog with the exact action; after approval it runs the action outside the sandbox, in the run's working directory, with your normal environment, a 10 minute limit and stdout and stderr combined (cut at 20 KB, with a note). The sandbox cannot answer the dialog: Apple Events are blocked inside it.
+
+Register the server once, outside velum (the sandbox cannot change MCP servers):
+
+```sh
+claude mcp add --scope user velum -- velum mcp
+```
+
+| Tool | What it runs | Dialog buttons |
+| --- | --- | --- |
+| `git_push {remote?, force?}` | `git push -u <remote> HEAD:refs/heads/<branch>` for the checked-out branch; refuses a detached HEAD and a remote that is not configured; `force` adds `--force-with-lease` | Deny, Allow once, Allow for this repo. Only Allow once for the default branch (`main`, `master`, or the one `refs/remotes/<remote>/HEAD` names) and for force |
+| `gh {args}` | `gh` with those arguments. Read-only: `pr view\|list\|diff\|checks\|status`, `run view\|list\|watch`, `issue view\|list`, `repo view`, `release view\|list`, and `api` with GET and no `-f/-F/--field/--raw-field/--input`. Everything else is a write | Reads: Deny, Allow once, Allow for this repo. Writes: Allow once only |
+| `open_url {url}` | `open <url>` (http and https only) | Deny, Allow once, Allow this session |
+| `run_outside {command}` | `/bin/zsh -lc <command>` | Allow once only, asked every time |
+
+Agent-supplied text is shown as data: control and invisible characters are removed, line breaks show as `↵`, and a command, URL or argument over 2000 characters is refused rather than shortened. The dialog denies after 120 seconds. "Allow this session" lives in the broker's memory. "Allow for this repo" is stored in `~/Library/Application Support/velum/approvals.toml`, keyed by tool class and repository root; that directory is read-only for the sandbox. Every request and decision is logged, one line each and without outputs, in `~/Library/Application Support/velum/broker.log`. `velum mcp` without `VELUM_BROKER` answers `initialize` and `tools/list`, and every call returns "not running under velum".
+
+A repository made during the run has a writable `.git/config`. Keys such as `core.sshCommand` or `credential.helper` there run outside the sandbox on an approved push. velum warns about them after the run, not before the push: check the dialog's remote URL and be careful in repositories the agent created.
+
 ## Commands
 
 Global flags: `--agent` (default), `--human` and `--json`.
@@ -103,6 +124,7 @@ Global flags: `--agent` (default), `--human` and `--json`.
 | `velum run [--policy PATH] [--dry-run] -- CMD` | Runs `CMD` under srt with the merged policy and filtered environment. |
 | `velum self setup [--package-manager pnpm\|npm\|bun] [--dry-run]` | Installs srt if it is missing and writes the default policy file. |
 | `velum self doctor` | Checks srt and its version, the policy file, the generated settings, the first `claude` on `PATH`, the shim, its place on `PATH` and `TMPDIR`. Exits 1 when a check fails; a warning exits 0. |
+| `velum mcp` | Serves the approval broker's tools over MCP on stdio (see [Approval broker](#approval-broker)). |
 | `velum shim install\|uninstall\|status [--dir DIR]` | Writes, removes or inspects the `claude` shim in `DIR` (default `~/.local/bin`). Install and uninstall touch only files velum wrote. |
 | `velum self update`, `velum self uninstall` | Update or remove velum itself. |
 
@@ -110,7 +132,7 @@ Global flags: `--agent` (default), `--human` and `--json`.
 
 - macOS only. srt runs the command with Seatbelt.
 - srt is in beta. velum was tested with srt 0.0.80; `velum self setup` installs the version the package manager provides.
-- Inside the sandbox, `open` and Apple Events do not work.
+- Inside the sandbox, `open` and Apple Events do not work; use the `open_url` tool.
 - `cargo new` and `cargo init` create no git repository inside velum. Run `git init` yourself.
 - Seatbelt cannot nest. `swift` and `xcodebuild` run through velum's wrappers, which add `--disable-sandbox` to `swift` and `-IDEPackageSupportDisableManifestSandbox=1` to `xcodebuild`. Other tools that call `sandbox-exec` need a wrapper of their own.
 
