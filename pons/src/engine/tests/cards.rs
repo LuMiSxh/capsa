@@ -254,7 +254,7 @@ fn no_idle_finish_after_a_tool_result() {
     e.on_agent(&real_launch_result("A"), t0);
     e.on_agent(&kid("A", "a1", "Read a"), t0 + secs(5));
     e.on_agent(&kid_end("A", "a1"), t0 + secs(6));
-    for at in [30, 31, 50, 100, 600] {
+    for at in [30, 31, 50, 64] {
         let out = e.tick(t0 + secs(at));
         assert!(entries(&out).is_empty(), "at {at}");
         assert!(
@@ -265,6 +265,42 @@ fn no_idle_finish_after_a_tool_result() {
         );
     }
     assert!(!e.folds.is_finished("A"));
+}
+
+#[test]
+fn tool_result_then_silence_under_the_long_idle_is_not_finished() {
+    let t0 = Instant::now();
+    let mut e = engine();
+    e.on_client(&prompt(1), t0);
+    e.on_agent(&real_parent("A"), t0);
+    e.on_agent(&real_launch_result("A"), t0);
+    e.on_agent(&kid("A", "a1", "Read a"), t0 + secs(5));
+    e.on_agent(&kid_end("A", "a1"), t0 + secs(6));
+    let out = e.tick(t0 + secs(65));
+    assert!(entries(&out).is_empty());
+    assert!(!e.folds.is_finished("A"));
+    assert!(e.folds.running_background("s").contains(&"A".to_owned()));
+}
+
+#[test]
+fn tool_result_then_silence_past_the_long_idle_finishes_provisionally() {
+    let t0 = Instant::now();
+    let mut e = engine();
+    e.on_client(&prompt(1), t0);
+    e.on_agent(&real_parent("A"), t0);
+    e.on_agent(&real_launch_result("A"), t0);
+    e.on_agent(&kid("A", "a1", "Read a"), t0 + secs(5));
+    e.on_agent(&kid_end("A", "a1"), t0 + secs(6));
+    let out = e.tick(t0 + secs(67));
+    let a = updates_for(&out, "A");
+    assert_eq!(a[0]["params"]["update"]["status"], "completed");
+    assert!(
+        out.iter()
+            .any(|x| matches!(x, Action::Note(n) if n.contains("finished (idle, provisional)")))
+    );
+    assert!(e.folds.is_finished("A"));
+    assert!(e.sessions["s"].in_flight.contains("A"));
+    assert!(e.tick(t0 + secs(90)).is_empty(), "heartbeat stops");
 }
 
 #[test]

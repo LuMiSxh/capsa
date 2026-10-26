@@ -15,9 +15,10 @@ fn a_resumed_subagent_does_not_pass_its_notification_on() {
         updates_for(&out, "B")[0]["params"]["update"]["status"],
         "completed"
     );
-    // B resumes a minute later: its own notification, not A's.
-    e.on_agent(&kid_ended("B", "b2", "Read b2"), t0 + secs(66));
-    let out = e.tick(t0 + secs(67));
+    // B resumes later: its own notification, not A's. A's last tool result is
+    // 59 s old here, under the 60 s wait that follows a tool result.
+    e.on_agent(&kid_ended("B", "b2", "Read b2"), t0 + secs(63));
+    let out = e.tick(t0 + secs(64));
     assert!(
         updates_for(&out, "A")
             .iter()
@@ -133,4 +134,42 @@ fn every_finish_path_after_a_retirement_updates_the_same_entry() {
         &("tool_call_update".to_owned(), "completed".to_owned())
     );
     assert!(e.folds.running_background("s").is_empty());
+}
+
+/// A subagent woken from a retirement whose woken tool fails, then goes quiet
+/// with no text: it finishes once the long idle has passed, and stays finished.
+#[test]
+fn a_retired_card_whose_woken_tool_fails_finishes_after_the_long_idle() {
+    let t0 = Instant::now();
+    let mut e = engine();
+    e.on_client(&prompt(1), t0);
+    e.on_agent(&real_parent("A"), t0);
+    e.on_agent(&real_launch_result("A"), t0);
+    e.on_agent(&kid_ended("A", "a1", "Read a"), t0 + secs(1));
+    e.on_agent(&child_text("A", "Done."), t0 + secs(2));
+    e.on_agent(&task_notification(), t0 + secs(3));
+    e.on_agent(&response(1), t0 + secs(4));
+    e.on_client(&prompt(2), t0 + secs(5));
+    e.on_agent(&response(2), t0 + secs(6));
+    e.tick(t0 + secs(7));
+    e.on_agent(&kid("A", "a2", "Read a2"), t0 + secs(100));
+    let failed = update(json!({
+        "_meta": {"claudeCode": {"toolName": "Read", "parentToolUseId": "A"}},
+        "toolCallId": "a2", "sessionUpdate": "tool_call_update", "status": "failed"
+    }));
+    e.on_agent(&failed, t0 + secs(101));
+    assert!(e.tick(t0 + secs(130)).iter().all(|x| !matches!(
+        x,
+        Action::Note(n) if n.contains("finished (")
+    )));
+    let out = e.tick(t0 + secs(162));
+    assert!(
+        out.iter()
+            .any(|x| matches!(x, Action::Note(n) if n.contains("finished (idle, provisional)")))
+    );
+    assert_eq!(
+        updates_for(&out, "A")[0]["params"]["update"]["status"],
+        "completed"
+    );
+    assert!(e.tick(t0 + secs(190)).is_empty(), "heartbeat stops");
 }
