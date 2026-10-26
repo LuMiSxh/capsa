@@ -134,7 +134,14 @@ pub(super) fn is_dir(scope: Option<&Scope>, path: &str) -> bool {
 pub(super) fn home_dir(scope: Option<&Scope>) -> Option<String> {
     match scope {
         Some(s) if s.fixed => Some("/home/user".to_owned()),
-        _ => std::env::var("HOME").ok(),
+        // A Windows home has `\`, which an unquoted word cannot hold; output paths use `/`.
+        _ => std::env::var("HOME").ok().map(|h| {
+            if cfg!(windows) {
+                h.replace('\x5c', "/")
+            } else {
+                h
+            }
+        }),
     }
 }
 

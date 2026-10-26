@@ -49,7 +49,12 @@ impl FoldEntry {
         }
         let silent = self.silence(now);
         if text_visible {
-            (!idle.is_zero() && self.last_kind == Kind::Text && silent >= idle).then_some("idle")
+            let needed = match self.last_kind {
+                Kind::Text => idle,
+                Kind::ToolResult => idle.max(TOOL_RESULT_IDLE),
+                _ => return None,
+            };
+            (!idle.is_zero() && silent >= needed).then_some("idle")
         } else {
             (!cap.is_zero() && silent >= cap).then_some("quiet-cap")
         }

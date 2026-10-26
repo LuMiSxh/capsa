@@ -27,7 +27,7 @@ fn replacement(segs: &[Segment], i: usize) -> Option<(usize, String)> {
     match seg.out {
         Out::Pipe => {
             let next = segs.get(i + 1)?;
-            let words = split_words(&next.low);
+            let words = split_words(next.low_unescaped().1);
             let ["head" | "tail", ..] = words.as_slice() else {
                 return None;
             };

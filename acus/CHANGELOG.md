@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.1]
+
+### Fixed
+
+- On Windows the guard expanded `~` to a home path with backslashes, so `cat ~/x/a.rs` was not rewritten; the expanded path now uses `/`.
+- `guard.jsonl` lines written by parallel hooks could interleave into lines that are not JSON: a line and its newline were written separately. Each decision is now one write call, and a test appends from four threads at once and checks that every line parses.
+- `acus guard` read a `command ` prefix on a pipe stage as an unknown command, so `grep X f | command head -30` ran unchanged. The stage is now read as `head`, and the search is rewritten to `acus find X f | command head -30`.
+
 ## [0.18.0]
 
 ### Added

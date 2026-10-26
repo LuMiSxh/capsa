@@ -74,7 +74,7 @@ pub(super) fn kept_filter(s: &Segment) -> bool {
             && r.bytes()
                 .all(|b| b.is_ascii_digit() || b == b',' || b == b'-')
     };
-    match split_words(&s.low).as_slice() {
+    match split_words(s.low_unescaped().1).as_slice() {
         ["head" | "tail", opts @ ..] => !opts.is_empty() && head_count(opts).is_some(),
         ["cut", "-c", r] => range(r),
         ["cut", o] => o.strip_prefix("-c").is_some_and(range),
@@ -168,7 +168,7 @@ pub(super) fn span_read(
             let next = segs
                 .get(i + 1)
                 .filter(|n| seg.feeds(n) && !n.opaque() && !feeds_other(segs, i + 1))?;
-            match split_words(&next.low).as_slice() {
+            match split_words(next.low_unescaped().1).as_slice() {
                 ["sed", "-n", script] => (*file, sed_span(script)?, i + 1, true),
                 ["head", args @ ..] => (*file, (1, Some(head_count(args)?)), i + 1, false),
                 _ => return None,
@@ -191,7 +191,7 @@ pub(super) fn span_read(
         .filter(|n| segs[read_at].feeds(n) && !n.opaque() && !continues(segs, read_at + 1));
     let (a, b, last) = match filter {
         Some(n) => {
-            let w = split_words(&n.low);
+            let w = split_words(n.low_unescaped().1);
             let (is_tail, opts) = match w.as_slice() {
                 ["head", opts @ ..] => (false, opts),
                 ["tail", opts @ ..] => (true, opts),

@@ -1,7 +1,7 @@
 [package]
 name = "acus-edit"
 description = "Patch parsing and atomic, all-or-nothing file edits for acus."
-version = "0.18.0"
+version = "0.18.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

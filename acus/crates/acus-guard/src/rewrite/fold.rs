@@ -213,7 +213,7 @@ pub(super) fn tail_head_read(
             let next = segs
                 .get(i + 1)
                 .filter(|n| seg.feeds(n) && !n.opaque() && !feeds_other(segs, i + 1))?;
-            let tw = split_words(&next.low);
+            let tw = split_words(next.low_unescaped().1);
             let ["tail", opts @ ..] = tw.as_slice() else {
                 return None;
             };
@@ -301,7 +301,7 @@ pub(super) fn read_search(segs: &[Segment], i: usize, scope: Option<&Scope>) -> 
     s.operands = vec![target.as_str()];
     let (mut last, mut limit) = (i + 1, String::new());
     if let Some(n) = segs.get(i + 2).filter(|n| g.feeds(n) && !n.opaque()) {
-        let w = split_words(&n.low);
+        let w = split_words(n.low_unescaped().1);
         let (is_tail, opts) = match w.as_slice() {
             ["head", opts @ ..] => (false, opts),
             ["tail", opts @ ..] => (true, opts),

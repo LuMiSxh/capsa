@@ -299,6 +299,11 @@ fn keeps_escaped_spaces_inside_their_word() {
     }
     // A leading `~` is expanded to the home directory, as the shell would.
     let home = std::env::var("HOME").unwrap_or_default();
+    let home = if cfg!(windows) {
+        home.replace('\x5c', "/")
+    } else {
+        home
+    };
     if !home.is_empty() && !home.contains(' ') {
         assert_eq!(
             rw("grep -l foo ~/My\\ Dir/a.rs", None).as_deref(),

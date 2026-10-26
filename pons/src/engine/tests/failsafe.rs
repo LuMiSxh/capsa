@@ -57,7 +57,9 @@ fn replay_of_the_real_false_finishes_finishes_nothing() {
     e.on_agent(&real_launch_result("A"), t0);
     let mut next = 0;
     let mut open = 0;
-    for at in 1..=760u64 {
+    // The last tick is 60 s after the final completion, where the tool-result
+    // idle rule finishes the card; the replayed gaps are all shorter.
+    for at in 1..=759u64 {
         let now = t0 + secs(at);
         while next < events.len() && events[next].0 == at {
             let id = format!("t{next}");
