@@ -30,7 +30,7 @@ pub(crate) fn fold(segs: &[Segment], i: usize) -> Option<(usize, String)> {
         at += 1;
         next = stage(segs, at - 1, at)?;
     }
-    let hw = split_words(&next.low);
+    let hw = split_words(next.low_unescaped().1);
     let ["head", opts @ ..] = hw.as_slice() else {
         return None;
     };
@@ -63,7 +63,7 @@ fn stage(segs: &[Segment], from: usize, to: usize) -> Option<&Segment> {
 }
 
 fn cut_stage(seg: &Segment) -> bool {
-    matches!(split_words(&seg.low).as_slice(), ["cut", c] if c.starts_with("-c") && c.len() > 2)
+    matches!(split_words(seg.low_unescaped().1).as_slice(), ["cut", c] if c.starts_with("-c") && c.len() > 2)
 }
 
 /// Lists the flags that change the output format or already limit it, and redirects.

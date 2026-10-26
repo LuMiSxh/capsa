@@ -42,7 +42,9 @@ pub fn append(cfg: &GuardConfig, hook: &Value, v: &Verdict) {
         .append(true)
         .open(path)
     {
-        let _ = writeln!(f, "{line}");
+        // One write call per line: parallel hooks append to the same file, and a newline written
+        // apart from its line lets another hook's line land between them.
+        let _ = f.write_all(format!("{line}\n").as_bytes());
     }
 }
 
@@ -73,5 +75,39 @@ mod tests {
         assert_eq!(serde_json::to_string(&e).unwrap(), old);
         let replay: LogEntry = serde_json::from_str(r#"{"cmd":"cat a.rs"}"#).unwrap();
         assert_eq!(replay.cmd.as_deref(), Some("cat a.rs"));
+    }
+
+    #[test]
+    fn concurrent_logged_lines_are_each_one_json_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = GuardConfig {
+            hint_every: 10,
+            state_dir: dir.path().join("guard-hints"),
+            log_path: dir.path().join("guard.jsonl"),
+        };
+        let prefix = "grep -n \"a\\b\" 'x\ty'\nna\u{ef}ve \u{4e2d} ";
+        let command = format!("{prefix}{}", "\\\"".repeat(LOG_CALL_MAX));
+        let hook = serde_json::json!({
+            "session_id": "s",
+            "tool_name": "Bash",
+            "tool_input": { "command": command },
+        });
+        let verdict = Verdict::Deny(crate::Rule::Grep, "r".to_owned());
+        std::thread::scope(|s| {
+            for _ in 0..4 {
+                s.spawn(|| {
+                    for _ in 0..50 {
+                        append(&cfg, &hook, &verdict);
+                    }
+                });
+            }
+        });
+        let text = std::fs::read_to_string(&cfg.log_path).unwrap();
+        assert_eq!(text.lines().count(), 200);
+        for line in text.lines() {
+            let entry: LogEntry = serde_json::from_str(line).unwrap();
+            assert_eq!(entry.call.chars().count(), LOG_CALL_MAX);
+            assert!(entry.call.starts_with(prefix));
+        }
     }
 }

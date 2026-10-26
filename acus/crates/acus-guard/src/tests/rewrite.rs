@@ -36,6 +36,11 @@ fn rewrites_reads_and_searches_into_acus_calls() {
     );
     // `~` stays expandable, as an absolute path.
     if let Ok(home) = std::env::var("HOME") {
+        let home = if cfg!(windows) {
+            home.replace('\x5c', "/")
+        } else {
+            home
+        };
         let r = rw("cat ~/x/a.rs", None).unwrap();
         assert_eq!(r, format!("acus show '{home}/x/a.rs'"));
     }

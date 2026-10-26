@@ -181,7 +181,8 @@ pub(crate) fn filter_last(segs: &[Segment], i: usize) -> usize {
     // the chain, so no Send line leaves it out. A bare `cat` does not, since `task_log` folds
     // `cat FILE | cat`.
     while segs.get(last + 1).is_some_and(|n| {
-        let display = filter_name(&n.low).is_some_and(|f| DISPLAY.contains(&f.as_str()));
+        let display =
+            filter_name(n.low_unescaped().1).is_some_and(|f| DISPLAY.contains(&f.as_str()));
         !n.opaque() && segs[last].feeds(n) && (is_chain_stage(n) || display)
     }) {
         last += 1;
@@ -190,7 +191,7 @@ pub(crate) fn filter_last(segs: &[Segment], i: usize) -> usize {
 }
 
 pub(crate) fn is_chain_stage(s: &Segment) -> bool {
-    filter_name(&s.low)
+    filter_name(s.low_unescaped().1)
         .is_some_and(|f| FILTERS.contains(&f.as_str()) || matches!(f.as_str(), "sort" | "uniq"))
 }
 
@@ -211,7 +212,7 @@ pub(crate) const DISPLAY: &[&str] = &[
 /// Reports whether a stage only shows or cuts what it reads: an output filter, a display command,
 /// or a `cat` without arguments.
 pub(crate) fn display_stage(s: &Segment) -> bool {
-    let Some((h, mut args)) = head(&s.low) else {
+    let Some((h, mut args)) = head(s.low_unescaped().1) else {
         return false;
     };
     let h = h.to_lowercase();

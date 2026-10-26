@@ -63,6 +63,28 @@ fn folds_filters_after_acus_ctx_into_its_flags() {
 }
 
 #[test]
+fn an_escaped_display_stage_is_still_a_filter() {
+    assert_rewrites(
+        &[(
+            "cd /c/Users/schmlu/Temp && grep -n 'import' bench_run_model.py | command head -30",
+            "cd /c/Users/schmlu/Temp && acus find 'import' 'bench_run_model.py' | command head -30",
+        )],
+        None,
+    );
+}
+
+#[test]
+fn grep_inside_a_quoted_ssh_command_is_not_a_local_search() {
+    for cmd in [
+        "ssh rosipc 'lscpu | grep \"Model name\"; nproc'",
+        "ssh rosipc 'lscpu' | grep Model",
+        "ssh -F /dev/null rosipc 'hostname' 2>&1 | head -3",
+    ] {
+        assert!(check(cmd).is_none(), "{cmd}");
+    }
+}
+
+#[test]
 fn runs_output_that_goes_into_a_pipe_as_it_is() {
     for cmd in [
         "grep -l foo src | xargs sed -n 1p",
