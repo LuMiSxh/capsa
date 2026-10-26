@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.0]
 
 - A background subagent whose last event was a tool result, with no text since, is finished by silence only after 60 s (or `--subagent-idle-ms` when that is longer), not after the idle period, because a result is often followed by thinking. A subagent that ends with text still finishes after `--subagent-idle-ms`.
 
