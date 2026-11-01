@@ -134,9 +134,16 @@ fn recent(roots: &[PathBuf], cwd: &Path) -> Result<Resolved, SessionError> {
         .ok_or_else(|| SessionError::NoSession(cwd.to_owned()))
 }
 
-/// Whether `recorded` is `cwd`, an ancestor of it or a descendant of it.
+/// Whether `recorded` is `cwd`, an ancestor of it or a descendant of it, compared by real path so
+/// that one directory under two spellings (a short Windows name, a symlink) still matches.
 fn related(cwd: &Path, recorded: &Path) -> bool {
-    cwd.starts_with(recorded) || recorded.starts_with(cwd)
+    let (cwd, recorded) = (real(cwd), real(recorded));
+    cwd.starts_with(&recorded) || recorded.starts_with(&cwd)
+}
+
+/// Returns the real path of `path`, or `path` itself when it does not exist.
+fn real(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// The main transcripts under the roots: `<root>/<project>/<session>.jsonl`.
@@ -288,4 +295,20 @@ impl Scan {
 fn is_compaction(record: &Record) -> bool {
     record.kind.as_deref() == Some("system")
         && record.subtype.as_deref() == Some("compact_boundary")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::related;
+
+    #[test]
+    fn a_recorded_directory_matches_under_another_spelling() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let sub = dir.path().join("sub");
+        std::fs::create_dir_all(sub.as_path()).expect("create sub");
+        std::fs::create_dir_all(dir.path().join("other")).expect("create other");
+        let spelled = dir.path().join("other").join("..").join("sub");
+        assert!(related(&sub, &spelled));
+        assert!(!related(&sub, &dir.path().join("other")));
+    }
 }

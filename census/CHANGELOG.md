@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `census context` and `census session` find the session of a directory whose spelling differs from
+  the one Claude Code recorded (a short Windows name, a symlink): directories are compared by their
+  real path.
+
 ## [0.2.0]
 
 ### Added
