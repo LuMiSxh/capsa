@@ -10,6 +10,11 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+default = ["cmd-update"]
+# `census self update` and `census self uninstall`; network only when called.
+cmd-update = ["capsa-core/update"]
+
 [dependencies]
 anstyle.workspace = true
 anyhow.workspace = true
@@ -18,6 +23,9 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

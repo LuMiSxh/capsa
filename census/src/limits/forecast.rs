@@ -3,7 +3,7 @@
 //! summarises the five-hour windows of the day.
 
 use super::calibrate::typical;
-use super::clock::{DAY_S, HOUR_S, WEEKDAYS, day_start, hour_start, weekday};
+use super::clock::{HOUR_S, WEEKDAYS, day_start, hour_start, next_day_start, weekday};
 use super::cost::Costed;
 use super::pattern::{Expect, HALF_LIFE_S};
 use super::window::{Span, five_hour_starts, length};
@@ -33,11 +33,11 @@ pub enum Forecast {
 /// Holds the five-hour windows of the day of `now`.
 #[derive(Clone, Debug, Serialize)]
 pub struct FiveHourDay {
-    /// The weekday of `now` in UTC, `Mon` to `Sun`.
+    /// The local weekday of `now`, `Mon` to `Sun`.
     pub weekday: &'static str,
     /// Expected windows that start on this weekday, per day.
     pub expected_windows: Option<f64>,
-    /// Windows that started today, in UTC.
+    /// Windows that started today, in local time.
     pub started_today: usize,
     /// The typical highest share of a window, in percent.
     pub typical_peak: Option<f64>,
@@ -118,20 +118,18 @@ fn expected_per_day(starts: &[u64], now: u64) -> Option<f64> {
     let today = day_start(now);
     let mut day = day_start(first);
     if day < first {
-        day += DAY_S;
+        day = next_day_start(day);
     }
     let (mut sum, mut weight_sum) = (0.0, 0.0);
     while day < today {
         if weekday(day) == weekday(now) {
-            let n = starts
-                .iter()
-                .filter(|&&s| (day..day + DAY_S).contains(&s))
-                .count() as f64;
+            let next = next_day_start(day);
+            let n = starts.iter().filter(|&&s| (day..next).contains(&s)).count() as f64;
             let weight = 0.5f64.powf((now - day) as f64 / HALF_LIFE_S);
             sum += n * weight;
             weight_sum += weight;
         }
-        day += DAY_S;
+        day = next_day_start(day);
     }
     (weight_sum > 0.0).then(|| sum / weight_sum)
 }

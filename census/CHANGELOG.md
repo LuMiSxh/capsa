@@ -4,6 +4,14 @@
 
 ### Added
 
+- `census hook`: the UserPromptSubmit and PostToolUse hook. For the main agent only, it adds a line
+  to the context once per session when the context passes 60 % (information) or 80 % (suggest a
+  handoff) of the compaction threshold, when the 5h or weekly limit passes 75 % or 90 %, when the
+  5h window is forecast to fill or the weekly one to run out before its reset, and when the weekly
+  reset is within 12 h with at least 30 % left. Always exits 0 and prints nothing on error.
+- `census self skill [--install]`, `census self update [--check|--force]`, `census self uninstall
+  [--dry-run]`, and the skill `census/skill/SKILL.md`. Update and uninstall need the `cmd-update`
+  feature (default; the release build sets it).
 - `census limits`: the five-hour and weekly subscription windows, each with its share (from the
   newest snapshot, or estimated from a calibration over the list-price cost), reset, calibration
   spread and the time it fills at the current rate. The weekly window has a forecast from the usage

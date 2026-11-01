@@ -2,7 +2,7 @@
 
 Usage analytics for Claude Code and Codex: tokens, cost, tool calls and subagent roles from the
 session transcripts. Context awareness for the running session, and its status line, are here too;
-limits are here; the hook is planned in [PLAN.md](PLAN.md).
+limits are here; the hook tells the main agent when a level is crossed (design in [PLAN.md](PLAN.md)).
 
 ## Install
 
@@ -102,3 +102,47 @@ as an approximation.
 
 Snapshots go to `$XDG_STATE_HOME/census/snapshots` (or `~/.local/state/census/snapshots`). A reading
 identical to the last one of its window is not written again.
+
+### Hook
+
+`census hook` is for Claude Code's `UserPromptSubmit` and `PostToolUse` events. It reads the hook JSON
+on stdin (at most 1 MB) and prints nothing, exit 0, unless the main agent has a new level to hear
+about. Input with `agent_id` (a subagent) or another event gets nothing. Output:
+
+```json
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"census: context 325k of 400k (compaction at 400k). At the next task boundary, suggest a handoff to Luca (session-handoff skill)."}}
+```
+
+| Level | Shown |
+|---|---|
+| Context 60 % / 80 % of the compaction threshold | Once per session; 80 % adds the handoff suggestion. Both show again after the context falls below 50 %. |
+| 5h or weekly limit 75 % / 90 % | Once per window |
+| 5h forecast to fill before its reset; weekly forecast to run out before its reset | Once per window |
+| Weekly reset within 12 h with at least 30 % left | Once per window |
+
+State is `$XDG_STATE_HOME/census/hints/<session id>` (or `~/.local/state/census/...`), one level per
+line, keyed with the window's reset time. Errors go to one line in `hook.log` in the same directory
+(moved to `hook.log.1` at 256 KB). Limits are computed on a helper thread and skipped when they take
+over 150 ms; a busy ledger lock skips the ledger update.
+
+Settings (`~/.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "census hook"}]}],
+    "PostToolUse": [{"hooks": [{"type": "command", "command": "census hook"}]}]
+  },
+  "statusLine": {"type": "command", "command": "census statusline --line"}
+}
+```
+
+### Self
+
+| Command | Meaning |
+|---|---|
+| `census self skill [--install]` | Prints the skill for the main agent; `--install` writes `~/.claude/skills/census/SKILL.md` |
+| `census self update [--check\|--force]` | Replaces the binary with the latest release, then reinstalls the skill |
+| `census self uninstall [--dry-run]` | Removes the skill, then the binary; settings entries stay |
+
+Update and uninstall need the `cmd-update` feature (default). The release build passes it explicitly.

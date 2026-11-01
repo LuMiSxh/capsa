@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: MPL-2.0
+//! Decides what the Claude Code hook tells the main agent: a line when the context or a limit
+//! crosses a level it has not shown in this session. Returns values only; `census hook` prints.
+
+mod levels;
+mod state;
+
+pub use state::log_line;
+
+use crate::context;
+use crate::limits::LimitStatus;
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::path::PathBuf;
+
+/// The longest `additionalContext` the hook emits, in characters.
+const MAX_CHARS: usize = 900;
+
+/// Lists what can go wrong in the hook; every one means "print nothing".
+#[derive(Debug, thiserror::Error)]
+pub enum HookError {
+    #[error("the hook input is not JSON")]
+    Input(#[from] serde_json::Error),
+    #[error("cannot read or write the hint state")]
+    State(#[from] std::io::Error),
+}
+
+/// The fields of the hook input that census reads. `agent_id` is set inside subagents only.
+#[derive(Deserialize)]
+struct Input {
+    hook_event_name: Option<String>,
+    session_id: Option<String>,
+    transcript_path: Option<PathBuf>,
+    agent_id: Option<Value>,
+}
+
+/// Returns the hook output for `input`, the JSON text of `hookSpecificOutput`, or `None` when
+/// there is nothing new to say: a subagent, another event, or no level crossed.
+///
+/// `limits` runs only when the main agent is addressed, so the caller can bound its time.
+///
+/// # Errors
+/// Fails when the input is not JSON or the hint state cannot be read or written; the levels shown
+/// are then not recorded and nothing is printed.
+pub fn run(
+    input: &str,
+    now: u64,
+    limits: impl FnOnce() -> Option<LimitStatus>,
+) -> Result<Option<String>, HookError> {
+    let input: Input = serde_json::from_str(input)?;
+    let event = match input.hook_event_name.as_deref() {
+        Some(e @ ("UserPromptSubmit" | "PostToolUse")) if input.agent_id.is_none() => e,
+        _ => return Ok(None),
+    };
+    let Some(file) = input.session_id.as_deref().and_then(state::hints_file) else {
+        return Ok(None);
+    };
+    let mut shown = state::load(&file)?;
+    let before = shown.clone();
+    let context = input
+        .transcript_path
+        .as_deref()
+        .and_then(context::of_transcript);
+    let limits = limits();
+    let messages = levels::decide(context.as_ref(), limits.as_ref(), now, &mut shown);
+    if shown != before {
+        state::store(&file, &shown)?;
+    }
+    if messages.is_empty() {
+        return Ok(None);
+    }
+    let text: String = messages.join(" ").chars().take(MAX_CHARS).collect();
+    let out = json!({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}});
+    Ok(Some(out.to_string()))
+}

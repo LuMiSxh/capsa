@@ -302,6 +302,7 @@ dependencies = [
  "anyhow",
  "capsa-core",
  "clap",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

@@ -2,8 +2,10 @@
 //! The `census` binary: parses the command line and dispatches to the `cmd_*` modules.
 
 mod cmd_context;
+mod cmd_hook;
 mod cmd_limits;
 mod cmd_prune;
+mod cmd_self;
 mod cmd_session;
 mod cmd_statusline;
 mod cmd_usage;
@@ -51,6 +53,11 @@ enum Cmd {
     Statusline(cmd_statusline::Args),
     /// Deletes hourly aggregates and snapshots older than a date; raw ledger rows are kept.
     Prune(cmd_prune::Args),
+    /// Claude Code hook for UserPromptSubmit and PostToolUse: prints context and limit levels the main agent has not heard yet. Always exits 0.
+    Hook,
+    /// Installation of census itself: `self skill`, `self update`, `self uninstall`.
+    #[command(name = "self")]
+    Itself(cmd_self::Args),
 }
 
 impl Cli {
@@ -73,6 +80,8 @@ fn execute(cli: Cli, format: Format) -> Result<Outcome> {
         Cmd::Session(a) => cmd_session::run(&a, &out),
         Cmd::Statusline(a) => Ok(cmd_statusline::run(&a)),
         Cmd::Prune(a) => cmd_prune::run(a, &out),
+        Cmd::Hook => Ok(cmd_hook::run()),
+        Cmd::Itself(a) => cmd_self::run(a),
     }
 }
 

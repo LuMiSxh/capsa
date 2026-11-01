@@ -137,8 +137,9 @@ fn peak_text(source: PeakSource) -> String {
 
 fn basis_text(s: &LimitStatus) -> String {
     format!(
-        "{:.1} weeks of UTC history ({} hours), {:.1} in weekly windows; pattern {}",
+        "{:.1} weeks of {} history ({} hours), {:.1} in weekly windows; pattern {}",
         s.basis.weeks,
+        if cfg!(unix) { "local" } else { "UTC" },
         s.basis.hours,
         s.basis.mapped_weeks,
         s.basis.pattern.label()

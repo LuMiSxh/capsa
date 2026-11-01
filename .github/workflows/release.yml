@@ -97,7 +97,7 @@ jobs:
             acus)  package="acus-cli"; bin="acus";  features="cmd-decide,cmd-update"; profile="release" ;;
             pons)  package="pons";     bin="pons";  features="";                      profile="release-unwind" ;;
             velum) package="velum";    bin="velum"; features="";                      profile="release" ;;
-            census) package="census"; bin="census"; features=""; profile="release" ;;
+            census) package="census"; bin="census"; features="cmd-update"; profile="release" ;;
           esac
           bin_file="$bin"
           if [ "$RUNNER_OS" = "Windows" ]; then bin_file="$bin.exe"; fi

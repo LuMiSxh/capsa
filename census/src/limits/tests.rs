@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::calibrate::calibrate;
-use super::clock::{DAY_S, HOUR_S};
+use super::clock::{DAY_S, HOUR_S, day_start, next_day_start};
 use super::cost::Costed;
 use super::forecast::week;
 use super::pattern::{Expect, cycle_index};
 use super::window::{Span, current};
-use super::{Forecast, Full, History, Kind, LimitStatus, Reading, compute};
+use super::{Forecast, Full, History, Kind, LimitStatus, Reading, compute, when};
 use crate::ledger::{Hourly, Row, Tokens as LedgerTokens};
 use capsa_core::census_snapshot::{Snapshot, Source, Window};
 
@@ -266,4 +266,57 @@ fn tables_have_one_row_per_weekday_hour_and_cycle_bucket() {
     let share: f64 = weekday.iter().map(|b| b.share).sum();
     assert!((share - 1.0).abs() < 1e-9);
     assert_eq!(weekday.iter().map(|b| b.hours).sum::<usize>(), 2);
+}
+
+#[test]
+fn berlin_clock_follows_the_dst_changes_of_2026() {
+    // The child runs with TZ set, so the process zone is not changed for the other tests.
+    if std::env::var_os("CENSUS_TZ_CHILD").is_none() {
+        let out = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "limits::tests::berlin_clock_follows_the_dst_changes_of_2026",
+            ])
+            .env("TZ", "Europe/Berlin")
+            .env("CENSUS_TZ_CHILD", "1")
+            .output()
+            .expect("runs the test binary");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        return;
+    }
+    // 2026-10-25 01:00 UTC: CEST (+2) turns back to CET (+1), so 02:00 happens twice.
+    assert_eq!(when(1_792_886_400), "Sun 02:00");
+    assert_eq!(when(1_792_889_999), "Sun 02:59");
+    assert_eq!(when(1_792_890_000), "Sun 02:00");
+    assert_eq!(when(1_792_893_600), "Sun 03:00");
+    // The local day of 2026-10-25 is 25 hours long and starts at 2026-10-24 22:00 UTC.
+    let day = day_start(1_792_890_000);
+    assert_eq!(day, 1_792_879_200);
+    assert_eq!(next_day_start(day) - day, 25 * HOUR_S);
+    // The local day of 2026-03-29 is 23 hours long and starts at 2026-03-28 23:00 UTC.
+    let spring = day_start(1_774_738_800 + 12 * HOUR_S);
+    assert_eq!(spring, 1_774_738_800);
+    assert_eq!(next_day_start(spring) - spring, 23 * HOUR_S);
+    // Both 02:00 hours of 2026-10-25 land in the Sunday 02:00 bucket, so it counts two hours.
+    let hourly: Vec<Hourly> = (0..4)
+        .map(|h| aggregate(1_792_886_400 + h * HOUR_S, 1.0))
+        .collect();
+    let expect = Expect::build(
+        &Costed::new(&[], &hourly),
+        vec![],
+        1_792_886_400 + 4 * HOUR_S,
+    );
+    let hours = |label: &str| {
+        expect
+            .table(Kind::Hour)
+            .iter()
+            .find(|b| b.label == label)
+            .map(|b| b.hours)
+    };
+    assert_eq!(hours("02:00"), Some(2));
+    assert_eq!(hours("03:00"), Some(1));
 }

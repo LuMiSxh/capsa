@@ -128,12 +128,46 @@ pub fn settings_window(dir: &Path) -> Option<u64> {
         .as_u64()
 }
 
+/// Bytes read from the end of a transcript to find its last API request.
+const TAIL_BYTES: u64 = 512 * 1024;
+
+/// Returns the context of the last API request of a transcript against the threshold of this
+/// process.
+pub fn of_transcript(transcript: &Path) -> Option<ContextUse> {
+    let (model, tokens) = last_context(transcript)?;
+    Some(measure(tokens, Some(&model)))
+}
+
 /// Returns the model and context tokens of the last API request in a transcript: the input,
-/// cache reads and cache writes of that request.
+/// cache reads and cache writes of that request. Reads the end of the file first and the whole
+/// file only when the end holds no request.
 pub fn last_context(transcript: &Path) -> Option<(String, u64)> {
-    let text = std::fs::read_to_string(transcript).ok()?;
-    transcript::records(&text)
+    let (tail, whole) = read_tail(transcript)?;
+    let found = find_last(&tail);
+    if found.is_some() || whole {
+        return found;
+    }
+    find_last(&std::fs::read_to_string(transcript).ok()?)
+}
+
+fn find_last(text: &str) -> Option<(String, u64)> {
+    transcript::records(text)
         .rev()
         .find_map(|record| record.request())
         .map(|req| (req.model, req.tokens.context()))
+}
+
+/// Returns the last `TAIL_BYTES` of a file as text, and whether that is the whole file.
+fn read_tail(path: &Path) -> Option<(String, bool)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let whole = len <= TAIL_BYTES;
+    if !whole {
+        file.seek(SeekFrom::Start(len - TAIL_BYTES)).ok()?;
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    // The cut may split a record or a character; the broken first line fails to parse and is skipped.
+    Some((String::from_utf8_lossy(&bytes).into_owned(), whole))
 }

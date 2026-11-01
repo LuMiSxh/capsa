@@ -38,8 +38,9 @@ pub(crate) fn by_table(t: &Table, out: &Out) -> Result<()> {
         );
     }
     let basis = format!(
-        "{:.1} weeks of UTC history; pattern {}",
+        "{:.1} weeks of {} history; pattern {}",
         t.basis.weeks,
+        if cfg!(unix) { "local" } else { "UTC" },
         t.basis.pattern.label()
     );
     println!("{}", out.field("basis", &basis));

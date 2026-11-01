@@ -3,7 +3,7 @@
 //! is keyed by its weekday and hour of day and, once the snapshots map two weeks of hours to their
 //! weekly windows, by its hours since the reset of that window.
 
-use super::clock::{DAY_S, HOUR_S, WEEKDAYS, hour_start, weekday};
+use super::clock::{DAY_S, HOUR_S, WEEKDAYS, hour_of_day, hour_start, weekday};
 use super::cost::Costed;
 use super::window::Span;
 use serde::Serialize;
@@ -228,7 +228,7 @@ pub(super) fn cycle_index(windows: &[Span], t: u64) -> Option<usize> {
         .filter(|h| *h < WEEK_HOURS)
 }
 
-/// Returns the index of the weekday and hour of `t`, Monday 00:00 as 0.
+/// Returns the index of the local weekday and hour of `t`, Monday 00:00 as 0.
 fn weekday_hour_index(t: u64) -> usize {
-    weekday(t) * 24 + ((t % DAY_S) / HOUR_S) as usize
+    weekday(t) * 24 + hour_of_day(t)
 }
