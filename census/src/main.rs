@@ -10,6 +10,7 @@ mod cmd_session;
 mod cmd_statusline;
 mod cmd_usage;
 mod out;
+mod setup;
 mod usage_views;
 
 use anyhow::Result;
@@ -55,7 +56,7 @@ enum Cmd {
     Prune(cmd_prune::Args),
     /// Claude Code hook for UserPromptSubmit and PostToolUse: prints context and limit levels the main agent has not heard yet. Always exits 0.
     Hook,
-    /// Installation of census itself: `self skill`, `self update`, `self uninstall`.
+    /// Installation of census itself: `self skill`, `self setup`, `self update`, `self uninstall`.
     #[command(name = "self")]
     Itself(cmd_self::Args),
 }
@@ -81,7 +82,7 @@ fn execute(cli: Cli, format: Format) -> Result<Outcome> {
         Cmd::Statusline(a) => Ok(cmd_statusline::run(&a)),
         Cmd::Prune(a) => cmd_prune::run(a, &out),
         Cmd::Hook => Ok(cmd_hook::run()),
-        Cmd::Itself(a) => cmd_self::run(a),
+        Cmd::Itself(a) => cmd_self::run(a, &out),
     }
 }
 

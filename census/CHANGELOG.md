@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.0]
+
+### Added
+
+- `census self setup [--dry-run] [--force]` installs the skill and adds census's `statusLine` and its
+  `UserPromptSubmit` and `PostToolUse` hooks to `settings.json`. Entries that already run census stay
+  as they are. A `statusLine` that census does not own is kept unless `--force` replaces it. The file
+  is written only when something changes, through a temporary file, and the old one is copied to
+  `settings.json.bak` first. Invalid JSON exits 2 and changes nothing.
+
 ## [0.1.3]
 
 ### Fixed

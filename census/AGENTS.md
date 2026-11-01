@@ -7,7 +7,7 @@ Suite-wide rules are in ../AGENTS.md. This file covers census only.
 census reads agent transcripts and the state of a running Claude Code session: usage analytics,
 the context size against the compaction threshold, a session summary, and the limit snapshots that
 the status line records, and the limit windows (`census limits`). `census hook` tells the main agent when a context or limit
-level is crossed; `census self` installs the skill, updates and uninstalls the binary.
+level is crossed; `census self` installs the skill and wires `settings.json` (`self setup`), updates and uninstalls the binary.
 
 ## Layout
 
@@ -16,7 +16,7 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
 - `src/main.rs`: the clap CLI. One `src/cmd_<name>.rs` per command: `cmd_usage.rs` (`census usage`,
   including the `--guard` reader for acus's `guard.jsonl` and `--by`), `cmd_context.rs`,
   `cmd_session.rs`, `cmd_statusline.rs`, `cmd_prune.rs`, `cmd_limits.rs`, `cmd_hook.rs` (stdin cap,
-  150 ms limits deadline, printing), `cmd_self.rs` (`self skill|update|uninstall`; update and
+  150 ms limits deadline, printing), `cmd_self.rs` (`self skill|setup|update|uninstall`; update and
   uninstall need feature `cmd-update`, on by default).
 - `skill/SKILL.md`: the skill `census self skill` prints, compiled into the binary.
 - `src/hook/`: the decision of `census hook`, a library returning values. `mod.rs` parses the input
@@ -32,6 +32,7 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
   the files into the report, `handback.rs` counts hand-backs, `read.rs` reads files in parallel,
   `time.rs` does dates and ISO weeks, `walk.rs` lists the `*.jsonl` files.
 - `src/usage_views.rs`: the printed views of `census usage`.
+- `src/setup.rs`: `census self setup`, the skill and the hooks and statusLine in `settings.json`.
 - `src/ledger/`: the incremental transcript index behind `census prune` and the rate figures.
   `mod.rs` is the API, `update.rs` and `scan.rs` read new bytes, `parse.rs` reads records,
   `fold.rs` folds old rows into hourly aggregates and prunes, `state.rs` owns the state files and

@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
-//! `census self`: prints and installs the agent skill, updates the binary, removes it.
+//! `census self`: prints and installs the agent skill, sets up settings.json, updates the binary,
+//! removes it.
 
+use crate::out::Out;
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
 use capsa_core::hint::Hinted;
 use std::path::{Path, PathBuf};
 
 /// The skill shipped with this binary, so an installed copy matches its version.
-const SKILL: &str = include_str!("../skill/SKILL.md");
+pub(crate) const SKILL: &str = include_str!("../skill/SKILL.md");
 
 /// This binary as the self-update and uninstall code sees it.
 #[cfg(feature = "cmd-update")]
@@ -28,6 +30,8 @@ enum Action {
     Update(UpdateArgs),
     /// Print the skill for the main agent; --install writes it to ~/.claude/skills/census.
     Skill(SkillArgs),
+    /// Installs the skill, then adds census's hooks and statusLine to settings.json.
+    Setup(crate::setup::Args),
     /// Remove the installed skill, then this binary.
     Uninstall(UninstallArgs),
 }
@@ -53,15 +57,16 @@ struct SkillArgs {
     install: bool,
 }
 
-pub fn run(a: Args) -> Result<Outcome> {
+pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     match a.action {
         Action::Skill(a) => skill(&a),
+        Action::Setup(a) => crate::setup::run(&a, out),
         Action::Update(a) => update(a),
         Action::Uninstall(a) => uninstall(&a),
     }
 }
 
-fn skill_file(home: &Path) -> PathBuf {
+pub(crate) fn skill_file(home: &Path) -> PathBuf {
     home.join(".claude/skills/census/SKILL.md")
 }
 
@@ -71,13 +76,18 @@ fn skill(a: &SkillArgs) -> Result<Outcome> {
         return Ok(Outcome::Found);
     }
     let home = std::env::home_dir().context("no home directory")?;
-    let file = skill_file(&home);
+    println!("{}", install_skill(&home)?.display());
+    Ok(Outcome::Found)
+}
+
+/// Writes the skill under `home`, creating its directory, and returns the file.
+pub(crate) fn install_skill(home: &Path) -> Result<PathBuf> {
+    let file = skill_file(home);
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     }
     std::fs::write(&file, SKILL).with_context(|| format!("cannot write {}", file.display()))?;
-    println!("{}", file.display());
-    Ok(Outcome::Found)
+    Ok(file)
 }
 
 #[cfg(not(feature = "cmd-update"))]

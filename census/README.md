@@ -147,7 +147,16 @@ Settings (`~/.claude/settings.json`):
 | Command | Meaning |
 |---|---|
 | `census self skill [--install]` | Prints the skill for the main agent; `--install` writes `~/.claude/skills/census/SKILL.md` |
+| `census self setup [--dry-run] [--force]` | Installs the skill, then wires census into `settings.json`: the statusLine and the hooks below |
 | `census self update [--check\|--force]` | Replaces the binary with the latest release, then reinstalls the skill |
 | `census self uninstall [--dry-run]` | Removes the skill, then the binary; settings entries stay |
 
 Update and uninstall need the `cmd-update` feature (default). The release build passes it explicitly.
+
+`census self setup` writes what the Hook section shows into `settings.json` under `$CLAUDE_CONFIG_DIR`
+(or `~/.claude`), and installs the skill as `self skill --install` does. An entry that already runs
+census is left alone, whatever else its command line holds. A `statusLine` that census does not own
+is skipped unless `--force` replaces it. Other keys and entries keep their order. The file is
+replaced only when something changes, through a temporary file, and the old one is copied to
+`settings.json.bak` first. Invalid JSON, or a `hooks` value or event value of the wrong type, exits 2
+and changes nothing. `--dry-run` writes nothing, the skill included.
