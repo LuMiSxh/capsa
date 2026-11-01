@@ -7,9 +7,9 @@ use super::clock::{day_start, next_day_start};
 use super::cost::Costed;
 use super::forecast::week;
 use super::pattern::{Expect, cycle_index};
-use super::window::{Span, current};
 #[cfg(unix)]
 use super::when;
+use super::window::{Span, current};
 use super::{Forecast, Full, History, Kind, LimitStatus, Reading, compute};
 use crate::ledger::{Hourly, Row, Tokens as LedgerTokens};
 use capsa_core::census_snapshot::{Snapshot, Source, Window};
