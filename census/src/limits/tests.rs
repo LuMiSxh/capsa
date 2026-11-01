@@ -268,6 +268,7 @@ fn tables_have_one_row_per_weekday_hour_and_cycle_bucket() {
     assert_eq!(weekday.iter().map(|b| b.hours).sum::<usize>(), 2);
 }
 
+#[cfg(unix)]
 #[test]
 fn berlin_clock_follows_the_dst_changes_of_2026() {
     // The child runs with TZ set, so the process zone is not changed for the other tests.
