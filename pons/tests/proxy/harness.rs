@@ -50,14 +50,19 @@ impl Harness {
         self.stdin.flush().await.unwrap();
     }
 
-    pub(crate) async fn recv(&mut self) -> Value {
+    /// Returns the next line pons writes, without its newline.
+    pub(crate) async fn recv_line(&mut self) -> String {
         let mut line = String::new();
         let n = timeout(Duration::from_secs(5), self.stdout.read_line(&mut line))
             .await
             .expect("timed out waiting for pons output")
             .unwrap();
         assert!(n > 0, "pons closed stdout");
-        serde_json::from_str(&line).unwrap()
+        line.trim_end_matches('\n').to_owned()
+    }
+
+    pub(crate) async fn recv(&mut self) -> Value {
+        serde_json::from_str(&self.recv_line().await).unwrap()
     }
 
     /// Reads messages until `done` accepts one; returns all of them.

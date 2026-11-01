@@ -30,6 +30,14 @@ pub struct Cli {
     #[arg(long)]
     pub no_log: bool,
 
+    /// Do not record the subscription limits in the census file (also PONS_NO_CENSUS=1).
+    #[arg(
+        long,
+        env = "PONS_NO_CENSUS",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    pub no_census: bool,
+
     /// Directory for the default per-start log file (used when no --log is
     /// given). Default: ~/Library/Logs/pons on macOS, $XDG_STATE_HOME/pons
     /// (else ~/.local/state/pons) on Linux, %LOCALAPPDATA%\pons\logs on Windows.

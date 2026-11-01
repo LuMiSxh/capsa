@@ -194,24 +194,8 @@ struct GuardEntry {
 fn guard_log_path() -> PathBuf {
     std::env::var("ACUS_CONFIG")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| config_dir().join("acus/config.toml"))
+        .unwrap_or_else(|_| capsa_core::paths::config_dir("acus").join("config.toml"))
         .with_file_name("guard.jsonl")
-}
-
-/// `~/Library/Application Support`, `%APPDATA%` or `$XDG_CONFIG_HOME` / `~/.config`.
-fn config_dir() -> PathBuf {
-    let home = || std::env::home_dir().unwrap_or_default();
-    if cfg!(target_os = "macos") {
-        home().join("Library/Application Support")
-    } else if cfg!(windows) {
-        std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| home())
-    } else {
-        std::env::var("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| home().join(".config"))
-    }
 }
 
 /// Reads the guard log: per rule how often it refused, hinted or was escaped. Escaped calls

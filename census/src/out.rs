@@ -19,6 +19,11 @@ impl Out {
         }
     }
 
+    /// A `label  value` line whose label is padded to 12 columns and coloured on a terminal.
+    pub fn field(&self, label: &str, value: &str) -> String {
+        format!("{}{value}", self.header(&format!("{label:<12}")))
+    }
+
     /// A section title, bold cyan on a terminal.
     pub fn header(&self, s: &str) -> String {
         if !self.color {

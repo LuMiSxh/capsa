@@ -9,6 +9,7 @@
 
 mod background;
 mod cancel;
+mod census;
 mod cli;
 mod failsafe;
 mod folding;

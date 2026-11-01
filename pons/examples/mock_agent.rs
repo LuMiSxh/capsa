@@ -69,6 +69,9 @@ use std::io::{BufRead, Write};
 
 use serde_json::{Value, json};
 
+/// The rate-limit event as claude-agent-acp forwards it; the census test expects this line.
+const RATE_LIMIT_LINE: &str = r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"usage_update","used":1,"size":2,"_meta":{"_claude/rateLimit":{"status":"allowed","resetsAt":1793530800,"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.45,"resetsAt":1793530800},"seven_day":{"utilization":0.05,"resetsAt":1794106800}}}}}}}"#;
+
 fn send(v: &Value) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{v}");
@@ -259,6 +262,7 @@ fn prompt_turn(sid: &str, text: &str, prompts: &mut Vec<Value>) {
                 "title": "Edit a.rs", "kind": "edit", "status": "pending",
                 "rawInput": {}}),
         ),
+        "rate-limit" => println!("{RATE_LIMIT_LINE}"),
         "die" => std::process::exit(3),
         t if t.starts_with("flood:") => flood(sid, &t["flood:".len()..], prompts),
         "permission-read" | "permission-bash" => permission_turn(sid, text),

@@ -14,7 +14,7 @@ mod walk;
 
 pub use handback::HandbackWeek;
 pub use prices::Cost;
-pub use time::parse_date;
+pub use time::{parse_date, parse_ts};
 pub use tools::group;
 
 use merge::Side;

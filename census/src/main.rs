@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The `census` binary: parses the command line and dispatches to the `cmd_*` modules.
 
+mod cmd_context;
+mod cmd_prune;
+mod cmd_session;
+mod cmd_statusline;
 mod cmd_usage;
 mod out;
 mod usage_views;
@@ -36,6 +40,14 @@ struct Cli {
 enum Cmd {
     /// Token, cost and tool-call statistics from Claude Code and Codex transcripts.
     Usage(cmd_usage::Args),
+    /// Context size of the current session against its auto-compaction threshold.
+    Context(cmd_context::Args),
+    /// Summary of the current session: duration, cost, spawns per role, context and compactions.
+    Session(cmd_session::Args),
+    /// Records the limit snapshots of the statusLine input; `--line` prints the status line.
+    Statusline(cmd_statusline::Args),
+    /// Deletes hourly aggregates and snapshots older than a date; raw ledger rows are kept.
+    Prune(cmd_prune::Args),
 }
 
 impl Cli {
@@ -53,7 +65,18 @@ fn execute(cli: Cli, format: Format) -> Result<Outcome> {
     let out = out::Out::new(format);
     match cli.cmd {
         Cmd::Usage(a) => cmd_usage::run(a, &out),
+        Cmd::Context(a) => cmd_context::run(&a, &out),
+        Cmd::Session(a) => cmd_session::run(&a, &out),
+        Cmd::Statusline(a) => Ok(cmd_statusline::run(&a)),
+        Cmd::Prune(a) => cmd_prune::run(a, &out),
     }
+}
+
+/// Seconds since the Unix epoch, or 0 when the clock is before it.
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// Clap value parser for path arguments: `~` and `~/…` become $HOME, as a shell would expand them.

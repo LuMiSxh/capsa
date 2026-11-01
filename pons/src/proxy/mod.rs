@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use capsa_core::census_snapshot::append_to;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Notify, mpsc};
@@ -202,6 +203,12 @@ impl Out {
                     }
                     line.push(b'\n');
                     Self::queue(&self.client, &self.a2c, line);
+                }
+                Action::Census { file, snapshot } => {
+                    if let Err(err) = append_to(&file, &snapshot) {
+                        self.logger
+                            .log(Dir::Pons, format!("census: {err}").as_bytes());
+                    }
                 }
                 Action::Note(note) => self.logger.log(Dir::Pons, note.as_bytes()),
             }

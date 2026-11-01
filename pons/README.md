@@ -439,7 +439,7 @@ pons [--log FILE | --no-log] [--log-dir DIR] [--log-level all|default|meta]
      [--keep-interrupt-markers] [--turn-stall-ms MS] [--no-close-ghost-calls]
      [--steer-hold-ms MS] [--auto-approve none|allow-once|allow-always]
      [--auto-approve-tools LIST]
-     [--force-features] [--no-subagent-text] [--max-failures N]
+     [--force-features] [--no-subagent-text] [--max-failures N] [--no-census]
      [--mcp-server NAME=COMMAND[,ARG...]]...
      [-- <agent> [args...]]
 pons self doctor [--json|--human|--agent] [--log FILE] [--log-dir DIR] [--agent-cmd CMD...]
@@ -449,6 +449,12 @@ pons self uninstall [--dry-run]
 ```
 
 `pons --help` lists every flag with its default.
+
+`--no-census` (or `PONS_NO_CENSUS=1`) turns off the census record. Otherwise pons appends each
+subscription limit in the adapter's rate-limit events (the five-hour and seven-day windows) to
+the `snapshots` file of the census state directory (`$XDG_STATE_HOME/census`, else
+`~/.local/state/census`; `%LOCALAPPDATA%\census\state` on Windows) whenever its value changes.
+The limits are recorded only while pons applies its rules, so not in passthrough.
 
 `--mcp-server NAME=COMMAND[,ARG...]` (repeatable) adds a stdio MCP server to
 each session request the client sends; see [MCP servers](#mcp-servers-for-the-session).

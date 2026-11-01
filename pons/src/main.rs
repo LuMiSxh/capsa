@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Entry point: runs the ACP proxy, or one `pons self` action.
 
+mod census;
 mod cli;
 mod doctor;
 mod engine;
@@ -142,6 +143,7 @@ async fn run() -> Result<Outcome> {
         auto_approve: cli.auto_approve,
         auto_approve_tools: cli.auto_approve_tools,
         mcp_servers: cli.mcp_server,
+        census: (!cli.no_census).then(capsa_core::census_snapshot::path),
     };
     let note_error =
         |e: &anyhow::Error| logger.log(Dir::Pons, format!("exiting: error: {e:#}").as_bytes());

@@ -3,10 +3,13 @@
 //! Each input line yields the lines to write to either side; unhandled lines pass unchanged.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use capsa_core::census_snapshot::Snapshot;
 use serde_json::{Value, json};
 
+use crate::census::Limits;
 use crate::failsafe::{FailSafe, catch_panic, panic_text};
 use crate::fold::{EntryOut, Finished, Folds, clip_head, one_line};
 use crate::notification::{TaskNotifications, Verdict, Watch};
@@ -128,6 +131,9 @@ pub struct Config {
     pub auto_approve_tools: String,
     /// Stdio MCP servers added to `session/new`, `session/load` and `session/resume`.
     pub mcp_servers: Vec<McpServer>,
+    /// Where the subscription limits of the adapter's rate-limit events are appended
+    /// (see `census.rs`); `None` records nothing.
+    pub census: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -158,6 +164,7 @@ impl Default for Config {
             auto_approve: AutoApprove::None,
             auto_approve_tools: String::new(),
             mcp_servers: Vec::new(),
+            census: None,
         }
     }
 }
@@ -196,12 +203,17 @@ struct HeldSteer {
     head: String,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Action {
     ToAgent(Vec<u8>),
     ToClient {
         line: Vec<u8>,
         synthesized: bool,
+    },
+    /// A subscription limit that changed, to append to the census file `file`.
+    Census {
+        file: PathBuf,
+        snapshot: Snapshot,
     },
     /// Something worth a line in the log.
     Note(String),
@@ -253,6 +265,8 @@ pub struct Engine {
     closed: HashSet<String>,
     /// Consecutive failures of the periodic work (separate from line rules).
     tick_failures: u32,
+    /// Last subscription limit per window, so the census records changes only.
+    limits: Limits,
 }
 
 impl Engine {
@@ -290,6 +304,7 @@ impl Engine {
             guard,
             closed: HashSet::new(),
             tick_failures: 0,
+            limits: Limits::default(),
         }
     }
 }

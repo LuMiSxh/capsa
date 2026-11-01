@@ -1,7 +1,8 @@
 # census
 
 Usage analytics for Claude Code and Codex: tokens, cost, tool calls and subagent roles from the
-session transcripts. Limits, context awareness and the hook are planned in [PLAN.md](PLAN.md).
+session transcripts. Context awareness for the running session, and its status line, are here too;
+limits and the hook are planned in [PLAN.md](PLAN.md).
 
 ## Install
 
@@ -51,3 +52,22 @@ spawn on each side where it has requests; hand-backs go by spawn start. Compacti
 
 Output is agent text by default; `--human` adds colour on a terminal, `--json` prints the report as
 JSON. `--format agent|human|json` is the same choice.
+
+### Context, session and status line
+
+| Command | Meaning |
+|---|---|
+| `census context [--session ID]` | Context tokens of the session against the compaction threshold, the share used and the tokens left |
+| `census session [--session ID]` | Duration, requests, cost, subagents per role, context and compactions of the session |
+| `census statusline [--line]` | Records the limit snapshots of Claude Code's `statusLine` input; `--line` prints `ctx 44k/400k · 5h 6% · wk 1%` |
+| `census prune --before YYYY-MM-DD \| --keep DAYS [--dry-run]` | Deletes hourly aggregates and snapshots older than the cutoff; raw ledger rows stay |
+
+The session is `--session ID`, else `CLAUDE_SESSION_ID`, else the most recently modified transcript
+whose recorded directory is the current one, an ancestor or a descendant. The output names which
+one it used. The threshold is `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, else `autoCompactWindow` in
+`settings.json` under `$CLAUDE_CONFIG_DIR` (or `~/.claude`), capped at the model's window, then
+lowered by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`. With none of them it is the model's window, labelled
+as an approximation.
+
+Snapshots go to `$XDG_STATE_HOME/census/snapshots` (or `~/.local/state/census/snapshots`). A reading
+identical to the last one of its window is not written again.

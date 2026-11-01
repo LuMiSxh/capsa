@@ -276,6 +276,18 @@ impl Engine {
             Ok(notes) => notes,
             Err(done) => return done,
         };
+        if let Some(file) = &self.cfg.census {
+            let t = crate::census::unix_seconds();
+            out.extend(
+                self.limits
+                    .observe(&msg, t)
+                    .into_iter()
+                    .map(|snapshot| Action::Census {
+                        file: file.clone(),
+                        snapshot,
+                    }),
+            );
+        }
         if self.cfg.drop_task_notifications || self.cfg.drop_interrupt_markers {
             match self.filter_notifications(&msg, raw, now) {
                 Ok(before) => out.extend(before),
