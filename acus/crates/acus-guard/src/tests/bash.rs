@@ -109,13 +109,17 @@ fn git_status_and_pinned_formats_get_no_hint() {
 }
 
 #[test]
-fn git_log_output_shown_through_display_filters_still_hints() {
-    // Plain `git log` output reaches the model through the filter, so the hint stays.
-    for cmd in ["git log | grep fix", "git log 2>&1 | grep -c fix"] {
-        assert!(
-            matches!(check(cmd), Some(Verdict::Hint(Rule::GitLog, _))),
-            "{cmd}"
-        );
+fn git_log_in_any_form_gets_no_hint_and_runs_as_written() {
+    for cmd in [
+        "git log",
+        "git log -p",
+        "git log --stat",
+        "git log -5 --format=%s",
+        "git log | grep fix",
+        "git log 2>&1 | grep -c fix",
+        "git log | head -20",
+    ] {
+        assert!(check(cmd).is_none(), "{cmd}");
     }
 }
 
@@ -277,14 +281,12 @@ fn hints_at_acus_map_for_recursive_listings() {
 }
 
 #[test]
-fn hints_at_acus_for_plain_git_history_and_status() {
+fn hints_at_acus_for_plain_git_status_diff_and_show() {
     for (cmd, rule) in [
         ("git status", "git-status"),
         ("git diff", "git-diff"),
         ("git diff --cached src/main.rs", "git-diff"),
         ("git diff --stat", "git-diff"),
-        ("git -C ../x log -5", "git-log"),
-        ("git --no-pager log", "git-log"),
         ("git show HEAD", "git-show"),
     ] {
         assert!(
@@ -300,7 +302,6 @@ fn hints_at_acus_for_plain_git_history_and_status() {
         "git status --short",
         "git status -sb",
         "git diff --name-only HEAD~1",
-        // `acus log` has no equivalent of these.
         "git log --oneline --graph",
         "git log --oneline --author=me",
         "git log --oneline -n",

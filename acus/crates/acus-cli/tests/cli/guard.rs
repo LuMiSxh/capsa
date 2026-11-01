@@ -214,11 +214,11 @@ fn guard_throttles_pure_hints_per_session() {
     let config = dir.path().join("config.toml");
     std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
     let shown: Vec<usize> = (1..=12)
-        .filter(|_| !run_hook(&config, &["guard"], bash_call("s1", "git log")).is_empty())
+        .filter(|_| !run_hook(&config, &["guard"], bash_call("s1", "git status")).is_empty())
         .collect();
     assert_eq!(shown, [1, 11]);
     // Another session counts on its own.
-    assert!(!run_hook(&config, &["guard"], bash_call("s2", "git log")).is_empty());
+    assert!(!run_hook(&config, &["guard"], bash_call("s2", "git status")).is_empty());
     for _ in 0..12 {
         let rewrite = run_hook(&config, &["guard"], bash_call("s1", "tail -n 5 src/a.rs"));
         assert!(rewrite.contains("updatedInput"), "{rewrite}");
@@ -244,7 +244,7 @@ fn concurrent_guard_calls_count_exactly() {
         for _ in 0..8 {
             s.spawn(|| {
                 while next.fetch_add(1, Ordering::SeqCst) < 20 {
-                    let out = run_hook(&config, &["guard"], bash_call("par", "git log"));
+                    let out = run_hook(&config, &["guard"], bash_call("par", "git status"));
                     if !out.is_empty() {
                         shown.fetch_add(1, Ordering::SeqCst);
                     }
@@ -274,7 +274,7 @@ fn session_start_after_compaction_resets_hints() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config.toml");
     std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
-    let hint = || run_hook(&config, &["guard"], bash_call("s1", "git log"));
+    let hint = || run_hook(&config, &["guard"], bash_call("s1", "git status"));
     let start = |source: &str| {
         run_hook(
             &config,
@@ -309,7 +309,7 @@ fn hint_every_one_shows_every_hint() {
     for every in ["1", "0"] {
         std::fs::write(&config, format!("[guard]\nhint_every = {every}\n")).unwrap();
         for _ in 0..12 {
-            let out = run_hook(&config, &["guard"], bash_call("s1", "git log"));
+            let out = run_hook(&config, &["guard"], bash_call("s1", "git status"));
             assert!(!out.is_empty(), "hint_every = {every}");
         }
     }
@@ -324,7 +324,7 @@ fn unusable_hint_state_still_shows_hints() {
     std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
     std::fs::write(dir.path().join("guard-hints"), "not a directory").unwrap();
     for _ in 0..3 {
-        let out = run_hook(&config, &["guard"], bash_call("s1", "git log"));
+        let out = run_hook(&config, &["guard"], bash_call("s1", "git status"));
         assert!(!out.is_empty());
     }
 }

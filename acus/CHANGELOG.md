@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Guard: dropped the `git log` hint; agents ignored it.
+
 ## [0.18.1]
 
 ### Fixed

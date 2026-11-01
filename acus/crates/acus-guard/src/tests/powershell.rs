@@ -217,6 +217,8 @@ fn applies_the_rules_to_powershell() {
     );
     for cmd in [
         "git log --oneline | Select-String fix",
+        "git log -p",
+        "git log --stat",
         "Get-Content settings.ini",
         "Get-ChildItem -Recurse *.rs",
     ] {

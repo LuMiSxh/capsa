@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Owns the `git` history, status and diff commands and their acus equivalents.
+//! Owns the `git` status, diff and show commands and their acus equivalents.
 
 use super::*;
 
-/// Hints at plain `git status|diff|log|show`, which print more than an agent needs: `acus diff`
+/// Hints at plain `git status|diff|show`, which print more than an agent needs: `acus diff`
 /// and `acus log` group and cap them. Output already compacted by a flag, and `git show REV:path`
 /// file reads, stay unhinted.
 pub(super) fn git_hint(args: &[&str]) -> Option<Verdict> {
@@ -46,21 +46,6 @@ pub(super) fn git_hint(args: &[&str]) -> Option<Verdict> {
             (
                 Rule::GitDiff,
                 "acus hint: `acus diff [REV|A..B] [PATH…]` groups changes by enclosing function; `-p` adds the changed lines, `--staged` limits it to the index.",
-            )
-        }
-        "log"
-            if !has(&[
-                "--oneline",
-                "--format",
-                "--pretty",
-                "--name-only",
-                "--stat",
-                "--shortstat",
-            ]) =>
-        {
-            (
-                Rule::GitLog,
-                "acus hint: `acus log [REV] [PATH…] [-n N]` prints one line per commit with date, author and changed lines; `acus diff REV^..REV` shows what one commit changed.",
             )
         }
         "show"
