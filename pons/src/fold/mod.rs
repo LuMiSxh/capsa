@@ -16,6 +16,7 @@
 mod background;
 mod child;
 mod entry;
+mod label;
 mod retire;
 #[cfg(test)]
 mod tests;
@@ -210,6 +211,8 @@ pub struct FoldEntry {
     provisional: bool,
     /// A provisionally finished card that left the roster but kept its log.
     hidden: bool,
+    /// The parent's `rawInput` once it has content: the subagent's type, description and prompt.
+    input: Option<Value>,
 }
 
 impl FoldEntry {}
@@ -313,6 +316,13 @@ impl Folds {
         entry.note_title(update);
         if let Some(base) = base_of(update) {
             entry.base = base;
+        }
+    }
+
+    /// Keeps the parent's `rawInput` once it is known, for the roster label.
+    pub fn note_input(&mut self, parent: &str, update: &Value) {
+        if let Some(entry) = self.entries.get_mut(parent) {
+            entry.note_input(update);
         }
     }
 }

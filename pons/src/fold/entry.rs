@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! One tool-call entry of a folded subagent: its text, status and finished notice.
 
+use super::label::subagent_label;
 use super::*;
 
 impl FoldEntry {
@@ -341,7 +342,7 @@ impl FoldEntry {
     }
 
     pub(super) fn roster_item(&self, now: Instant) -> RosterItem {
-        let name = self.name();
+        let name = self.roster_name();
         match self.done {
             None => {
                 let action = self.last_action();
@@ -445,6 +446,23 @@ impl FoldEntry {
             .unwrap_or("Agent")
     }
 
+    /// Returns the roster name: the input label once the input is known, else the card name.
+    pub(super) fn roster_name(&self) -> String {
+        match &self.input {
+            Some(input) => subagent_label(input, self.name()),
+            None => self.name().to_owned(),
+        }
+    }
+
+    pub(super) fn note_input(&mut self, update: &Value) {
+        if let Some(input) = update
+            .get("rawInput")
+            .filter(|v| v.as_object().is_some_and(|o| !o.is_empty()))
+        {
+            self.input = Some(input.clone());
+        }
+    }
+
     pub(super) fn note_title(&mut self, update: &Value) {
         if let Some(title) = str_field(update, "title")
             .map(one_line)
@@ -481,6 +499,7 @@ impl FoldEntry {
             entry_sent: false,
             provisional: false,
             hidden: false,
+            input: None,
         }
     }
 }

@@ -90,6 +90,31 @@ fn adapter_plans_are_merged_and_pass_through_without_subagents() {
 }
 
 #[test]
+fn roster_names_the_subagent_from_its_input() {
+    let t0 = Instant::now();
+    let mut e = engine();
+    e.on_client(&prompt(1), t0);
+    e.on_agent(&real_parent("A"), t0);
+    let input = json!({"subagent_type": "worker", "description": "Fix ledger torn tail",
+        "prompt": "Fix the torn tail", "model": "sonnet", "run_in_background": true});
+    let text = "Async agent launched successfully.";
+    e.on_agent(
+        &update(
+            json!({"sessionUpdate": "tool_call_update", "toolCallId": "A",
+            "status": "completed", "rawInput": input,
+            "rawOutput": [{"type": "text", "text": text}],
+            "content": [{"type": "content", "content": {"type": "text", "text": text}}]}),
+        ),
+        t0,
+    );
+    let plans = of_kind(&e.tick(t0 + secs(1)), "plan");
+    assert_eq!(
+        plans[0]["params"]["update"]["entries"][0]["content"],
+        "worker (sonnet) - Fix ledger torn tail: starting (0 tool calls, 0s)"
+    );
+}
+
+#[test]
 fn finished_subagents_stay_completed_until_the_following_turn_ends() {
     let t0 = Instant::now();
     let mut e = two_background(t0);

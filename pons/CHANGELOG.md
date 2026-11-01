@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.0]
+
+### Changed
+
+- The roster entries of background subagents in the ACP `plan` name the subagent from its Agent call's input: `<subagent_type> - <description>` (the type defaults to `general-purpose`, the description to the first line of `prompt`), with the `model` input in parentheses after the type, e.g. `worker (sonnet) - Fix ledger torn tail: Read src/a.rs (1 tool call, 0s)`. The label is capped at 100 characters. The status and the rest of the entry are unchanged, and without the input the entry keeps the card title. The separator is ASCII, as all pons output is; non-ASCII text in the input is transliterated (`ä` → `ae`, `é` → `e`) or dropped.
+
 ## [0.8.0]
 
 ### Added

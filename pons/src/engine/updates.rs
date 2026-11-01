@@ -16,6 +16,7 @@ impl Engine {
         let kind = update.get("sessionUpdate").and_then(Value::as_str);
         let tool_id = update.get("toolCallId").and_then(Value::as_str);
         let id = tool_id.unwrap_or_default();
+        self.folds.note_input(id, update);
         let session = self.sessions.entry(sid.to_owned()).or_default();
         let terminal = matches!(
             update.get("status").and_then(Value::as_str),

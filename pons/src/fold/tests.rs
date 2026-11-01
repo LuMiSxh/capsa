@@ -589,3 +589,20 @@ fn finishing_a_removed_entry_is_a_noted_no_op() {
     );
     assert!(folds.take_notes().iter().any(|n| n.contains("is gone")));
 }
+
+#[test]
+fn a_later_fuller_input_replaces_the_stored_one() {
+    let mut e = FoldEntry::new("s", "P");
+    e.note_input(&json!({"rawInput": {"subagent_type": "wor"}}));
+    e.note_input(&json!({"rawInput": {"subagent_type": "worker", "description": "Fix it"}}));
+    assert_eq!(e.roster_name(), "worker - Fix it");
+}
+
+#[test]
+fn an_empty_or_missing_input_keeps_the_stored_one() {
+    let mut e = FoldEntry::new("s", "P");
+    e.note_input(&json!({"rawInput": {"subagent_type": "worker", "description": "Fix it"}}));
+    e.note_input(&json!({"rawInput": {}}));
+    e.note_input(&json!({"toolCallId": "P"}));
+    assert_eq!(e.roster_name(), "worker - Fix it");
+}

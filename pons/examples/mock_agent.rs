@@ -384,6 +384,8 @@ fn background_turn(sid: &str, text: &str) {
         sid,
         json!({"sessionUpdate": "tool_call_update", "toolCallId": "toolu_bg",
             "status": "completed",
+            "rawInput": {"subagent_type": "worker", "description": "Fix ledger torn tail",
+                "prompt": "Fix the torn tail", "run_in_background": true},
             "rawOutput": [{"type": "text", "text": launch}],
             "content": [{"type": "content", "content": {"type": "text", "text": launch}}],
             "_meta": {"claudeCode": {"toolName": "Agent"}}}),

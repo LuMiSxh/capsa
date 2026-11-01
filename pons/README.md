@@ -140,11 +140,16 @@ tool call, or the turn ends (the entry goes out before the prompt response),
 or no prompt is outstanding. `--no-finish-entry` disables it.
    **Roster.** Zed shows the ACP `plan` in its activity bar and replaces the
 whole plan on every `plan` update. pons keeps the adapter's latest plan and
-appends one entry per background subagent (`<title>: <last action> (3 tool
-calls, 15s)`, status `pending`, `in_progress` or `completed`), sending the
+appends one entry per background subagent (`<subagent_type> - <description>:
+<last action> (3 tool calls, 15s)`, status `pending`, `in_progress` or
+`completed`), sending the
 merged plan on change at most once a second. Finished subagents stay listed as
 `completed` until a turn that began after they finished ends, or 60 s pass. A plan from the
-adapter while no subagent is known is forwarded untouched. `--no-roster`
+adapter while no subagent is known is forwarded untouched. The label comes from
+the Agent call's input: `subagent_type` (default `general-purpose`), the
+`description` (else the first line of `prompt`), with a `model` input shown in
+parentheses after the type, e.g. `worker (sonnet) - Fix ledger torn tail`. It is
+capped at 100 characters. Without that input the card title is used. `--no-roster`
 disables it.
    **Notices.** When a subagent finishes, pons can also send a session
 `notice` (severity `info`, or `warning` after a Stop; title `<title> finished`;

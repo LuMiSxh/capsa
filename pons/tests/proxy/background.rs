@@ -102,7 +102,7 @@ async fn background_card_completes_after_idle_without_notification() {
     // Whether the first plan still says "starting" depends on timing.
     let content = entry["content"].as_str().unwrap();
     assert!(
-        content.starts_with("Agent: ") && content.ends_with("s)"),
+        content.starts_with("worker - Fix ledger torn tail: ") && content.ends_with("s)"),
         "{entry}"
     );
     assert!(matches!(
