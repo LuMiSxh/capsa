@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#[cfg(feature = "cmd-update")]
+use super::common::output_retrying_busy;
 use super::common::{acus, acus_env, decode};
 
 #[test]
@@ -55,15 +57,13 @@ fn uninstall_removes_the_binary_and_the_skill_of_a_copy() {
     let copy = dir.path().join("acus");
     std::fs::copy(env!("CARGO_BIN_EXE_acus"), &copy).unwrap();
     let run = |args: &[&str]| {
-        decode(
-            std::process::Command::new(&copy)
-                .args(args)
-                .env("HOME", &home)
-                .env("USERPROFILE", &home)
-                .env("ACUS_CONFIG", "/nonexistent/acus.toml")
-                .output()
-                .unwrap(),
-        )
+        let mut command = std::process::Command::new(&copy);
+        command
+            .args(args)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("ACUS_CONFIG", "/nonexistent/acus.toml");
+        decode(output_retrying_busy(&mut command).unwrap())
     };
     assert_eq!(run(&["self", "skill", "--install"]).0, 0);
     let skill = home.join(".claude/skills/acus/SKILL.md");
@@ -83,12 +83,12 @@ fn uninstall_refuses_a_binary_not_named_acus() {
     let dir = tempfile::tempdir().unwrap();
     let copy = dir.path().join("renamed");
     std::fs::copy(env!("CARGO_BIN_EXE_acus"), &copy).unwrap();
-    let out = std::process::Command::new(&copy)
+    let mut command = std::process::Command::new(&copy);
+    command
         .args(["self", "uninstall"])
         .env("HOME", dir.path())
-        .env("USERPROFILE", dir.path())
-        .output()
-        .unwrap();
+        .env("USERPROFILE", dir.path());
+    let out = output_retrying_busy(&mut command).unwrap();
     let (code, _, err) = decode(out);
     assert_eq!(code, 2);
     assert!(err.contains("refusing") && err.contains("hint:"), "{err}");
