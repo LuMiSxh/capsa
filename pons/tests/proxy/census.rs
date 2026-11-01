@@ -44,7 +44,7 @@ async fn a_rate_limit_line_is_forwarded_unchanged_and_each_window_is_recorded_on
     // Let a wrongly repeated write land too before counting.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     text = std::fs::read_to_string(&file).unwrap_or(text);
-    let rows: Vec<Value> = text
+    let mut rows: Vec<Value> = text
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
@@ -53,6 +53,8 @@ async fn a_rate_limit_line_is_forwarded_unchanged_and_each_window_is_recorded_on
         2,
         "the repeated value is not recorded again: {text}"
     );
+    // The writes are off the forwarding path, so the two windows may land in either order.
+    rows.sort_by(|a, b| a["window"].as_str().cmp(&b["window"].as_str()));
     assert_eq!(rows[0]["source"], "pons");
     assert_eq!(rows[0]["window"], "five_hour");
     assert_eq!(rows[0]["used_percentage"], 45.0);
