@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acus-cli"
-version = "0.18.1"
+version = "0.19.0"
 dependencies = [
  "acus-decide",
  "acus-edit",
@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "acus-decide"
-version = "0.18.1"
+version = "0.19.0"
 dependencies = [
  "capsa-core",
  "serde_json",
@@ -39,7 +39,7 @@ dependencies = [
 
 [[package]]
 name = "acus-edit"
-version = "0.18.1"
+version = "0.19.0"
 dependencies = [
  "acus-syntax",
  "acus-walk",
@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "acus-guard"
-version = "0.18.1"
+version = "0.19.0"
 dependencies = [
  "acus-syntax",
  "insta",
@@ -69,7 +69,7 @@ dependencies = [
 
 [[package]]
 name = "acus-search"
-version = "0.18.1"
+version = "0.19.0"
 dependencies = [
  "acus-syntax",
  "acus-walk",
@@ -83,7 +83,7 @@ dependencies = [
 
 [[package]]
 name = "acus-syntax"
-version = "0.18.1"
+version = "0.19.0"
 dependencies = [
  "serde",
  "tree-sitter",
@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "acus-walk"
-version = "0.18.1"
+version = "0.19.0"
 dependencies = [
  "globset",
  "ignore",
@@ -1155,7 +1155,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pons"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "capsa-core",
