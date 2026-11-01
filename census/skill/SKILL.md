@@ -31,6 +31,8 @@ per session or window. Times are those of `census limits`.
 - `5h limit 82%` or `7d limit 91%` (also "full around" or "runs out around"): avoid large parallel
   agent batches, prefer fewer and smaller agents, and tell Luca the reset time in your next reply.
 - `weekly limit resets in 9 h with 40% left`: tell Luca, so he can use the unused share.
+- `census: status: context 48k of 400k (compaction at 400k); 5h 8% (reset ...).`: not a level. It comes
+  with the first prompt of a session and after an hour without one. Information only.
 
 Before you say the context is full or suggest a handoff for context reasons, run `census context`.
 Statements about context size in a compaction summary are outdated.

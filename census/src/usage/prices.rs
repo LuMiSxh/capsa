@@ -27,7 +27,7 @@ const PRICES: [(&str, Price); 7] = [
         Price {
             input: 2.0,
             output: 10.0,
-            cache_read: 0.20,
+            cache_read: 0.10,
         },
     ),
     (
@@ -72,19 +72,33 @@ const PRICES: [(&str, Price); 7] = [
     ),
 ];
 
-/// Haiku 5.5 requests with more than this many context tokens (input, cache read and cache
-/// write together) pay the long-prompt tier.
-const HAIKU: &str = "claude-haiku-5-5";
-const HAIKU_LONG_CONTEXT: u64 = 100_000;
-const HAIKU_LONG: Price = Price {
-    input: 0.50,
-    output: 2.50,
-    cache_read: 0.05,
-};
+/// A price that applies to a request whose prompt is over `over` tokens. The prompt is its input,
+/// cache read and cache write tokens together.
+#[derive(Clone, Copy)]
+struct LongTier {
+    over: u64,
+    price: Price,
+}
 
+/// Models with a long-prompt tier. A request over the threshold pays the tier instead of the base
+/// price in `PRICES`.
+const LONG_TIERS: [(&str, LongTier); 1] = [(
+    "claude-haiku-5-5",
+    LongTier {
+        over: 100_000,
+        price: Price {
+            input: 0.50,
+            output: 2.50,
+            cache_read: 0.05,
+        },
+    },
+)];
+
+/// The price of one request with a prompt of `context` tokens, or `None` for a model without one.
 fn price(model: &str, context: u64) -> Option<Price> {
-    if model == HAIKU && context > HAIKU_LONG_CONTEXT {
-        return Some(HAIKU_LONG);
+    let long = LONG_TIERS.iter().find(|(m, _)| *m == model).map(|(_, l)| l);
+    if let Some(l) = long.filter(|l| context > l.over) {
+        return Some(l.price);
     }
     PRICES.iter().find(|(m, _)| *m == model).map(|(_, p)| *p)
 }
@@ -145,5 +159,55 @@ impl Cost {
     pub fn merge(&mut self, o: &Cost) {
         self.usd += o.usd;
         self.unpriced += o.unpriced;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A request whose cache writes are all 1-hour ones.
+    fn request(input: u64, cache_read: u64, cache_write_1h: u64, output: u64) -> Tokens {
+        Tokens {
+            input,
+            cache_read,
+            cache_write_5m: 0,
+            cache_write_1h,
+            output,
+            requests: 1,
+        }
+    }
+
+    fn usd(model: &str, t: &Tokens) -> f64 {
+        request_cost(model, t).expect("a priced model")
+    }
+
+    fn assert_usd(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn sonnet_5_5_cache_read_is_a_tenth_of_a_dollar_per_million() {
+        assert_usd(usd("claude-sonnet-5-5", &request(0, 1_000_000, 0, 0)), 0.10);
+    }
+
+    #[test]
+    fn haiku_prompt_of_50k_pays_the_short_tier() {
+        // 40k input at $0.10, 10k cache read at $0.01 and 1k output at $0.50, per million.
+        let t = request(40_000, 10_000, 0, 1_000);
+        assert_usd(usd("claude-haiku-5-5", &t), 0.0046);
+    }
+
+    #[test]
+    fn haiku_prompt_of_120k_pays_the_long_tier() {
+        // 100k input at $0.50, 10k cache read at $0.05, 10k 1h writes at $1.00 and 1k output at
+        // $2.50, per million.
+        let t = request(100_000, 10_000, 10_000, 1_000);
+        assert_usd(usd("claude-haiku-5-5", &t), 0.063);
+    }
+
+    #[test]
+    fn haiku_prompt_of_exactly_100k_pays_the_short_tier() {
+        assert_usd(usd("claude-haiku-5-5", &request(100_000, 0, 0, 0)), 0.01);
     }
 }

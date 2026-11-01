@@ -20,9 +20,9 @@ const LEDGER_DEADLINE: Duration = Duration::from_millis(100);
 
 pub fn run() -> Outcome {
     let start = Instant::now();
-    let now = now_secs();
+    let now = clock();
     if let Some(input) = read_input() {
-        match hook::run(&input, now, || limits_within(start)) {
+        match hook::run(&input, now, || limits_within(start, now)) {
             Ok(Some(out)) => {
                 let _ = writeln!(std::io::stdout(), "{out}");
             }
@@ -31,6 +31,14 @@ pub fn run() -> Outcome {
         }
     }
     Outcome::Found
+}
+
+/// Returns the time of the call; `CENSUS_NOW` replaces the clock so that the tests can fix it.
+fn clock() -> u64 {
+    std::env::var("CENSUS_NOW")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(now_secs)
 }
 
 /// Reads stdin up to the cap; `None` for a terminal, a larger input or text that is not UTF-8.
@@ -53,9 +61,8 @@ fn read_input() -> Option<String> {
 
 /// Computes the limits on a helper thread and gives up when `LIMITS_DEADLINE` has passed since
 /// `start`. A busy ledger lock already makes `limits::status` skip its update.
-fn limits_within(start: Instant) -> Option<LimitStatus> {
+fn limits_within(start: Instant, now: u64) -> Option<LimitStatus> {
     let (tx, rx) = mpsc::channel();
-    let now = now_secs();
     std::thread::Builder::new()
         .spawn(move || {
             let _ = tx.send(limits::status_by(now, Some(start + LEDGER_DEADLINE)).ok());
