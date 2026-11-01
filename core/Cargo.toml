@@ -20,6 +20,7 @@ update = ["dep:ureq", "dep:flate2", "dep:tar", "dep:zip", "dep:sha2"]
 anyhow.workspace = true
 clap = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
+serde.workspace = true
 serde_json.workspace = true
 sha2 = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }

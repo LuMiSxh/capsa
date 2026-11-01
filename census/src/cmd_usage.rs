@@ -2,10 +2,13 @@
 //! `census usage`: token, cost and tool-call statistics from agent transcripts.
 
 use crate::out::Out;
+use crate::usage_views::{compare_out, handbacks, k, money, pre_list, print_cost_cache, rate, usd};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-use census::usage::{AgentStat, CategoryStat, Report, UsageOpts, WEIGHTS, group, report};
+use census::usage::{
+    AgentStat, CategoryStat, Report, UsageOpts, WEIGHTS, compare, group, parse_date, report,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -32,36 +35,45 @@ pub struct Args {
     /// Count `acus guard` decisions per rule and list the calls run through its escape.
     #[arg(long)]
     guard: bool,
-    /// One row per role (main, worker, worker-lite, ...): spawns, models, requests, preamble size and cost per spawn.
+    /// One row per role (main, worker, worker-lite, ...): spawns, models, requests, preamble size,
+    /// cost, cache hit rate, and cache rewrites (expired-cache writes and unexpected busts).
     #[arg(long)]
     agents: bool,
-}
-
-/// 1234567 → "1.2M".
-fn k(n: f64) -> String {
-    match n {
-        n if n >= 1e9 => format!("{:.1}G", n / 1e9),
-        n if n >= 1e6 => format!("{:.1}M", n / 1e6),
-        n if n >= 1e3 => format!("{:.0}k", n / 1e3),
-        n => format!("{n:.0}"),
-    }
+    /// Spawns per ISO week and hand-backs: a senior-worker spawn within 30 min after a worker
+    /// spawn of the same session ended (heuristic; rate = hand-backs / worker spawns).
+    #[arg(long)]
+    handbacks: bool,
+    /// Report before and after this UTC date (YYYY-MM-DD), split by request time, with the change.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    compare: Option<String>,
 }
 
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     if a.guard {
         return guard(&a, out);
     }
-    let r = report(&UsageOpts {
+    let opts = UsageOpts {
         claude_root: a.claude_dir,
         codex_root: a.codex_dir,
         days: a.days,
         project: a.project,
-    });
+    };
+    if let Some(date) = &a.compare {
+        let Some(cut) = parse_date(date) else {
+            anyhow::bail!("--compare takes a UTC date as YYYY-MM-DD, not `{date}`");
+        };
+        let (before, after) = compare(&opts, cut);
+        return compare_out(date, &before, &after, out);
+    }
+    let r = report(&opts);
     if r.sessions.is_empty() {
         return Ok(Outcome::Empty);
     }
     if a.tools {
         return tools(&r, out);
+    }
+    if a.handbacks {
+        return handbacks(&r.handbacks, out);
     }
     if a.agents {
         return agents(&r.agents, out);
@@ -105,19 +117,21 @@ fn print_summary(r: &Report, out: &Out, top: usize) {
         k(r.context[1] as f64),
         k(r.context[2] as f64)
     );
+    print_cost_cache(r);
     println!("{}", out.header("models"));
-    for (m, t) in r.models.iter().take(top) {
+    for ((m, t), (_, c)) in r.models.iter().zip(&r.model_costs).take(top) {
         println!(
-            "  {m} reqs={} w={} ({})",
+            "  {m} reqs={} w={} ({}) cost={}",
             t.requests,
             k(t.weighted()),
-            pct(t.weighted())
+            pct(t.weighted()),
+            money(c)
         );
     }
     println!("{}", out.header("sessions"));
     for s in r.sessions.iter().take(top) {
         println!(
-            "  {} {} {} reqs={} w={} ({}) maxctx={} compact={} {}",
+            "  {} {} {} reqs={} w={} ({}) maxctx={} compact={} {} cost={} cache={}{}",
             s.agent,
             if s.project.is_empty() {
                 "?"
@@ -130,7 +144,10 @@ fn print_summary(r: &Report, out: &Out, top: usize) {
             pct(s.weighted),
             k(s.max_context as f64),
             s.compactions,
-            s.model
+            s.model,
+            money(&s.cost),
+            rate(s.tokens.cache_hit_rate()),
+            pre_list(&s.pre_compact)
         );
     }
     println!("{}", out.header("tools (calls, input chars, result chars)"));
@@ -276,12 +293,12 @@ fn agents(rows: &[AgentStat], out: &Out) -> Result<Outcome> {
     println!(
         "{}",
         out.header(
-            "role spawns models median-reqs median-first-ctx weighted share median-weighted/spawn"
+            "role spawns models median-reqs median-first-ctx weighted share median-weighted/spawn cost cache-hit expired expired-cost busts"
         )
     );
     for a in rows {
         println!(
-            "  {} {} {} {:.0} {} {} {:.1}% {}",
+            "  {} {} {} {:.0} {} {} {:.1}% {} {} {} {} {} {}",
             a.role,
             a.spawns,
             a.models.join(","),
@@ -289,7 +306,12 @@ fn agents(rows: &[AgentStat], out: &Out) -> Result<Outcome> {
             k(a.median_first_context),
             k(a.weighted),
             100.0 * a.share,
-            k(a.median_weighted)
+            k(a.median_weighted),
+            money(&a.cost),
+            rate(a.tokens.cache_hit_rate()),
+            a.cache.expired,
+            usd(a.cache.expired_usd),
+            a.cache.busts
         );
     }
     Ok(Outcome::Found)

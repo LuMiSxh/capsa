@@ -4,14 +4,22 @@
 
 mod claude;
 mod codex;
+mod handback;
+mod merge;
+mod prices;
 mod read;
+mod time;
 mod tools;
 mod walk;
 
+pub use handback::HandbackWeek;
+pub use prices::Cost;
+pub use time::parse_date;
 pub use tools::group;
 
+use merge::Side;
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -71,6 +79,17 @@ impl Tokens {
         self.input + self.cache_read + self.cache_write_5m + self.cache_write_1h
     }
 
+    /// Cache writes of both TTLs.
+    pub fn cache_writes(&self) -> u64 {
+        self.cache_write_5m + self.cache_write_1h
+    }
+
+    /// Share of the context served from the cache, or `None` for a request without context.
+    pub fn cache_hit_rate(&self) -> Option<f64> {
+        let context = self.context();
+        (context > 0).then(|| self.cache_read as f64 / context as f64)
+    }
+
     fn add(&mut self, o: &Tokens) {
         self.input += o.input;
         self.cache_read += o.cache_read;
@@ -91,6 +110,9 @@ pub struct Session {
     pub weighted: f64,
     pub max_context: u64,
     pub compactions: u32,
+    /// Context size before each compaction, in transcript order.
+    pub pre_compact: Vec<u64>,
+    pub cost: Cost,
     pub prompts: u64,
 }
 
@@ -124,6 +146,9 @@ pub struct AgentStat {
     pub weighted: f64,
     pub share: f64,
     pub median_weighted: f64,
+    pub tokens: Tokens,
+    pub cost: Cost,
+    pub cache: CacheStat,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -143,6 +168,35 @@ pub struct Report {
     pub categories: BTreeMap<&'static str, CategoryStat>,
     /// Characters of all tool results.
     pub result_chars: u64,
+    pub cost: Cost,
+    /// Cost per model, in the order of `models`.
+    pub model_costs: Vec<(String, Cost)>,
+    pub cache: CacheStat,
+    /// Compactions counted in the report.
+    pub compactions: u64,
+    /// Context size before the compactions: p50, p90, p99.
+    pub compaction_context: [u64; 3],
+    /// Spawns and hand-backs per ISO week, see `handback`.
+    pub handbacks: Vec<HandbackWeek>,
+}
+
+/// Cache rewrites of a role, or of all requests. `expired` counts requests that wrote cache after
+/// a gap to the previous request of their thread above the TTL; `busts` counts requests within
+/// the TTL whose cache writes were over half their context.
+#[derive(Debug, Default, Clone, Copy, Serialize)]
+pub struct CacheStat {
+    pub expired: u64,
+    /// List price of the cache writes of the expired requests.
+    pub expired_usd: f64,
+    pub busts: u64,
+}
+
+impl CacheStat {
+    fn add(&mut self, o: &CacheStat) {
+        self.expired += o.expired;
+        self.expired_usd += o.expired_usd;
+        self.busts += o.busts;
+    }
 }
 
 /// Calls and tool-result characters of one category, per agent `[claude, codex]`.
@@ -163,15 +217,38 @@ pub(crate) struct FileStats {
     pub is_subagent: bool,
     /// Parent tool call that spawned this subagent (from the meta file).
     pub spawn_id: Option<String>,
-    /// (tool_use id, subagent_type) of Agent calls made in this file.
-    pub spawns: Vec<(String, String)>,
-    /// (dedup id, model, tokens of one request)
-    pub requests: Vec<(Option<String>, String, Tokens)>,
-    pub compactions: u32,
+    /// Agent calls made in this file that name a subagent type.
+    pub spawns: Vec<SpawnCall>,
+    pub requests: Vec<Request>,
+    /// Compactions of this thread, with the context size before each.
+    pub compactions: Vec<Compaction>,
     pub prompts: u64,
     pub calls: Vec<Call>,
     /// Result characters of results whose call is not in this file.
     pub orphan_result_chars: u64,
+}
+
+/// One API request of a thread, sent at `ts` (ms since the epoch, 0 if unknown).
+pub(crate) struct Request {
+    pub id: Option<String>,
+    pub model: String,
+    pub tokens: Tokens,
+    pub ts: u64,
+}
+
+/// An Agent call that starts a subagent of the type `role`.
+pub(crate) struct SpawnCall {
+    pub id: String,
+    pub role: String,
+    pub start_ms: u64,
+    /// When the call's result came back, if it did.
+    pub end_ms: Option<u64>,
+}
+
+/// A compaction of a thread and the context size before it.
+pub(crate) struct Compaction {
+    pub ts: u64,
+    pub pre_tokens: u64,
 }
 
 /// One tool call of a transcript, with the characters of the result that answers it.
@@ -223,7 +300,22 @@ fn default_root(env: &str, home_sub: &str, sub: &str) -> Option<PathBuf> {
         .or_else(|| std::env::home_dir().map(|h| h.join(home_sub).join(sub)))
 }
 
+/// The report over every transcript `o` selects.
 pub fn report(o: &UsageOpts) -> Report {
+    merge::build(&read_files(o), Side::All)
+}
+
+/// The report before and after `date` (ms since the epoch, from `parse_date`), read in one pass.
+pub fn compare(o: &UsageOpts, date: u64) -> (Report, Report) {
+    let files = read_files(o);
+    (
+        merge::build(&files, Side::Before(date)),
+        merge::build(&files, Side::After(date)),
+    )
+}
+
+/// Reads the transcripts `o` selects and resolves the role of each subagent.
+fn read_files(o: &UsageOpts) -> Vec<FileStats> {
     let claude = o
         .claude_root
         .clone()
@@ -260,7 +352,7 @@ pub fn report(o: &UsageOpts) -> Report {
     // Subagents without an `agentType` take the type of the parent's Agent call.
     let spawned: HashMap<String, String> = files
         .iter()
-        .flat_map(|f| f.spawns.iter().cloned())
+        .flat_map(|f| f.spawns.iter().map(|s| (s.id.clone(), s.role.clone())))
         .collect();
     for f in files.iter_mut().filter(|f| f.role.is_empty()) {
         f.role = f
@@ -270,7 +362,7 @@ pub fn report(o: &UsageOpts) -> Report {
             .cloned()
             .unwrap_or_else(|| "subagent".into());
     }
-    merge(files)
+    files
 }
 
 /// Claude: `<project>/<session>.jsonl` and `<project>/<session>/subagents/*.jsonl`
@@ -286,193 +378,4 @@ fn session_id(root: &Path, p: &Path, agent: &str) -> String {
     let s = s.trim_end_matches(".jsonl");
     // `rollout-<timestamp>-<uuid>`: keep the uuid.
     s.get(s.len().saturating_sub(36)..).unwrap_or(s).to_owned()
-}
-
-/// The 50th, 90th and 99th percentile of `values`, or 0 for each when there are none.
-fn quantiles(mut values: Vec<u64>) -> [u64; 3] {
-    values.sort_unstable();
-    [0.5, 0.9, 0.99].map(|q| {
-        values
-            .get((values.len() as f64 * q) as usize)
-            .copied()
-            .unwrap_or(0)
-    })
-}
-
-fn merge(files: Vec<FileStats>) -> Report {
-    let mut r = Report::default();
-    let mut seen = HashSet::new();
-    let mut sessions: HashMap<(&'static str, String), Session> = HashMap::new();
-    let mut models: HashMap<String, Tokens> = HashMap::new();
-    let mut tools: HashMap<String, ToolStat> = HashMap::new();
-    let mut contexts = Vec::new();
-    let mut roles: HashMap<String, Vec<Spawn>> = HashMap::new();
-    for f in files {
-        let project = Path::new(&f.cwd)
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let s = sessions
-            .entry((f.agent, f.session.clone()))
-            .or_insert_with(|| Session {
-                agent: f.agent,
-                project: project.clone(),
-                id: f.session.clone(),
-                model: String::new(),
-                tokens: Tokens::default(),
-                weighted: 0.0,
-                max_context: 0,
-                compactions: 0,
-                prompts: 0,
-            });
-        if s.project.is_empty() {
-            s.project = project;
-        }
-        add_calls(&mut r, &mut tools, &f);
-        let mut spawn = Spawn::default();
-        for (id, model, t) in f.requests {
-            if id.is_some_and(|id| !seen.insert(id)) {
-                continue;
-            }
-            spawn.add(&model, &t);
-            s.tokens.add(&t);
-            s.max_context = s.max_context.max(t.context());
-            contexts.push(t.context());
-            models.entry(model.clone()).or_default().add(&t);
-            r.total.add(&t);
-            if s.model.is_empty() || s.model == "<synthetic>" {
-                s.model = model;
-            }
-        }
-        s.compactions += f.compactions;
-        if spawn.requests > 0 {
-            roles.entry(f.role.clone()).or_default().push(spawn);
-        }
-        s.prompts += f.prompts;
-        r.prompts += f.prompts;
-    }
-    r.weighted = r.total.weighted();
-    r.context = quantiles(contexts);
-    r.sessions = sessions
-        .into_values()
-        .filter(|s| s.tokens.requests > 0 || s.prompts > 0)
-        .collect();
-    for s in &mut r.sessions {
-        s.weighted = s.tokens.weighted();
-    }
-    r.sessions
-        .sort_by(|a, b| b.weighted.total_cmp(&a.weighted).then(a.id.cmp(&b.id)));
-    r.models = models.into_iter().collect();
-    r.models
-        .sort_by(|a, b| b.1.weighted().total_cmp(&a.1.weighted()));
-    r.tools = tools.into_values().collect();
-    r.result_chars = r.tools.iter().map(|t| t.result_chars).sum();
-    r.agents = agent_stats(roles, r.weighted);
-    r.tools
-        .sort_by(|a, b| b.calls.cmp(&a.calls).then(a.name.cmp(&b.name)));
-    r
-}
-
-/// Adds one transcript's tool calls to the tool, category and chain statistics.
-fn add_calls(r: &mut Report, tools: &mut HashMap<String, ToolStat>, f: &FileStats) {
-    let mut run = 0u64;
-    let agent = usize::from(f.agent == "codex");
-    for c in &f.calls {
-        let t = tools.entry(c.name.clone()).or_insert_with(|| ToolStat {
-            name: c.name.clone(),
-            ..Default::default()
-        });
-        t.calls += 1;
-        t.input_chars += c.input_chars;
-        t.result_chars += c.result_chars;
-        r.chains.tool_calls += 1;
-        for &cat in &c.categories {
-            let s = r.categories.entry(cat).or_default();
-            s.calls[agent] += 1;
-            s.result_chars[agent] += c.result_chars;
-        }
-        if c.explore {
-            run += 1;
-        } else {
-            close_chain(&mut r.chains, &mut run);
-        }
-    }
-    close_chain(&mut r.chains, &mut run);
-    if f.orphan_result_chars > 0 {
-        tools
-            .entry("?".into())
-            .or_insert_with(|| ToolStat {
-                name: "?".into(),
-                ..Default::default()
-            })
-            .result_chars += f.orphan_result_chars;
-    }
-}
-
-/// One transcript's requests after dedup.
-#[derive(Default)]
-struct Spawn {
-    requests: u64,
-    first_context: u64,
-    weighted: f64,
-    models: HashMap<String, u64>,
-}
-
-impl Spawn {
-    fn add(&mut self, model: &str, t: &Tokens) {
-        if self.requests == 0 {
-            self.first_context = t.context();
-        }
-        self.requests += 1;
-        self.weighted += t.weighted();
-        if !model.is_empty() && model != "<synthetic>" {
-            *self.models.entry(model.to_owned()).or_default() += 1;
-        }
-    }
-}
-
-fn median(mut v: Vec<f64>) -> f64 {
-    v.sort_by(f64::total_cmp);
-    match v.len() {
-        0 => 0.0,
-        n if n % 2 == 1 => v[n / 2],
-        n => (v[n / 2 - 1] + v[n / 2]) / 2.0,
-    }
-}
-
-fn agent_stats(roles: HashMap<String, Vec<Spawn>>, total: f64) -> Vec<AgentStat> {
-    let mut out: Vec<AgentStat> = roles
-        .into_iter()
-        .map(|(role, spawns)| {
-            let col = |f: fn(&Spawn) -> f64| median(spawns.iter().map(f).collect());
-            let mut models: HashMap<&str, u64> = HashMap::new();
-            for (m, n) in spawns.iter().flat_map(|s| &s.models) {
-                *models.entry(m).or_default() += n;
-            }
-            let mut models: Vec<_> = models.into_iter().collect();
-            models.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-            let weighted = spawns.iter().map(|s| s.weighted).sum::<f64>();
-            AgentStat {
-                spawns: spawns.len() as u64,
-                models: models.into_iter().map(|(m, _)| m.to_owned()).collect(),
-                median_requests: col(|s| s.requests as f64),
-                median_first_context: col(|s| s.first_context as f64),
-                weighted,
-                share: weighted / total.max(1.0),
-                median_weighted: col(|s| s.weighted),
-                role,
-            }
-        })
-        .collect();
-    out.sort_by(|a, b| b.weighted.total_cmp(&a.weighted).then(a.role.cmp(&b.role)));
-    out
-}
-
-fn close_chain(c: &mut Chains, run: &mut u64) {
-    if *run >= 3 {
-        c.count += 1;
-        c.calls_in_chains += *run;
-        c.longest = c.longest.max(*run);
-    }
-    *run = 0;
 }

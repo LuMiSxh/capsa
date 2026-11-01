@@ -67,24 +67,10 @@ pub struct Decide {
     pub api_key_env: Option<String>,
 }
 
-/// `~/Library/Application Support`, `%APPDATA%` or `$XDG_CONFIG_HOME` / `~/.config`.
-fn config_dir() -> PathBuf {
-    let home = || std::env::home_dir().unwrap_or_default();
-    if cfg!(target_os = "macos") {
-        home().join("Library/Application Support")
-    } else if cfg!(windows) {
-        var("APPDATA").map(PathBuf::from).unwrap_or_else(|_| home())
-    } else {
-        var("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| home().join(".config"))
-    }
-}
-
 pub fn load() -> Result<Config> {
     let path = var("ACUS_CONFIG")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| config_dir().join("acus/config.toml"));
+        .unwrap_or_else(|_| capsa_core::paths::config_dir("acus").join("config.toml"));
     let mut c: Config = match std::fs::read_to_string(&path) {
         Ok(s) => {
             toml::from_str(&s).with_context(|| format!("invalid config {}", path.display()))?

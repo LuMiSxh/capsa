@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-use census::usage::{UsageOpts, report};
+use census::usage::{Report, UsageOpts, compare, parse_date, report};
 use std::fs;
 
 const CLAUDE: &str = r#"{"type":"user","cwd":"/x/Proj","message":{"role":"user","content":"do it"}}
@@ -174,4 +174,253 @@ fn escaped_codex_acus_call_is_counted() {
     });
     let s = r.categories["acus:find"];
     assert_eq!((s.calls, s.result_chars), ([0, 1], [0, 5]));
+}
+
+/// One assistant record of a request sent at `ts` with the given usage JSON.
+fn request(ts: &str, id: &str, model: &str, usage: &str) -> String {
+    format!(
+        r#"{{"type":"assistant","timestamp":"{ts}","message":{{"id":"{id}","model":"{model}","usage":{usage},"content":[]}}}}"#
+    )
+}
+
+/// Usage JSON of a request: input, cache read, 5-minute and 1-hour cache writes.
+fn usage(input: u64, read: u64, w5: u64, w1h: u64) -> String {
+    format!(
+        r#"{{"input_tokens":{input},"cache_read_input_tokens":{read},"cache_creation":{{"ephemeral_5m_input_tokens":{w5},"ephemeral_1h_input_tokens":{w1h}}},"output_tokens":1}}"#
+    )
+}
+
+/// An assistant record that starts an Agent call of the subagent type `kind`.
+fn spawn(ts: &str, id: &str, kind: &str) -> String {
+    format!(
+        r#"{{"type":"assistant","timestamp":"{ts}","message":{{"id":"msg-{id}","model":"claude-opus-5-5","content":[{{"type":"tool_use","id":"{id}","name":"Agent","input":{{"subagent_type":"{kind}"}}}}]}}}}"#
+    )
+}
+
+/// The user record that answers the Agent call `id`.
+fn answer(ts: &str, id: &str) -> String {
+    format!(
+        r#"{{"type":"user","timestamp":"{ts}","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"{id}","content":"done"}}]}}}}"#
+    )
+}
+
+/// Writes `lines` to `dir/rel`, creating the directories.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that cannot be written must fail the test"
+)]
+fn write(dir: &std::path::Path, rel: &str, lines: &[String]) {
+    let path = dir.join(rel);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, lines.join("\n") + "\n").unwrap();
+}
+
+fn claude_only(dir: &std::path::Path) -> Report {
+    report(&UsageOpts {
+        claude_root: Some(dir.into()),
+        codex_root: Some(dir.join("none")),
+        ..Default::default()
+    })
+}
+
+#[test]
+fn prices_per_request_tier_and_cache_ttl() {
+    let d = tempfile::tempdir().unwrap();
+    let t = "2026-10-14T10:00:00.000Z";
+    write(
+        d.path(),
+        "-x-Proj/p.jsonl",
+        &[
+            // Opus 5.5 per million: $4 input, $0.20 read, $5 (5m) and $8 (1h) writes, $20 output.
+            request(
+                t,
+                "o",
+                "claude-opus-5-5",
+                r#"{"input_tokens":1000,"cache_read_input_tokens":2000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":500},"output_tokens":100}"#,
+            ),
+            // Haiku 5.5 short tier: $0.10 input, $0.50 output.
+            request(
+                t,
+                "h1",
+                "claude-haiku-5-5",
+                r#"{"input_tokens":1000,"output_tokens":1000}"#,
+            ),
+            // Haiku 5.5 above 100k context: $0.50 input, $0.05 read, $1.00 for the 1h writes.
+            request(
+                t,
+                "h2",
+                "claude-haiku-5-5",
+                r#"{"input_tokens":50000,"cache_read_input_tokens":60000,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":1000},"output_tokens":0}"#,
+            ),
+            request(t, "g", "gpt-x", r#"{"input_tokens":1,"output_tokens":1}"#),
+        ],
+    );
+    let r = claude_only(d.path());
+    // 0.0154 opus + 0.0006 short haiku + 0.029 long haiku.
+    assert!((r.cost.usd - 0.045).abs() < 1e-9, "{}", r.cost.usd);
+    assert_eq!(r.cost.unpriced, 1);
+    let haiku = r
+        .model_costs
+        .iter()
+        .find(|(m, _)| m == "claude-haiku-5-5")
+        .unwrap()
+        .1;
+    assert!((haiku.usd - 0.0296).abs() < 1e-9, "{}", haiku.usd);
+}
+
+#[test]
+fn handbacks_follow_worker_spawns_within_thirty_minutes() {
+    let d = tempfile::tempdir().unwrap();
+    let at = |h: u32, m: u32| format!("2026-10-14T{h:02}:{m:02}:00.000Z");
+    write(
+        d.path(),
+        "-x-Proj/s1.jsonl",
+        &[
+            spawn(&at(10, 0), "w1", "worker"),
+            answer(&at(10, 10), "w1"),
+            // 25 minutes after the worker finished: a hand-back.
+            spawn(&at(10, 35), "h1", "senior-worker"),
+            // No worker finished within 30 minutes before it.
+            spawn(&at(12, 0), "h2", "senior-worker"),
+            // Never answered: the worker counts from its start.
+            spawn(&at(13, 0), "w2", "worker"),
+            // 29 minutes after that start: a hand-back.
+            spawn(&at(13, 29), "h3", "senior-worker"),
+            spawn(&at(13, 45), "h4", "senior-worker"),
+            spawn(&at(14, 0), "w3", "worker"),
+            answer(&at(14, 5), "w3"),
+        ],
+    );
+    // A senior-worker in another session has no worker to follow.
+    write(
+        d.path(),
+        "-x-Proj/s2.jsonl",
+        &[spawn(&at(10, 40), "h5", "senior-worker")],
+    );
+    let r = claude_only(d.path());
+    assert_eq!(r.handbacks.len(), 1);
+    let w = &r.handbacks[0];
+    assert_eq!(
+        (w.week.as_str(), w.workers, w.seniors, w.handbacks),
+        ("2026-W42", 3, 5, 2)
+    );
+    assert!((w.rate.unwrap() - 2.0 / 3.0).abs() < 1e-9);
+}
+
+#[test]
+fn expired_cache_and_busts_per_role() {
+    let d = tempfile::tempdir().unwrap();
+    let at = |h: u32, m: u32| format!("2026-10-14T{h:02}:{m:02}:00.000Z");
+    let opus = "claude-opus-5-5";
+    write(
+        d.path(),
+        "-x-Proj/s1.jsonl",
+        &[
+            request(&at(10, 0), "m1", opus, &usage(0, 0, 0, 1000)),
+            // 30 minutes later, inside the 1 h main-thread TTL: no event.
+            request(&at(10, 30), "m2", opus, &usage(10, 9000, 0, 0)),
+            // 90 minutes later: the cache was rewritten after it expired.
+            request(&at(12, 0), "m3", opus, &usage(10, 0, 0, 1000)),
+            // 10 minutes later, but the writes are most of the context: a bust.
+            request(&at(12, 10), "m4", opus, &usage(10, 500, 0, 9000)),
+        ],
+    );
+    let haiku = "claude-haiku-5-5";
+    write(
+        d.path(),
+        "-x-Proj/s1/subagents/agent-a.jsonl",
+        &[
+            request(&at(10, 0), "a1", haiku, &usage(10, 0, 1000, 0)),
+            // 6 minutes later is past the 5 min subagent TTL: an expired rewrite.
+            request(&at(10, 6), "a2", haiku, &usage(10, 0, 1000, 0)),
+            // 2 minutes later, with the writes most of the context: a bust.
+            request(&at(10, 8), "a3", haiku, &usage(10, 0, 900, 0)),
+        ],
+    );
+    write(
+        d.path(),
+        "-x-Proj/s1/subagents/agent-a.meta.json",
+        &[r#"{"agentType":"worker"}"#.to_owned()],
+    );
+    let r = claude_only(d.path());
+    let role = |name: &str| r.agents.iter().find(|a| a.role == name).unwrap().cache;
+    let main = role("main");
+    assert_eq!((main.expired, main.busts), (1, 1));
+    // The 1 h write of m3 at $8 per million.
+    assert!(
+        (main.expired_usd - 0.008).abs() < 1e-9,
+        "{}",
+        main.expired_usd
+    );
+    let worker = role("worker");
+    assert_eq!((worker.expired, worker.busts), (1, 1));
+    assert_eq!((r.cache.expired, r.cache.busts), (2, 2));
+}
+
+#[test]
+fn compactions_record_the_context_before_them() {
+    let d = tempfile::tempdir().unwrap();
+    let at = |h: u32| format!("2026-10-14T{h:02}:00:00.000Z");
+    let boundary = |ts: &str, meta: &str| {
+        format!(r#"{{"type":"system","subtype":"compact_boundary","timestamp":"{ts}"{meta}}}"#)
+    };
+    write(
+        d.path(),
+        "-x-Proj/s3.jsonl",
+        &[
+            request(&at(10), "c1", "claude-opus-5-5", &usage(5000, 1000, 0, 0)),
+            // Without compactMetadata, the context is the last request's: 6000.
+            boundary(&at(11), ""),
+            boundary(
+                &at(12),
+                r#","compactMetadata":{"trigger":"auto","preTokens":123456}"#,
+            ),
+        ],
+    );
+    let r = claude_only(d.path());
+    let s = &r.sessions[0];
+    assert_eq!(s.compactions, 2);
+    assert_eq!(s.pre_compact, [6000, 123_456]);
+    assert_eq!(r.compactions, 2);
+}
+
+#[test]
+fn compare_splits_requests_at_the_date() {
+    let d = tempfile::tempdir().unwrap();
+    write(
+        d.path(),
+        "-x-Proj/s4.jsonl",
+        &[
+            request(
+                "2026-10-13T23:59:59.999Z",
+                "b",
+                "claude-opus-5-5",
+                &usage(100, 0, 0, 0),
+            ),
+            request(
+                "2026-10-14T00:00:00.000Z",
+                "a1",
+                "claude-opus-5-5",
+                &usage(300, 0, 0, 0),
+            ),
+            request(
+                "2026-10-15T08:00:00.000Z",
+                "a2",
+                "claude-opus-5-5",
+                &usage(500, 0, 0, 0),
+            ),
+        ],
+    );
+    let opts = UsageOpts {
+        claude_root: Some(d.path().into()),
+        codex_root: Some(d.path().join("none")),
+        ..Default::default()
+    };
+    let cut = parse_date("2026-10-14").unwrap();
+    let (before, after) = compare(&opts, cut);
+    assert_eq!((before.total.requests, before.total.input), (1, 100));
+    assert_eq!((after.total.requests, after.total.input), (2, 800));
+    assert_eq!((before.sessions.len(), after.sessions.len()), (1, 1));
+    assert!(parse_date("2026-13-01").is_none());
+    assert!(parse_date("2026-10-14T00:00:00Z").is_none());
 }

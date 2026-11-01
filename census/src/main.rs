@@ -3,6 +3,7 @@
 
 mod cmd_usage;
 mod out;
+mod usage_views;
 
 use anyhow::Result;
 use capsa_core::exit::{Outcome, finish, report, reset_sigpipe};

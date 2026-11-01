@@ -268,6 +268,7 @@ dependencies = [
  "clap",
  "flate2",
  "libc",
+ "serde",
  "serde_json",
  "sha2",
  "tar",
@@ -304,6 +305,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror",
 ]
 
 [[package]]

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Parses Codex rollout JSONL transcripts into per-file token and tool-call stats.
 
-use super::{Call, FileStats, Tokens, is_explore_cmd, text_chars};
+use super::time::parse_ts;
+use super::{Call, Compaction, FileStats, Request, Tokens, is_explore_cmd, text_chars};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::collections::HashMap;
@@ -10,6 +11,7 @@ use std::collections::HashMap;
 struct Rec<'a> {
     #[serde(rename = "type")]
     kind: &'a str,
+    timestamp: Option<&'a str>,
     #[serde(borrow)]
     payload: Option<Payload<'a>>,
 }
@@ -61,8 +63,10 @@ pub(crate) fn parse(text: &str) -> FileStats {
         let Ok(r) = serde_json::from_str::<Rec>(line) else {
             continue;
         };
+        let ts = r.timestamp.map_or(0, parse_ts);
         if r.kind == "compacted" {
-            st.compactions += 1;
+            let pre_tokens = st.requests.last().map_or(0, |q| q.tokens.context());
+            st.compactions.push(Compaction { ts, pre_tokens });
         }
         let Some(p) = r.payload else { continue };
         match (r.kind, p.kind) {
@@ -99,7 +103,12 @@ pub(crate) fn parse(text: &str) -> FileStats {
                     output: u.output_tokens,
                     requests: 1,
                 };
-                st.requests.push((None, model.clone(), t));
+                st.requests.push(Request {
+                    id: None,
+                    model: model.clone(),
+                    tokens: t,
+                    ts,
+                });
             }
             ("response_item", Some("function_call" | "custom_tool_call" | "local_shell_call")) => {
                 let name = p.name.unwrap_or_else(|| "shell".into());
