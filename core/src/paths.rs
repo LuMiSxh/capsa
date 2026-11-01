@@ -78,9 +78,14 @@ fn expand_with_home(path: &str, home: Option<&Path>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{config_dir_with, expand_with_home, state_dir_with};
+    use super::expand_with_home;
+    #[cfg(unix)]
+    use super::{config_dir_with, state_dir_with};
+    #[cfg(unix)]
     use std::ffi::OsString;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
+    #[cfg(unix)]
+    use std::path::PathBuf;
 
     const HOME: &str = "/home/user";
 

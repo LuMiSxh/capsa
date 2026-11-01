@@ -31,15 +31,29 @@ fn setup(home: &Scratch, args: &[&str]) -> Output {
     reason = "a census binary that cannot run must fail the test"
 )]
 fn setup_with(exe: &Path, home: &Scratch, args: &[&str]) -> Output {
-    Command::new(exe)
+    let mut command = Command::new(exe);
+    command
         .args(["self", "setup"])
         .args(args)
         .env("HOME", home.path())
         .env("CLAUDE_CONFIG_DIR", home.path().join("claude"))
         .env("XDG_STATE_HOME", home.path().join("state"))
-        .env_remove("CAPSA_HUMAN")
-        .output()
-        .expect("run census self setup")
+        .env_remove("CAPSA_HUMAN");
+    output_retrying_busy(&mut command).expect("run census self setup")
+}
+
+/// Runs `cmd` to completion. Linux reports a just-copied binary as busy (ETXTBSY) while another
+/// test thread's fork still holds the copy's write descriptor, so the spawn is retried briefly.
+fn output_retrying_busy(cmd: &mut Command) -> std::io::Result<Output> {
+    for _ in 0..50 {
+        match cmd.output() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            other => return other,
+        }
+    }
+    cmd.output()
 }
 
 fn settings_path(home: &Scratch) -> PathBuf {

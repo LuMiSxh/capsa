@@ -2,7 +2,7 @@
 
 use tokio::process::Command;
 
-use super::harness::temp_path;
+use super::harness::{output_retrying_busy, temp_path};
 
 #[tokio::test]
 async fn doctor_prints_a_report_and_exits_zero() {
@@ -84,11 +84,9 @@ async fn uninstall_removes_a_copy_of_the_binary() {
     std::fs::create_dir_all(&dir).unwrap();
     let copy = dir.join("pons");
     std::fs::copy(env!("CARGO_BIN_EXE_pons"), &copy).unwrap();
-    let out = Command::new(&copy)
-        .args(["self", "uninstall"])
-        .output()
-        .await
-        .unwrap();
+    let mut command = Command::new(&copy);
+    command.args(["self", "uninstall"]);
+    let out = output_retrying_busy(&mut command).await.unwrap();
     let gone = !copy.exists();
     let _ = std::fs::remove_dir_all(&dir);
     assert!(out.status.success());

@@ -72,6 +72,21 @@ pub fn decode(out: std::process::Output) -> (i32, String, String) {
     )
 }
 
+/// Runs `cmd` to completion. Linux reports a just-copied binary as busy (ETXTBSY) while another
+/// test thread's fork still holds the copy's write descriptor, so the spawn is retried briefly.
+#[cfg(feature = "cmd-update")]
+pub fn output_retrying_busy(cmd: &mut Command) -> std::io::Result<std::process::Output> {
+    for _ in 0..50 {
+        match cmd.output() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            other => return other,
+        }
+    }
+    cmd.output()
+}
+
 /// `git ARGS` in `dir` with the test identity and no signing; panics with stderr when it fails.
 pub fn git(dir: &std::path::Path, args: &[&str]) -> String {
     let out = Command::new("git")

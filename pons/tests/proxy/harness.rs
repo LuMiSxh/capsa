@@ -121,6 +121,22 @@ pub(crate) fn temp_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("pons-it-{}-{name}", std::process::id()))
 }
 
+/// Runs `cmd` to completion. Linux reports a just-copied binary as busy (ETXTBSY) while another
+/// test's fork still holds the copy's write descriptor, so the spawn is retried briefly.
+pub(crate) async fn output_retrying_busy(
+    cmd: &mut Command,
+) -> std::io::Result<std::process::Output> {
+    for _ in 0..50 {
+        match cmd.output().await {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                sleep(Duration::from_millis(20)).await;
+            }
+            other => return other,
+        }
+    }
+    cmd.output().await
+}
+
 pub(crate) fn has_flat_child_update(m: &Value) -> bool {
     m["params"]["update"]["_meta"]["claudeCode"]["parentToolUseId"].is_string()
 }
