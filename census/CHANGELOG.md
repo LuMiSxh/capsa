@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.2]
+
+### Changed
+
+- The hook's forecasts are said later and less often: the 5h "full before reset" forecast needs at
+  least 50 % of the window used and 30 min of it passed, and the weekly "runs out before reset"
+  forecast needs at least 50 % used and two weeks of history mapped to weekly windows. The 75 % and
+  90 % levels and the weekly reset note are unchanged.
+
+### Added
+
+- `census hook` adds a status line to the context on `UserPromptSubmit` for the first prompt of a
+  session and for the first prompt after more than an hour without one (the main agent's cache
+  TTL), even when no level is crossed: the context against the compaction threshold, and the 5h and
+  weekly shares with their resets, each only when known. `PostToolUse` never adds it.
+
+### Fixed
+
+- `claude-sonnet-5-5` cache reads are priced at $0.10 per million tokens, not $0.20.
+- Haiku 5.5 requests whose prompt is over 100,000 tokens (input, cache read and cache writes
+  together) are priced at its long-prompt tier, $0.50 input and $2.50 output per million tokens,
+  with cache reads and writes scaled alike. Shorter prompts keep $0.10 and $0.50.
+
 ## [0.1.1]
 
 ### Fixed

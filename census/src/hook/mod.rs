@@ -42,13 +42,21 @@ fn announce(
     limits: Option<&LimitStatus>,
     compacted: Option<(u64, u64)>,
     now: u64,
+    prompt: bool,
 ) -> Result<Vec<String>, HookError> {
     let Some(_guard) = state::lock(file)? else {
         return Ok(Vec::new());
     };
     let mut shown = state::load(file)?;
     let before = shown.clone();
-    let messages = levels::decide(context, limits, compacted, now, &mut shown);
+    let mut messages = Vec::new();
+    if prompt {
+        let due = levels::prompt_due(&mut shown, now);
+        if due {
+            messages.extend(levels::status_message(context, limits));
+        }
+    }
+    messages.extend(levels::decide(context, limits, compacted, now, &mut shown));
     if shown != before {
         state::store(file, &shown)?;
     }
@@ -80,7 +88,14 @@ pub fn run(
     let context = transcript.and_then(context::of_transcript);
     let compacted = transcript.and_then(context::last_compaction);
     let limits = limits();
-    let messages = announce(&file, context.as_ref(), limits.as_ref(), compacted, now)?;
+    let messages = announce(
+        &file,
+        context.as_ref(),
+        limits.as_ref(),
+        compacted,
+        now,
+        event == "UserPromptSubmit",
+    )?;
     if messages.is_empty() {
         return Ok(None);
     }
@@ -112,7 +127,7 @@ mod tests {
                     .map(|_| {
                         s.spawn(|| {
                             barrier.wait();
-                            announce(&file, Some(&context), None, None, 1)
+                            announce(&file, Some(&context), None, None, 1, false)
                                 .unwrap()
                                 .len()
                         })

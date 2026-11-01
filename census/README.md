@@ -117,11 +117,13 @@ about. Input with `agent_id` (a subagent) or another event gets nothing. Output:
 |---|---|
 | Context 60 % / 80 % of the compaction threshold | Once per session; 80 % adds the handoff suggestion. Both show again after the context falls below 50 %. |
 | 5h or weekly limit 75 % / 90 % | Once per window |
-| 5h forecast to fill before its reset; weekly forecast to run out before its reset | Once per window |
+| 5h forecast to fill before its reset, once the window is 50 % used and 30 min old; weekly forecast to run out before its reset, once it is 50 % used and two weeks of history are mapped | Once per window |
 | Weekly reset within 12 h with at least 30 % left | Once per window |
+| Status line (context, 5h and weekly share with reset) on the first prompt of a session or after more than 1 h without one | Each such prompt; never with `PostToolUse` |
 
 State is `$XDG_STATE_HOME/census/hints/<session id>` (or `~/.local/state/census/...`), one level per
-line, keyed with the window's reset time. Errors go to one line in `hook.log` in the same directory
+line, keyed with the window's reset time; the time of the last prompt is a line too.
+Errors go to one line in `hook.log` in the same directory
 (moved to `hook.log.1` at 256 KB). Limits are computed on a helper thread and skipped when they take
 over 150 ms; a busy ledger lock skips the ledger update.
 
