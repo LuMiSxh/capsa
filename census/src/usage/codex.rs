@@ -108,6 +108,7 @@ pub(crate) fn parse(text: &str) -> FileStats {
                     model: model.clone(),
                     tokens: t,
                     ts,
+                    after_compact: false,
                 });
             }
             ("response_item", Some("function_call" | "custom_tool_call" | "local_shell_call")) => {

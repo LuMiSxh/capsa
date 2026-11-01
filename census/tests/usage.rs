@@ -320,7 +320,7 @@ fn expired_cache_and_busts_per_role() {
             // 30 minutes later, inside the 1 h main-thread TTL: no event.
             request(&at(10, 30), "m2", opus, &usage(10, 9000, 0, 0)),
             // 90 minutes later: the cache was rewritten after it expired.
-            request(&at(12, 0), "m3", opus, &usage(10, 0, 0, 1000)),
+            request(&at(12, 0), "m3", opus, &usage(10, 9000, 0, 1000)),
             // 10 minutes later, but the writes are most of the context: a bust.
             request(&at(12, 10), "m4", opus, &usage(10, 500, 0, 9000)),
         ],
@@ -382,6 +382,89 @@ fn compactions_record_the_context_before_them() {
     assert_eq!(s.compactions, 2);
     assert_eq!(s.pre_compact, [6000, 123_456]);
     assert_eq!(r.compactions, 2);
+}
+
+#[test]
+fn a_context_drop_is_a_compaction_not_a_bust() {
+    let d = tempfile::tempdir().unwrap();
+    let at = |h: u32, m: u32| format!("2026-10-14T{h:02}:{m:02}:00.000Z");
+    let opus = "claude-opus-5-5";
+    write(
+        d.path(),
+        "-x-Proj/s4.jsonl",
+        &[
+            request(&at(10, 0), "k1", opus, &usage(10, 0, 0, 300_000)),
+            // 2 minutes later the context is down to 30k: the compaction rewrote most of it.
+            request(&at(10, 2), "k2", opus, &usage(10, 500, 0, 30_000)),
+        ],
+    );
+    let r = claude_only(d.path());
+    let main = r.agents.iter().find(|a| a.role == "main").unwrap().cache;
+    assert_eq!((main.compactions, main.busts, main.expired), (1, 0, 0));
+}
+
+#[test]
+fn a_request_after_a_compact_boundary_is_a_compaction() {
+    let d = tempfile::tempdir().unwrap();
+    let at = |h: u32, m: u32| format!("2026-10-14T{h:02}:{m:02}:00.000Z");
+    let opus = "claude-opus-5-5";
+    write(
+        d.path(),
+        "-x-Proj/s5.jsonl",
+        &[
+            request(&at(10, 0), "b1", opus, &usage(10, 9000, 0, 0)),
+            format!(
+                r#"{{"type":"system","subtype":"compact_boundary","timestamp":"{}"}}"#,
+                at(10, 1)
+            ),
+            // The context is not halved, but a compaction came before this request.
+            request(&at(10, 2), "b2", opus, &usage(10, 0, 0, 9500)),
+        ],
+    );
+    let r = claude_only(d.path());
+    let main = r.agents.iter().find(|a| a.role == "main").unwrap().cache;
+    assert_eq!((main.compactions, main.busts), (1, 0));
+}
+
+#[test]
+fn synthetic_messages_are_not_requests() {
+    let d = tempfile::tempdir().unwrap();
+    let at = |h: u32, m: u32| format!("2026-10-14T{h:02}:{m:02}:00.000Z");
+    let opus = "claude-opus-5-5";
+    write(
+        d.path(),
+        "-x-Proj/s6.jsonl",
+        &[
+            request(&at(10, 0), "y1", opus, &usage(10, 0, 0, 9000)),
+            // An abort 30 minutes after the first request, and 70 minutes before the second.
+            r#"{"type":"assistant","timestamp":"2026-10-14T10:30:00.000Z","message":{"id":"sy","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0},"content":[]}}"#.to_owned(),
+            request(&at(11, 10), "y2", opus, &usage(10, 0, 0, 9000)),
+        ],
+    );
+    let r = claude_only(d.path());
+    let main = r.agents.iter().find(|a| a.role == "main").unwrap().cache;
+    // The gap to the last real request is over the TTL: an expired rewrite, not a bust.
+    assert_eq!((main.expired, main.busts), (1, 0));
+    assert_eq!(r.total.requests, 2);
+}
+
+#[test]
+fn a_rewrite_of_the_same_context_within_the_ttl_is_a_bust() {
+    let d = tempfile::tempdir().unwrap();
+    let at = |h: u32, m: u32| format!("2026-10-14T{h:02}:{m:02}:00.000Z");
+    let opus = "claude-opus-5-5";
+    write(
+        d.path(),
+        "-x-Proj/s7.jsonl",
+        &[
+            request(&at(10, 0), "r1", opus, &usage(10, 9000, 0, 0)),
+            // 10 minutes later the context is the same size, and it was written, not read.
+            request(&at(10, 10), "r2", opus, &usage(10, 0, 0, 9000)),
+        ],
+    );
+    let r = claude_only(d.path());
+    let main = r.agents.iter().find(|a| a.role == "main").unwrap().cache;
+    assert_eq!((main.busts, main.compactions, main.expired), (1, 0, 0));
 }
 
 #[test]

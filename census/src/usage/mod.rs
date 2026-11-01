@@ -182,13 +182,16 @@ pub struct Report {
 
 /// Cache rewrites of a role, or of all requests. `expired` counts requests that wrote cache after
 /// a gap to the previous request of their thread above the TTL; `busts` counts requests within
-/// the TTL whose cache writes were over half their context.
+/// the TTL whose cache writes were over half their context; `compactions` counts the requests after
+/// a compaction (context under half of the previous request's, or a compact boundary before them)
+/// that wrote cache. A compaction is neither expired nor a bust.
 #[derive(Debug, Default, Clone, Copy, Serialize)]
 pub struct CacheStat {
     pub expired: u64,
     /// List price of the cache writes of the expired requests.
     pub expired_usd: f64,
     pub busts: u64,
+    pub compactions: u64,
 }
 
 impl CacheStat {
@@ -196,6 +199,7 @@ impl CacheStat {
         self.expired += o.expired;
         self.expired_usd += o.expired_usd;
         self.busts += o.busts;
+        self.compactions += o.compactions;
     }
 }
 
@@ -234,6 +238,8 @@ pub(crate) struct Request {
     pub model: String,
     pub tokens: Tokens,
     pub ts: u64,
+    /// A compact boundary came before this request in its transcript.
+    pub after_compact: bool,
 }
 
 /// An Agent call that starts a subagent of the type `role`.

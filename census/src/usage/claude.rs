@@ -84,6 +84,7 @@ struct AgentInput<'a> {
 pub(crate) fn parse(text: &str) -> FileStats {
     let mut st = FileStats::default();
     let mut tool_of: HashMap<String, usize> = HashMap::new();
+    let mut after_compact = false;
     for line in text.lines() {
         let Ok(r) = serde_json::from_str::<Rec>(line) else {
             continue;
@@ -101,12 +102,15 @@ pub(crate) fn parse(text: &str) -> FileStats {
                 .and_then(|c| c.pre_tokens)
                 .unwrap_or_else(|| st.requests.last().map_or(0, |q| q.tokens.context()));
             st.compactions.push(Compaction { ts, pre_tokens });
+            after_compact = true;
         }
         let Some(m) = r.message else { continue };
         let content = m.content.map(RawValue::get).unwrap_or("");
         match r.kind {
             Some("assistant") => {
-                if let Some(u) = m.usage {
+                // `<synthetic>` messages are aborts and errors, not API requests.
+                let synthetic = m.model.as_deref() == Some("<synthetic>");
+                if let Some(u) = m.usage.filter(|_| !synthetic) {
                     let (w5, w1h) = match u.cache_creation {
                         Some(c) => (c.ephemeral_5m_input_tokens, c.ephemeral_1h_input_tokens),
                         None => (u.cache_creation_input_tokens, 0),
@@ -124,6 +128,7 @@ pub(crate) fn parse(text: &str) -> FileStats {
                         model: m.model.unwrap_or_default(),
                         tokens: t,
                         ts,
+                        after_compact: std::mem::take(&mut after_compact),
                     });
                 }
                 for b in blocks(content).into_iter().filter(|b| b.kind == "tool_use") {

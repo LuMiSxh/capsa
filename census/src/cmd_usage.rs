@@ -40,7 +40,7 @@ pub struct Args {
     #[arg(long)]
     guard: bool,
     /// One row per role (main, worker, worker-lite, ...): spawns, models, requests, preamble size,
-    /// cost, cache hit rate, and cache rewrites (expired-cache writes and unexpected busts).
+    /// cost, cache hit rate, and cache rewrites (expired-cache writes, unexpected busts and compactions).
     #[arg(long)]
     agents: bool,
     /// Spawns per ISO week and hand-backs: a senior-worker spawn within 30 min after a worker
@@ -304,12 +304,12 @@ fn agents(rows: &[AgentStat], out: &Out) -> Result<Outcome> {
     println!(
         "{}",
         out.header(
-            "role spawns models median-reqs median-first-ctx weighted share median-weighted/spawn cost cache-hit expired expired-cost busts"
+            "role spawns models median-reqs median-first-ctx weighted share median-weighted/spawn cost cache-hit expired expired-cost busts compactions"
         )
     );
     for a in rows {
         println!(
-            "  {} {} {} {:.0} {} {} {:.1}% {} {} {} {} {} {}",
+            "  {} {} {} {:.0} {} {} {:.1}% {} {} {} {} {} {} {}",
             a.role,
             a.spawns,
             a.models.join(","),
@@ -322,7 +322,8 @@ fn agents(rows: &[AgentStat], out: &Out) -> Result<Outcome> {
             rate(a.tokens.cache_hit_rate()),
             a.cache.expired,
             usd(a.cache.expired_usd),
-            a.cache.busts
+            a.cache.busts,
+            a.cache.compactions
         );
     }
     Ok(Outcome::Found)

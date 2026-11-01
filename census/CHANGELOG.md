@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.3]
+
+### Fixed
+
+- `census usage --agents` no longer counts the first request after a compaction as an unexpected
+  bust. A request whose context is under half of the previous request's in its transcript, or that
+  follows a compact boundary, is a compaction: it has its own `compactions` column (and
+  `cache.compactions` in JSON), and its cache writes are counted neither as expired nor as busts.
+- `<synthetic>` messages (aborts and errors, no API call) are no longer requests. They no longer
+  count in the request totals, and they no longer restart the gap of the next request, which could
+  turn an expired rewrite into a bust.
+
 ## [0.1.2]
 
 ### Changed

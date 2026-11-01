@@ -40,7 +40,10 @@ A thread is one transcript file: the main session or one subagent. Cache hit rat
 `cache_read / (input + cache_read + cache writes)`. A request that writes cache after a gap above the
 TTL to the previous request of its thread (1 hour for the main thread, 5 minutes for a subagent) is an
 expired-cache rewrite. A request within the TTL whose cache writes are over half its context is an
-unexpected bust; busts right after a compaction are included.
+unexpected bust. The first request after a compaction (its context under half of the previous
+request's, or a compact boundary before it) that writes cache is a compaction instead, counted
+apart, and its writes are neither expired nor bust. `<synthetic>` messages (aborts and errors) are
+not requests.
 
 Hand-backs are a heuristic: a senior-worker spawn that starts within 30 minutes after a worker spawn
 of the same session ended (or started, if its end is unknown) counts as one. The rate is hand-backs

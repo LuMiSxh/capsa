@@ -88,6 +88,7 @@ impl<'a> Acc<'a> {
         };
         let mut spawn = Spawn::default();
         let mut prev = None;
+        let mut prev_context = 0;
         for q in &f.requests {
             if q.id.as_deref().is_some_and(|id| !self.seen.insert(id)) {
                 continue;
@@ -96,6 +97,10 @@ impl<'a> Acc<'a> {
                 .filter(|&p| p > 0 && q.ts > 0)
                 .map(|p| q.ts.saturating_sub(p));
             prev = Some(q.ts);
+            // A context under half of the previous request's is a compaction, as is a request after
+            // a compact boundary; its cache writes are neither expired nor a bust.
+            let compacted = q.after_compact || 2 * q.tokens.context() < prev_context;
+            prev_context = q.tokens.context();
             if !side.keeps(q.ts) {
                 continue;
             }
@@ -103,6 +108,7 @@ impl<'a> Acc<'a> {
             let mut cost = Cost::default();
             cost.add_request(&q.model, t);
             match gap {
+                _ if compacted && t.cache_writes() > 0 => spawn.cache.compactions += 1,
                 Some(g) if g > ttl && t.cache_writes() > 0 => {
                     spawn.cache.expired += 1;
                     spawn.cache.expired_usd += write_cost(&q.model, t).unwrap_or(0.0);
