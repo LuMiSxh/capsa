@@ -3,6 +3,7 @@
 
 pub mod context;
 pub mod ledger;
+pub mod limits;
 pub mod session;
 pub mod statusline;
 mod transcript;

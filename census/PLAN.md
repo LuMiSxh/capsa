@@ -144,8 +144,9 @@ hidden:
   output.
 - Emits `additionalContext` only when a level is crossed, once per level per
   session (state in `~/.local/state/census/hints/<session>`):
-  - Context at 60 % and 80 % of the compaction threshold:
-    `Context 245k of 400k (compaction at 400k). At the next task boundary, suggest a handoff to Luca (session-handoff skill).`
+  - Context at 60 % of the compaction threshold, information only:
+    `Context 245k of 400k (compaction at 400k).`
+  - Context at 80 %: `Context 325k of 400k (compaction at 400k). At the next task boundary, suggest a handoff to Luca (session-handoff skill).`
   - 5h or weekly limit at 75 % and 90 %, and when the forecast says the
     window fills before it resets:
     `5h limit 82% (est.), full around 17:20, reset 18:40. Avoid large parallel agent batches; tell Luca.`

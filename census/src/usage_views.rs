@@ -5,7 +5,46 @@ use crate::out::Out;
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use census::limits::{Kind, Pattern, Table};
 use census::usage::{AgentStat, Cost, HandbackWeek, Report};
+
+/// Prints the buckets of `census usage --by`: expected cost, share and hours behind each.
+pub(crate) fn by_table(t: &Table, out: &Out) -> Result<()> {
+    if out.format == Format::Json {
+        println!("{}", serde_json::to_string(t)?);
+        return Ok(());
+    }
+    if !t.has_data() {
+        println!("no usage data yet: no transcript to read");
+        return Ok(());
+    }
+    let kind = match t.kind {
+        Kind::Weekday => "weekday",
+        Kind::Hour => "hour of the day",
+        Kind::Cycle => "hour since the weekly reset",
+    };
+    println!("{}", out.header(&format!("expected cost per {kind}")));
+    if t.kind == Kind::Cycle && t.basis.pattern != Pattern::SinceReset {
+        println!("needs two weeks of weekly snapshots to map the reset; zero until then");
+    }
+    println!("{:<10}{:>10}{:>9}{:>8}", "bucket", "usd", "share", "hours");
+    for b in &t.rows {
+        println!(
+            "{:<10}{:>10}{:>9}{:>8}",
+            b.label,
+            usd(b.usd),
+            format!("{:.1} %", 100.0 * b.share),
+            b.hours
+        );
+    }
+    let basis = format!(
+        "{:.1} weeks of UTC history; pattern {}",
+        t.basis.weeks,
+        t.basis.pattern.label()
+    );
+    println!("{}", out.field("basis", &basis));
+    Ok(())
+}
 
 /// 1234567 → "1.2M".
 pub(crate) fn k(n: f64) -> String {

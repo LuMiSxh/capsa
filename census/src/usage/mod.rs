@@ -6,7 +6,7 @@ mod claude;
 mod codex;
 mod handback;
 mod merge;
-mod prices;
+pub(crate) mod prices;
 mod read;
 mod time;
 mod tools;

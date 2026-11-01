@@ -253,3 +253,22 @@ fn context_and_session_name_an_unknown_session() {
     assert_eq!(out.status.code(), Some(2));
     assert!(text(&out.stderr).contains("no transcript for session nope"));
 }
+
+#[test]
+fn limits_and_usage_by_without_data_exit_one() {
+    let home = Scratch::new("limits-empty");
+    let out = census(home.path(), home.path(), &["limits"], "", &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out.stdout).contains("no usage data yet"));
+    let out = census(home.path(), home.path(), &["--json", "limits"], "", &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out.stdout).contains("\"data\":false"));
+    let out = census(
+        home.path(),
+        home.path(),
+        &["usage", "--by", "cycle"],
+        "",
+        &[],
+    );
+    assert_eq!(out.status.code(), Some(1));
+}

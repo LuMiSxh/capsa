@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `census usage`: token, cost and tool-call statistics from agent transcripts.
 
+use crate::now_secs;
 use crate::out::Out;
-use crate::usage_views::{compare_out, handbacks, k, money, pre_list, print_cost_cache, rate, usd};
+use crate::usage_views::{
+    by_table, compare_out, handbacks, k, money, pre_list, print_cost_cache, rate, usd,
+};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use census::limits::{self, Kind};
 use census::usage::{
     AgentStat, CategoryStat, Report, UsageOpts, WEIGHTS, compare, group, parse_date, report,
 };
@@ -46,11 +50,34 @@ pub struct Args {
     /// Report before and after this UTC date (YYYY-MM-DD), split by request time, with the change.
     #[arg(long, value_name = "YYYY-MM-DD")]
     compare: Option<String>,
+    /// Expected cost per bucket of the usage pattern: `weekday`, `hour` of the day, or `cycle`,
+    /// the hours since the weekly reset.
+    #[arg(long, value_name = "KIND", value_parser = ["weekday", "hour", "cycle"])]
+    by: Option<String>,
+}
+
+/// `census usage --by`: the expected cost of each bucket of the usage pattern.
+fn by(kind: &str, out: &Out) -> Result<Outcome> {
+    let kind = match kind {
+        "weekday" => Kind::Weekday,
+        "hour" => Kind::Hour,
+        _ => Kind::Cycle,
+    };
+    let table = limits::usage_by(now_secs(), kind)?;
+    by_table(&table, out)?;
+    Ok(if table.has_data() {
+        Outcome::Found
+    } else {
+        Outcome::Empty
+    })
 }
 
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     if a.guard {
         return guard(&a, out);
+    }
+    if let Some(kind) = &a.by {
+        return by(kind, out);
     }
     let opts = UsageOpts {
         claude_root: a.claude_dir,

@@ -4,6 +4,11 @@
 
 ### Added
 
+- `census limits`: the five-hour and weekly subscription windows, each with its share (from the
+  newest snapshot, or estimated from a calibration over the list-price cost), reset, calibration
+  spread and the time it fills at the current rate. The weekly window has a forecast from the usage
+  pattern (weekday and hour, or hours since the weekly reset). Exit 1 without data.
+- `census usage --by weekday|hour|cycle`: the expected cost of each bucket of the usage pattern.
 - `census usage`, moved from `acus usage`.
 - `census usage` cost in $ per model, session and role, from a list-price table (`src/usage/prices.rs`).
   Requests of models without a price count as unpriced.

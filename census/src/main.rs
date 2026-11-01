@@ -2,6 +2,7 @@
 //! The `census` binary: parses the command line and dispatches to the `cmd_*` modules.
 
 mod cmd_context;
+mod cmd_limits;
 mod cmd_prune;
 mod cmd_session;
 mod cmd_statusline;
@@ -42,6 +43,8 @@ enum Cmd {
     Usage(cmd_usage::Args),
     /// Context size of the current session against its auto-compaction threshold.
     Context(cmd_context::Args),
+    /// Subscription limit windows: estimates, burn rate and the weekly forecast.
+    Limits,
     /// Summary of the current session: duration, cost, spawns per role, context and compactions.
     Session(cmd_session::Args),
     /// Records the limit snapshots of the statusLine input; `--line` prints the status line.
@@ -66,6 +69,7 @@ fn execute(cli: Cli, format: Format) -> Result<Outcome> {
     match cli.cmd {
         Cmd::Usage(a) => cmd_usage::run(a, &out),
         Cmd::Context(a) => cmd_context::run(&a, &out),
+        Cmd::Limits => cmd_limits::run(&out),
         Cmd::Session(a) => cmd_session::run(&a, &out),
         Cmd::Statusline(a) => Ok(cmd_statusline::run(&a)),
         Cmd::Prune(a) => cmd_prune::run(a, &out),

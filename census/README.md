@@ -2,7 +2,7 @@
 
 Usage analytics for Claude Code and Codex: tokens, cost, tool calls and subagent roles from the
 session transcripts. Context awareness for the running session, and its status line, are here too;
-limits and the hook are planned in [PLAN.md](PLAN.md).
+limits are here; the hook is planned in [PLAN.md](PLAN.md).
 
 ## Install
 
@@ -29,6 +29,7 @@ cargo install --locked --path census
 | `--agents` | One row per role: spawns, models, requests, cost, cache hit rate and cache rewrites |
 | `--handbacks` | Spawns per ISO week and the hand-back heuristic |
 | `--compare YYYY-MM-DD` | The report before and after a UTC date, side by side with the change |
+| `--by weekday\|hour\|cycle` | Expected cost per bucket of the usage pattern (see Limits) |
 
 Cost is the list price of each request (`src/usage/prices.rs`): input, output and cache read at the
 model's rates, cache writes at 1.25x (5 minutes) or 2x (1 hour) the input price. Haiku 5.5 requests
@@ -52,6 +53,36 @@ spawn on each side where it has requests; hand-backs go by spawn start. Compacti
 
 Output is agent text by default; `--human` adds colour on a terminal, `--json` prints the report as
 JSON. `--format agent|human|json` is the same choice.
+
+### Limits
+
+`census limits` estimates the two subscription windows, the five-hour one and the weekly one, and
+forecasts the weekly one. Cost is the list price from the ledger, as in `census usage`.
+
+- Calibration per window: each snapshot gives one point, `used_percentage` divided by the list-price
+  cost of the window from its start (`resets_at` minus the window length) to the snapshot. `k` is the
+  median of the last 20 points within 30 days. Points with less than $0.01 of cost or a share of 0
+  are skipped. The spread is `(p75 - p25) / k` and needs four points.
+- Estimate: a snapshot under two minutes old is the reading. Otherwise the share is `k` times the
+  cost since the window start. The window is the newest snapshot's (`resets_at` in the future); a
+  weekly window past its reset repeats every seven days; a five-hour window past its reset starts at
+  the first request after it.
+- Burn rate: the list-price cost of the last 15 and 60 minutes, per hour. `full around` is the time
+  the share reaches 100 % at the 60-minute rate; otherwise `lasts until reset`.
+- Pattern: the list-price cost of every hour of the history, weighted by `0.5^(age / 28 days)`.
+  Hours are keyed by weekday and hour, and by hours since the weekly reset once the snapshots map two
+  weeks of hours to their windows. Times are UTC.
+- Forecast: the share now plus `k` times the expected cost until the weekly reset. For the first two
+  hours the expected cost is half the 60-minute rate and half the pattern. The output is
+  `runs out around Sat 21:00 UTC` or `ends at about 30 % unused`.
+- Five-hour windows: windows start at the first request after the previous one ended. The expected
+  count is per weekday, weighted the same way. The typical peak is the median of the highest share of
+  the last 20 windows in the snapshots (three or more) or else `k` times their cost.
+
+Without a snapshot there is no calibration: only the burn rate is shown. `census usage --by` prints
+the buckets of the pattern as a table: `weekday` (the expected cost of each day), `hour` (each hour
+of the day, averaged over the weekdays) or `cycle` (each hour since the weekly reset, zero until the
+snapshots map two weeks).
 
 ### Context, session and status line
 

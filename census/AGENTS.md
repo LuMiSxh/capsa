@@ -6,15 +6,21 @@ Suite-wide rules are in ../AGENTS.md. This file covers census only.
 
 census reads agent transcripts and the state of a running Claude Code session: usage analytics,
 the context size against the compaction threshold, a session summary, and the limit snapshots that
-the status line records. `census limits` and `census hook` are planned in PLAN.md.
+the status line records, and the limit windows (`census limits`). `census hook` is planned in
+PLAN.md.
 
 ## Layout
 
 Paths are relative to `census/`. census depends on `capsa-core` only, never on an `acus-*` crate.
 
 - `src/main.rs`: the clap CLI. One `src/cmd_<name>.rs` per command: `cmd_usage.rs` (`census usage`,
-  including the `--guard` reader for acus's `guard.jsonl`), `cmd_context.rs`, `cmd_session.rs`,
-  `cmd_statusline.rs`, `cmd_prune.rs`.
+  including the `--guard` reader for acus's `guard.jsonl` and `--by`), `cmd_context.rs`,
+  `cmd_session.rs`, `cmd_statusline.rs`, `cmd_prune.rs`, `cmd_limits.rs`.
+- `src/limits/`: the subscription limit windows, a library that returns values only. `mod.rs` is the
+  API (`status`, `usage_by`, `compute`), `cost.rs` prices rows and aggregates, `calibrate.rs` the
+  median share per dollar, `window.rs` the running window, `pattern.rs` the expected cost per hour
+  (weekday and hour, or hours since the weekly reset), `forecast.rs` the weekly forecast and the
+  five-hour summary, `clock.rs` the UTC calendar, `error.rs`, `tests.rs`.
 - `src/usage/`: transcript analytics. `mod.rs` builds the report, `claude.rs` and `codex.rs` parse
   transcripts, `tools.rs` classifies tool calls, `prices.rs` holds the list prices, `merge.rs` folds
   the files into the report, `handback.rs` counts hand-backs, `read.rs` reads files in parallel,

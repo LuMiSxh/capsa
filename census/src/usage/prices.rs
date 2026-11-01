@@ -96,10 +96,26 @@ fn writes(p: Price, t: &Tokens) -> f64 {
 
 /// The list price of one request in USD, or `None` for a model without a price.
 pub fn request_cost(model: &str, t: &Tokens) -> Option<f64> {
-    let p = price(model, t.context())?;
+    Some(at_price(price(model, t.context())?, t))
+}
+
+/// The base-tier list price of a model family, for aggregated tokens whose model is gone. The
+/// long-context tier cannot apply to them. `None` for a family without a price.
+pub(crate) fn family_cost(family: &str, t: &Tokens) -> Option<f64> {
+    if family == "other" {
+        return None;
+    }
+    let (_, p) = PRICES
+        .iter()
+        .find(|(m, _)| crate::ledger::family_of(m) == family)?;
+    Some(at_price(*p, t))
+}
+
+/// USD of the tokens of one request at `p`.
+fn at_price(p: Price, t: &Tokens) -> f64 {
     let per_token =
         t.input as f64 * p.input + t.cache_read as f64 * p.cache_read + t.output as f64 * p.output;
-    Some(per_token / 1e6 + writes(p, t))
+    per_token / 1e6 + writes(p, t)
 }
 
 /// The USD of the cache writes of one request, or `None` for a model without a price.
