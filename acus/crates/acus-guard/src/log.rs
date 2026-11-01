@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Owns the decision log that `acus usage --guard` reads: one JSON line per decision.
+//! Owns the decision log that `census usage --guard` reads: one JSON line per decision.
 
 use crate::{GuardConfig, LOG_CALL_MAX, Verdict};
 use serde_json::Value;

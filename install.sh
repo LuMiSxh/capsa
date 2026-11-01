@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs capsa tools from the newest release of each tool.
-# Usage: install.sh [acus|pons|velum|all ...]   (default: all; velum is macOS-only)
-#        install.sh --uninstall <acus|pons|velum|all>
+# Usage: install.sh [acus|pons|census|velum|all ...]   (default: all; velum is macOS-only)
+#        install.sh --uninstall <acus|pons|census|velum|all>
 # Env: CAPSA_INSTALL_DIR (default ~/.local/bin), CAPSA_INSTALL_SCOPE=user|system,
 #      CAPSA_NO_SKILL=1 skips `acus self skill --install` (ACUS_NO_SKILL works too) and
 #      keeps the acus skill on --uninstall,
@@ -28,17 +28,17 @@ main() {
     for arg in "$@"; do
         case "$arg" in
             --uninstall) ;;
-            all)       selected="$selected acus pons velum" ;;
-            acus|pons) selected="$selected $arg" ;;
+            all)       selected="$selected acus pons census velum" ;;
+            acus|pons|census) selected="$selected $arg" ;;
             velum)
                 [ -n "$uninstall" ] || [ "$(uname -s)" = "Darwin" ] || err "velum is macOS-only for now"
                 selected="$selected velum" ;;
-            *) err "unknown tool: $arg (use acus, pons, velum or all)" ;;
+            *) err "unknown tool: $arg (use acus, pons, census, velum or all)" ;;
         esac
     done
 
     if [ -n "$uninstall" ]; then
-        [ -n "$selected" ] || err "usage: install.sh --uninstall <acus|pons|velum|all>"
+        [ -n "$selected" ] || err "usage: install.sh --uninstall <acus|pons|census|velum|all>"
         for tool in $selected; do
             uninstall_tool "$tool"
         done

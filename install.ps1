@@ -1,6 +1,6 @@
 # Installs capsa tools from the newest release of each tool.
-# Usage: .\install.ps1 [acus pons all]   (default: all; velum is macOS-only)
-#        .\install.ps1 -Uninstall <acus|pons|all>
+# Usage: .\install.ps1 [acus pons census all]   (default: all; velum is macOS-only)
+#        .\install.ps1 -Uninstall <acus|pons|census|all>
 # Env: CAPSA_INSTALL_DIR (default %USERPROFILE%\.local\bin), CAPSA_INSTALL_SCOPE=user|system,
 #      CAPSA_NO_SKILL=1 skips `acus self skill --install` (ACUS_NO_SKILL works too) and
 #      keeps the acus skill on -Uninstall,
@@ -20,17 +20,18 @@ $Token = $null
 
 function Main {
     if (-not $Tools) {
-        if ($Uninstall) { throw "usage: install.ps1 -Uninstall <acus|pons|all>" }
+        if ($Uninstall) { throw "usage: install.ps1 -Uninstall <acus|pons|census|all>" }
         $Tools = @("all")
     }
     $selected = @()
     foreach ($t in $Tools) {
         switch ($t.ToLower()) {
-            "all"   { $selected += "acus", "pons" }
+            "all"   { $selected += "acus", "pons", "census" }
             "acus"  { $selected += "acus" }
             "pons"  { $selected += "pons" }
+            "census" { $selected += "census" }
             "velum" { throw "velum is macOS-only for now" }
-            default { throw "unknown tool: $t (use acus, pons or all)" }
+            default { throw "unknown tool: $t (use acus, pons, census or all)" }
         }
     }
 

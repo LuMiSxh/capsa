@@ -11,7 +11,6 @@ dependencies = [
  "acus-guard",
  "acus-search",
  "acus-syntax",
- "acus-usage",
  "acus-walk",
  "anstyle",
  "anyhow",
@@ -104,17 +103,6 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-xml",
  "tree-sitter-yaml",
-]
-
-[[package]]
-name = "acus-usage"
-version = "0.18.1"
-dependencies = [
- "acus-walk",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
 ]
 
 [[package]]
@@ -303,6 +291,19 @@ checksum = "877bf67ac8e52449eb2f9e98a344ea163beb70dd1f9eebe3cc5357dcfeaee4df"
 dependencies = [
  "find-msvc-tools",
  "shlex",
+]
+
+[[package]]
+name = "census"
+version = "0.1.0"
+dependencies = [
+ "anstyle",
+ "anyhow",
+ "capsa-core",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

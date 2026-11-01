@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Parses Claude Code JSONL transcripts into per-file token and tool-call stats.
 
-use crate::{Call, FileStats, Tokens, is_explore_cmd, text_chars};
+use super::{Call, FileStats, Tokens, is_explore_cmd, text_chars};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::collections::HashMap;
@@ -127,7 +127,7 @@ pub(crate) fn parse(text: &str) -> FileStats {
                         tool_of.insert(id.to_owned(), st.calls.len());
                     }
                     st.calls.push(Call {
-                        categories: crate::tools::claude_tool(&name, input),
+                        categories: super::tools::claude_tool(&name, input),
                         input_chars: input.len() as u64,
                         explore,
                         name,

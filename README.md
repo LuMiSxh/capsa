@@ -20,6 +20,7 @@
 | **acus** | Code search, outline and editing for coding agents. | [README](acus/README.md) |
 | **pons** | Transparent stdio proxy between Zed and the Claude ACP adapter. | [README](pons/README.md) |
 | **velum** | Runs Claude Code inside Anthropic's sandbox runtime. macOS only for now. | [README](velum/README.md) |
+| **census** | Usage analytics for Claude Code and Codex transcripts. | [README](census/README.md) |
 
 ## Install
 
@@ -29,7 +30,7 @@
 ```
 
 ```powershell
-.\install.ps1             # acus and pons (velum is macOS only)
+.\install.ps1             # acus, pons and census (velum is macOS only)
 .\install.ps1 acus        # selected tools
 ```
 
@@ -45,6 +46,7 @@ Management commands about the tool itself sit under `self`: `acus self update|sk
 
 ```sh
 cargo install --path acus/crates/acus-cli --features cmd-decide
+cargo install --path census
 cargo install --path pons --profile release-unwind
 cargo install --path velum
 ```

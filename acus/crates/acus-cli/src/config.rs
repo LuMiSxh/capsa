@@ -22,7 +22,7 @@ pub struct Config {
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct Commands {
-    /// Command names that refuse to run, e.g. `["usage"]`.
+    /// Command names that refuse to run, e.g. `["ctx"]`.
     pub disabled: Vec<String>,
 }
 

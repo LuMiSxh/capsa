@@ -57,10 +57,10 @@ These are refused, because there is no exact equivalent: `-P`, `-z`, `-h`, grep'
 
 `grep`, `grep-tool`, `read-shell`, `read-tool`, `build-pipe`, `ctx-pipe`, `sed-i`, `tree`, `glob-tool`, `ps-replace`, `edit-script`, `git-status`, `git-diff`, `git-show`, `patch-quiet`.
 
-These names are written to `guard.jsonl` and read by `acus usage --guard`, so renaming one breaks the history.
+These names are written to `guard.jsonl` and read by `census usage --guard`, so renaming one breaks the history.
 
 ## Escapes
 
 - A refused command runs anyway with a `command ` prefix (Bash) or a trailing `# acus-skip` comment (both shells).
-- Every decision, escapes included, is logged to `guard.jsonl` next to the config file. `acus usage --guard` counts rewrites, refusals, hints and escapes per rule and lists the escaped calls. An escape usually marks a refusal that acus could not replace.
+- Every decision, escapes included, is logged to `guard.jsonl` next to the config file. `census usage --guard` counts rewrites, refusals, hints and escapes per rule and lists the escaped calls. An escape usually marks a refusal that acus could not replace.
 - The hook command ends in `|| true`, so calls pass when acus is missing. `guard` can also be disabled in the configuration.

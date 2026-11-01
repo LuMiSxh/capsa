@@ -6,6 +6,7 @@ version and can be installed alone or as a suite:
 | Tool    | Purpose                                                            | Status                                  |
 |---------|--------------------------------------------------------------------|-----------------------------------------|
 | `velum` | Thin policy shield that runs coding agents in a macOS sandbox      | new                                     |
+| `census` | Usage analytics, limits and context awareness for the main agent | new                                     |
 | `pons`  | ACP proxy between Zed and the Claude ACP adapter                   | moves in from `LuMiSxh/pons` (private)  |
 | `acus`  | Code search, outline and patch CLI for agents                      | moves in later from `LuMiSxh/Acus`      |
 

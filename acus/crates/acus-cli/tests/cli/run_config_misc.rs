@@ -34,7 +34,7 @@ fn run_batch() {
 
 #[test]
 fn commands_can_be_disabled_at_runtime() {
-    let (code, _, err) = acus_env(&["find", "needle"], &[("ACUS_DISABLE", "usage, find")]);
+    let (code, _, err) = acus_env(&["find", "needle"], &[("ACUS_DISABLE", "log, find")]);
     assert_eq!(code, 2);
     assert!(
         err.starts_with("error: acus find is disabled by configuration\nhint: "),

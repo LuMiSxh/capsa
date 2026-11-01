@@ -6,6 +6,10 @@
 
 - Guard: dropped the `git log` hint; agents ignored it.
 
+### Removed
+
+- `acus usage`; it moved to `census usage` in the new census tool.
+
 ## [0.18.1]
 
 ### Fixed

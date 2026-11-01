@@ -11,6 +11,7 @@ AGENTS.md before working in its directory.
 | `acus/`   | `acus`  | Code search, outline, patch, build output (`ctx`) and the PreToolUse guard |
 | `pons/`   | `pons`  | ACP proxy between Zed and the Claude ACP adapter |
 | `velum/`  | `velum` | Policy shield that runs Claude Code inside Anthropic's sandbox-runtime (`srt`) |
+| `census/` | `census` | Usage analytics, limits and context awareness for the main agent |
 | `core/`   | `capsa-core` | Shared library: hints, output formats, exit rendering, executable lookup, package managers, self update and uninstall (feature `update`) |
 
 `PLAN.md` holds the design, the open questions and the phases.
@@ -46,7 +47,7 @@ AGENTS.md before working in its directory.
   and records user-visible changes under `## [Unreleased]` in its own
   CHANGELOG. Never bump or release a tool you did not change. Tags are
   `<tool>-vX.Y.Z`.
-- **Commits:** prefix the subject with the area: `acus:`, `pons:`, `velum:`,
+- **Commits:** prefix the subject with the area: `acus:`, `census:`, `pons:`, `velum:`,
   `core:`, `ci:`, `docs:`. One area per commit where possible.
 
 ## Rust

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-use acus_usage::{UsageOpts, report};
+use census::usage::{UsageOpts, report};
 use std::fs;
 
 const CLAUDE: &str = r#"{"type":"user","cwd":"/x/Proj","message":{"role":"user","content":"do it"}}
@@ -33,8 +33,7 @@ fn aggregates_both_agents() {
         claude_root: Some(claude),
         codex_root: Some(codex),
         ..Default::default()
-    })
-    .unwrap();
+    });
 
     assert_eq!(r.prompts, 2);
     let s: Vec<_> = r
@@ -77,8 +76,7 @@ fn project_filter() {
         codex_root: Some(d.path().join("none")),
         project: Some("nomatch".into()),
         ..Default::default()
-    })
-    .unwrap();
+    });
     assert!(r.sessions.is_empty());
 }
 
@@ -110,8 +108,7 @@ fn agents_one_row_per_role() {
         claude_root: Some(d.path().to_owned()),
         codex_root: Some(d.path().join("none")),
         ..Default::default()
-    })
-    .unwrap();
+    });
     let rows: Vec<_> = r
         .agents
         .iter()
@@ -158,8 +155,7 @@ fn result_chars_follow_their_call() {
         claude_root: Some(d.path().into()),
         codex_root: Some(d.path().join("none")),
         ..Default::default()
-    })
-    .unwrap();
+    });
     assert_eq!(r.categories["acus:find"].result_chars, [10, 0]);
     assert_eq!(r.categories["acus:show"].result_chars, [5, 0]);
     assert_eq!(r.categories["read"].result_chars, [3, 0]);
@@ -175,8 +171,7 @@ fn escaped_codex_acus_call_is_counted() {
         claude_root: Some(d.path().join("none")),
         codex_root: Some(d.path().into()),
         ..Default::default()
-    })
-    .unwrap();
+    });
     let s = r.categories["acus:find"];
     assert_eq!((s.calls, s.result_chars), ([0, 1], [0, 5]));
 }

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
-//! `acus usage`: token, cost and tool-call statistics from agent transcripts.
+//! `census usage`: token, cost and tool-call statistics from agent transcripts.
 
-use crate::config::Config;
-use crate::fmt::Out;
-use acus_usage::{AgentStat, CategoryStat, Report, UsageOpts, WEIGHTS, group, report};
+use crate::out::Out;
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use census::usage::{AgentStat, CategoryStat, Report, UsageOpts, WEIGHTS, group, report};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(clap::Args)]
@@ -47,16 +47,16 @@ fn k(n: f64) -> String {
     }
 }
 
-pub fn run(a: Args, out: &Out, cfg: &Config) -> Result<Outcome> {
+pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     if a.guard {
-        return guard(&a, out, cfg);
+        return guard(&a, out);
     }
     let r = report(&UsageOpts {
         claude_root: a.claude_dir,
         codex_root: a.codex_dir,
         days: a.days,
         project: a.project,
-    })?;
+    });
     if r.sessions.is_empty() {
         return Ok(Outcome::Empty);
     }
@@ -157,16 +157,55 @@ fn print_summary(r: &Report, out: &Out, top: usize) {
     }
 }
 
+/// One line of acus's `guard.jsonl`. Fields keep acus's order, so `--json` prints them as acus
+/// wrote them; unknown fields are ignored and old rule names still parse.
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+struct GuardEntry {
+    ts: u64,
+    session: Option<String>,
+    cwd: Option<String>,
+    tool: Option<String>,
+    rule: String,
+    kind: String,
+    call: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cmd: Option<String>,
+}
+
+/// The decision log acus writes: `guard.jsonl` next to its config file, which `ACUS_CONFIG` moves.
+fn guard_log_path() -> PathBuf {
+    std::env::var("ACUS_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| config_dir().join("acus/config.toml"))
+        .with_file_name("guard.jsonl")
+}
+
+/// `~/Library/Application Support`, `%APPDATA%` or `$XDG_CONFIG_HOME` / `~/.config`.
+fn config_dir() -> PathBuf {
+    let home = || std::env::home_dir().unwrap_or_default();
+    if cfg!(target_os = "macos") {
+        home().join("Library/Application Support")
+    } else if cfg!(windows) {
+        std::env::var("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| home())
+    } else {
+        std::env::var("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| home().join(".config"))
+    }
+}
+
 /// Reads the guard log: per rule how often it refused, hinted or was escaped. Escaped calls
 /// are listed, since they point at refusals acus could not replace.
-fn guard(a: &Args, out: &Out, cfg: &Config) -> Result<Outcome> {
-    use acus_guard::log::LogEntry;
-    let path = crate::cmd_guard::guard_config(cfg).log_path;
+fn guard(a: &Args, out: &Out) -> Result<Outcome> {
+    let path = guard_log_path();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
     let since = a.days.map_or(0, |d| now.saturating_sub(d * 86_400));
-    let entries: Vec<LogEntry> = [path.with_extension("jsonl.old"), path.clone()]
+    let entries: Vec<GuardEntry> = [path.with_extension("jsonl.old"), path.clone()]
         .iter()
         .filter_map(|p| std::fs::read_to_string(p).ok())
         .flat_map(|s| {
@@ -174,7 +213,7 @@ fn guard(a: &Args, out: &Out, cfg: &Config) -> Result<Outcome> {
                 .filter_map(|l| serde_json::from_str(l).ok())
                 .collect::<Vec<_>>()
         })
-        .filter(|e: &LogEntry| e.ts >= since)
+        .filter(|e: &GuardEntry| e.ts >= since)
         .filter(|e| {
             a.project
                 .as_ref()
@@ -198,7 +237,7 @@ fn guard(a: &Args, out: &Out, cfg: &Config) -> Result<Outcome> {
         };
         rules.entry(e.rule.as_str()).or_default()[slot] += 1;
     }
-    let escaped: Vec<&LogEntry> = entries
+    let escaped: Vec<&GuardEntry> = entries
         .iter()
         .filter(|e| e.kind == "escape")
         .rev()

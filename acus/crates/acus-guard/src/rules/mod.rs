@@ -8,7 +8,7 @@ mod show;
 
 use show::*;
 
-/// Names every rule. `as_str` is what `guard.jsonl` and `acus usage --guard` record, so the
+/// Names every rule. `as_str` is what `guard.jsonl` and `census usage --guard` record, so the
 /// spellings must not change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rule {
@@ -384,7 +384,7 @@ pub(super) fn suggest(rule: Rule, seg: &str) -> Option<String> {
 mod rule_names {
     use super::Rule;
 
-    /// The names are a contract with `guard.jsonl` and `acus usage --guard`.
+    /// The names are a contract with `guard.jsonl` and `census usage --guard`.
     #[test]
     fn keep_their_logged_spelling() {
         let names: Vec<&str> = Rule::ALL.iter().map(|r| r.as_str()).collect();

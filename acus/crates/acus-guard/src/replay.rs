@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Owns `acus guard --replay FILE`: it decides each Bash call in FILE in-process, as the hook
 //! does, and prints one JSON decision per line. guard.jsonl is never written, so a replay adds
-//! nothing to `acus usage --guard`. A line is `{"tool","cwd","cmd"}` or guard.jsonl's own
+//! nothing to `census usage --guard`. A line is `{"tool","cwd","cmd"}` or guard.jsonl's own
 //! `{"tool","cwd","call"}`. guard.jsonl cuts calls at 8000 characters, so a replayed cut call can
 //! decide differently from the logged one.
 

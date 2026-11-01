@@ -8,7 +8,7 @@ acus is a Rust CLI for coding agents. It searches code (`find`, `files`), reads 
 
 ## Layout
 
-Paths are relative to `acus/`. Dependencies point down: `acus-cli` uses every other crate; `acus-search` and `acus-edit` use `acus-syntax` and `acus-walk`; `acus-usage` uses `acus-walk`. `acus-syntax`, `acus-walk` and `acus-decide` use no workspace crate.
+Paths are relative to `acus/`. Dependencies point down: `acus-cli` uses every other crate; `acus-search` and `acus-edit` use `acus-syntax` and `acus-walk`. `acus-syntax`, `acus-walk` and `acus-decide` use no workspace crate.
 
 - `crates/acus-cli`: the `acus` binary. One `src/cmd_<name>.rs` per subcommand; `src/cmd_ctx/` is a directory module. `src/cmd_guard.rs` holds the guard hook protocol. `src/cmd_self.rs` is the `acus self` group (`update`, `skill`, `uninstall`): `cmd_update.rs` and `cmd_uninstall.rs` call `capsa_core::update` with `TOOL` from `main.rs`; `cmd_skill.rs` prints, installs and removes the skill. Integration tests are in `tests/cli/`.
 - `crates/acus-guard`: the guard rules (`src/read/`, `src/search/`, `src/git.rs`, ...) and the rule table in `src/rules/mod.rs`. Parsers are Cargo features (`bash`, `zsh`, `powershell`), enabled from `acus-cli` as `guard-bash`, `guard-zsh` and `guard-powershell` (all default). `src/ast/mod.rs` `choose` picks the backend at run time; without a grammar the guard falls back to `src/ast/legacy.rs`.
@@ -16,7 +16,7 @@ Paths are relative to `acus/`. Dependencies point down: `acus-cli` uses every ot
 - `crates/acus-edit`: patch parsing (`src/parse.rs`) and atomic application (`src/apply/`).
 - `crates/acus-search`: search with enclosing-symbol context, on the ripgrep crates.
 - `crates/acus-walk`: parallel file walking that respects `.gitignore`, and globs.
-- `crates/acus-usage`: transcript statistics for `acus usage`.
+
 - `crates/acus-decide`: client for Jev-compatible decision APIs (feature `cmd-decide`).
 - `skill/`: `CORE.md` (the short skill) and `SKILL.md` (the full one).
 - `docs/guard.md`: the guard rules, listed by name.
@@ -49,7 +49,7 @@ Paths are relative to `acus/`. Dependencies point down: `acus-cli` uses every ot
 ## Contracts
 
 - `--json` output is stable, and output is snapshot-tested with insta. Changing either needs `cargo insta review`.
-- Guard rule names (`Rule::as_str`) are logged in `guard.jsonl` and read by `acus usage --guard`. Do not rename one.
+- Guard rule names (`Rule::as_str`) are logged in `guard.jsonl` and read by `census usage --guard`. Do not rename one.
 - `skill/CORE.md` must stay under 250 words (test `core_stays_short_and_points_to_the_full_skill`). `skill/CORE.md` and `skill/SKILL.md` are embedded with `include_str!` in `crates/acus-cli/src/cmd_skill.rs`.
 - Output paths use `/`, also on Windows.
 

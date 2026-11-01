@@ -4,24 +4,16 @@
 
 mod claude;
 mod codex;
+mod read;
 mod tools;
+mod walk;
 
 pub use tools::group;
 
-use acus_walk::{WalkOpts, walk};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
-
-/// Reports why a usage report could not be built.
-#[derive(Debug, thiserror::Error)]
-pub enum UsageError {
-    /// A transcript directory cannot be walked.
-    #[error(transparent)]
-    Walk(#[from] acus_walk::WalkError),
-}
 
 #[derive(Debug, Default, Clone)]
 pub struct UsageOpts {
@@ -119,7 +111,7 @@ pub struct Chains {
     pub longest: u64,
 }
 
-/// One row of `acus usage --agents`: every transcript is one spawn of a role
+/// One row of `census usage --agents`: every transcript is one spawn of a role
 /// (`main` for top-level sessions, the subagent type otherwise).
 #[derive(Debug, Default, Serialize)]
 pub struct AgentStat {
@@ -231,7 +223,7 @@ fn default_root(env: &str, home_sub: &str, sub: &str) -> Option<PathBuf> {
         .or_else(|| std::env::home_dir().map(|h| h.join(home_sub).join(sub)))
 }
 
-pub fn report(o: &UsageOpts) -> Result<Report, UsageError> {
+pub fn report(o: &UsageOpts) -> Report {
     let claude = o
         .claude_root
         .clone()
@@ -243,62 +235,28 @@ pub fn report(o: &UsageOpts) -> Result<Report, UsageError> {
     let cutoff = o
         .days
         .map(|d| SystemTime::now() - Duration::from_secs(d * 86_400));
-    let files = Mutex::new(Vec::new());
+    let mut jobs = Vec::new();
     for (root, agent) in [(claude, "claude"), (codex, "codex")] {
         let Some(root) = root.filter(|r| r.is_dir()) else {
             continue;
         };
-        let opts = WalkOpts {
-            roots: vec![root.clone()],
-            include: vec!["*.jsonl".into()],
-            hidden: true,
-            ..Default::default()
-        };
-        walk(&opts, |p| {
-            if cutoff.is_some_and(|c| p.metadata().and_then(|m| m.modified()).is_ok_and(|m| m < c))
-            {
-                return;
-            }
-            // ponytail: unreadable or foreign files are skipped; transcripts are best-effort data.
-            let Ok(text) = std::fs::read_to_string(p) else {
-                return;
-            };
-            let mut st = if agent == "claude" {
-                claude::parse(&text)
-            } else {
-                codex::parse(&text)
-            };
-            st.agent = agent;
-            st.session = session_id(&root, p, agent);
-            st.is_subagent = agent == "claude"
-                && p.parent()
-                    .and_then(|d| d.file_name())
-                    .is_some_and(|n| n == "subagents");
-            if st.is_subagent {
-                let meta: serde_json::Value =
-                    std::fs::read_to_string(p.with_extension("meta.json"))
-                        .ok()
-                        .and_then(|s| serde_json::from_str(&s).ok())
-                        .unwrap_or_default();
-                st.role = meta["agentType"].as_str().unwrap_or_default().to_owned();
-                st.spawn_id = meta["toolUseId"].as_str().map(str::to_owned);
-            } else {
-                st.role = "main".into();
-            }
-            files
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(st);
-        })?;
+        jobs.extend(walk::jsonl_files(&root).into_iter().map(|path| read::Job {
+            agent,
+            root: root.clone(),
+            path,
+        }));
     }
-    let mut files = files
-        .into_inner()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut files = read::read_all(&jobs, cutoff);
     if let Some(q) = &o.project {
         let q = q.to_lowercase();
         files.retain(|f| f.cwd.to_lowercase().contains(&q));
     }
-    files.sort_by(|a, b| a.session.cmp(&b.session));
+    // A session takes its project and model from its first file, so the main transcript goes first.
+    files.sort_by(|a, b| {
+        a.session
+            .cmp(&b.session)
+            .then(a.is_subagent.cmp(&b.is_subagent))
+    });
     // Subagents without an `agentType` take the type of the parent's Agent call.
     let spawned: HashMap<String, String> = files
         .iter()
@@ -312,7 +270,7 @@ pub fn report(o: &UsageOpts) -> Result<Report, UsageError> {
             .cloned()
             .unwrap_or_else(|| "subagent".into());
     }
-    Ok(merge(files))
+    merge(files)
 }
 
 /// Claude: `<project>/<session>.jsonl` and `<project>/<session>/subagents/*.jsonl`

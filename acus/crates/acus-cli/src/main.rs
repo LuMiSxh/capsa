@@ -21,7 +21,6 @@ mod cmd_show;
 mod cmd_skill;
 mod cmd_uninstall;
 mod cmd_update;
-mod cmd_usage;
 mod config;
 
 mod fmt;
@@ -88,8 +87,7 @@ enum Cmd {
     /// `*** Delete File`, `*** Copy File`, `*** Replace Symbol`, `*** Insert Before/After`,
     /// `*** Delete Symbol`, `*** Move Symbol` and `*** Replace All` (`acus patch --help` has the syntax).
     Patch(cmd_patch::Args),
-    /// Token, cost and tool-call analytics over Claude Code and Codex transcripts.
-    Usage(cmd_usage::Args),
+
     /// Yes/no, choice or score judgement via a Jev-compatible API (needs `cmd-decide`).
     Decide(cmd_decide::Args),
     /// Run a shell command; print its output plus the code its `path:line` references point at.
@@ -119,7 +117,7 @@ impl Cmd {
             Cmd::Blame(_) => "blame",
             Cmd::Follow(_) => "follow",
             Cmd::Patch(_) => "patch",
-            Cmd::Usage(_) => "usage",
+
             Cmd::Decide(_) => "decide",
             Cmd::Run(_) => "run",
             Cmd::Ctx(_) => "ctx",
@@ -175,7 +173,7 @@ pub fn execute(cli: Cli, format: Format, nested: bool) -> Result<Outcome> {
         Cmd::Blame(a) => cmd_blame::run(a, &out),
         Cmd::Follow(a) => cmd_follow::run(a, &out),
         Cmd::Patch(a) => cmd_patch::run(a, &out, nested, &cfg),
-        Cmd::Usage(a) => cmd_usage::run(a, &out, &cfg),
+
         Cmd::Decide(a) => cmd_decide::run(a, &out, &cfg),
         Cmd::Run(_) if nested => bail!("`run` cannot be nested"),
         Cmd::Run(a) => cmd_run::run(a, &out),

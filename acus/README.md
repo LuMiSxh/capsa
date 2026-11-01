@@ -77,7 +77,7 @@ acus self skill --install --hooks
 Escape hatches:
 
 - A refused command runs anyway with a `command ` prefix (Bash) or a trailing `# acus-skip` comment (both shells).
-- Every decision, escapes included, is logged to `guard.jsonl` next to the config file. `acus usage --guard` counts them per rule and lists the escaped calls.
+- Every decision, escapes included, is logged to `guard.jsonl` next to the config file. `census usage --guard` counts them per rule and lists the escaped calls.
 - The hook command ends in `|| true`, so calls pass when acus is missing or `guard` is disabled in the configuration.
 
 Hooks apply to subagents too. Subagents do not see SessionStart output, so preload the skill in each custom agent's frontmatter, and give read-only agents `Bash` so they can run it:
@@ -111,7 +111,7 @@ Search and read code with `acus` instead of grep/rg/find/cat/sed -n (`acus find 
 | `acus diff [REV] [PATH...]` | Uncommitted changes per function or type, with untracked files; `-p` adds the lines, `--staged` and `A..B` work as in git; without REV, a footer names the staged changes |
 | `acus log [REV] [PATH...]` | One line per commit with date, author and changed lines; `-n` sets the count (default 15); `REV` can be `A..B` |
 | `acus run` | Several of the above in one process, one command line per stdin line (or a JSON list of argument lists) |
-| `acus usage` | Token, cost and tool-call statistics from Claude Code and Codex transcripts; `--tools` shows how agents search, read, edit and build; `--guard` counts `acus guard` decisions per rule |
+
 | `acus decide QUESTION` | Yes/no, choice or score answer from a Jev-compatible API; without an API key it warns and exits 2 |
 | `acus map [DIR]` | Directory tree with file and line counts within a token budget (`--budget 400`): the largest directories open first, chains and single-file directories are rolled up, and small directories list their files' top-level symbols; tests and docs open last |
 | `acus self skill` | Prints the bundled agent skill for a SessionStart hook; `--install` writes it for Claude Code and Codex, `--install --hooks` also registers the hooks |
@@ -261,7 +261,7 @@ Releases are built by the `Release` workflow: bump the version in `Cargo.toml`, 
 | `acus-search` | Search with enclosing-symbol context, built on the ripgrep crates |
 | `acus-syntax` | tree-sitter outlines and symbol lookup |
 | `acus-edit` | Patch parsing and atomic application |
-| `acus-usage` | Transcript statistics |
+
 | `acus-decide` | Client for Jev-compatible decision APIs |
 
 ## License
