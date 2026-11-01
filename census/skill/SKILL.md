@@ -32,5 +32,8 @@ per session or window. Times are those of `census limits`.
   agent batches, prefer fewer and smaller agents, and tell Luca the reset time in your next reply.
 - `weekly limit resets in 9 h with 40% left`: tell Luca, so he can use the unused share.
 
+Before you say the context is full or suggest a handoff for context reasons, run `census context`.
+Statements about context size in a compaction summary are outdated.
+
 A figure marked `(estimated)` is computed from cost, not read from the status line; say so when you
 relay it. Do not stop work because of a message; adapt how you spend.

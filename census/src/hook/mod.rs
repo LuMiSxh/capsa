@@ -40,6 +40,7 @@ fn announce(
     file: &std::path::Path,
     context: Option<&context::ContextUse>,
     limits: Option<&LimitStatus>,
+    compacted: Option<(u64, u64)>,
     now: u64,
 ) -> Result<Vec<String>, HookError> {
     let Some(_guard) = state::lock(file)? else {
@@ -47,7 +48,7 @@ fn announce(
     };
     let mut shown = state::load(file)?;
     let before = shown.clone();
-    let messages = levels::decide(context, limits, now, &mut shown);
+    let messages = levels::decide(context, limits, compacted, now, &mut shown);
     if shown != before {
         state::store(file, &shown)?;
     }
@@ -75,12 +76,11 @@ pub fn run(
     let Some(file) = input.session_id.as_deref().and_then(state::hints_file) else {
         return Ok(None);
     };
-    let context = input
-        .transcript_path
-        .as_deref()
-        .and_then(context::of_transcript);
+    let transcript = input.transcript_path.as_deref();
+    let context = transcript.and_then(context::of_transcript);
+    let compacted = transcript.and_then(context::last_compaction);
     let limits = limits();
-    let messages = announce(&file, context.as_ref(), limits.as_ref(), now)?;
+    let messages = announce(&file, context.as_ref(), limits.as_ref(), compacted, now)?;
     if messages.is_empty() {
         return Ok(None);
     }
@@ -112,7 +112,9 @@ mod tests {
                     .map(|_| {
                         s.spawn(|| {
                             barrier.wait();
-                            announce(&file, Some(&context), None, 1).unwrap().len()
+                            announce(&file, Some(&context), None, None, 1)
+                                .unwrap()
+                                .len()
                         })
                     })
                     .collect();

@@ -20,7 +20,18 @@ pub(crate) struct Record {
     /// Set on the records of a subagent transcript: the role it was spawned as.
     #[serde(rename = "attributionAgent")]
     pub attribution_agent: Option<String>,
+    #[serde(rename = "compactMetadata")]
+    pub compact: Option<CompactMeta>,
     pub message: Option<Message>,
+}
+
+/// The context before and after a compaction, as Claude Code writes them on a `compact_boundary`.
+#[derive(Deserialize)]
+pub(crate) struct CompactMeta {
+    #[serde(rename = "preTokens")]
+    pub pre_tokens: Option<u64>,
+    #[serde(rename = "postTokens")]
+    pub post_tokens: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -93,6 +104,18 @@ impl Record {
             model,
             tokens: usage.tokens(),
         })
+    }
+
+    /// Returns the tokens before and after this compaction, or `None` unless this is a
+    /// `compact_boundary` record that gives both.
+    pub fn compaction(&self) -> Option<(u64, u64)> {
+        if self.kind.as_deref() != Some("system")
+            || self.subtype.as_deref() != Some("compact_boundary")
+        {
+            return None;
+        }
+        let meta = self.compact.as_ref()?;
+        Some((meta.pre_tokens?, meta.post_tokens?))
     }
 }
 

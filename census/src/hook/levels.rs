@@ -21,15 +21,17 @@ const WEEKLY_LEFT_PCT: f64 = 30.0;
 const LIMIT_ADVICE: &str = "Avoid large parallel agent batches; tell Luca.";
 
 /// Returns the messages for the levels crossed and not yet in `shown`, and records them there.
-/// A context below the re-arm share clears the context levels.
+/// A context below the re-arm share clears the context levels; when one was shown, the message
+/// says the context was compacted, with the tokens before and after when `compacted` gives them.
 pub(super) fn decide(
     context: Option<&ContextUse>,
     limits: Option<&LimitStatus>,
+    compacted: Option<(u64, u64)>,
     now: u64,
     shown: &mut Shown,
 ) -> Vec<String> {
     let mut out = Vec::new();
-    out.extend(context.and_then(|c| context_message(c, shown)));
+    out.extend(context.and_then(|c| context_message(c, compacted, shown)));
     for w in limits.iter().flat_map(|l| &l.windows) {
         let forecast = limits.and_then(|l| l.forecast.as_ref());
         out.extend(limit_message(w, forecast, shown));
@@ -44,11 +46,15 @@ fn tokens(n: u64) -> String {
     format!("{}k", n.saturating_add(500) / 1000)
 }
 
-fn context_message(c: &ContextUse, shown: &mut Shown) -> Option<String> {
+fn context_message(
+    c: &ContextUse,
+    compacted: Option<(u64, u64)>,
+    shown: &mut Shown,
+) -> Option<String> {
     if c.percent < CONTEXT_REARM_PCT {
-        shown.remove("ctx60");
-        shown.remove("ctx80");
-        return None;
+        let info_shown = shown.remove("ctx60");
+        let handoff_shown = shown.remove("ctx80");
+        return (info_shown || handoff_shown).then(|| rearm_message(c, compacted));
     }
     let handoff = c.percent >= CONTEXT_HANDOFF_PCT;
     if c.percent < CONTEXT_INFO_PCT || shown.contains(if handoff { "ctx80" } else { "ctx60" }) {
@@ -68,6 +74,20 @@ fn context_message(c: &ContextUse, shown: &mut Shown) -> Option<String> {
         );
     }
     Some(text)
+}
+
+/// Words the re-arm: the context is small again, so earlier notes that it is full are outdated.
+fn rearm_message(c: &ContextUse, compacted: Option<(u64, u64)>) -> String {
+    let before_after = compacted.map_or_else(String::new, |(pre, post)| {
+        format!(" ({} → {})", tokens(pre), tokens(post))
+    });
+    format!(
+        "census: context was compacted{before_after}; now {} of {} (compaction at {}). \
+         Earlier notes that the context is nearly full are outdated.",
+        tokens(c.tokens),
+        tokens(c.threshold.tokens),
+        tokens(c.threshold.tokens)
+    )
 }
 
 /// The share rungs and the forecast of one window, once per window instance (its reset time).

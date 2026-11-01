@@ -20,21 +20,20 @@ impl Hook {
         Hook { home }
     }
 
-    /// Writes a transcript whose last request holds `tokens` of context; returns its path.
-    fn transcript(&self, tokens: u64) -> String {
-        let line = json!({"type": "assistant", "timestamp": "2026-10-14T08:00:10.000Z",
-            "message": {"id": "m1", "model": "claude-opus-5-5",
-                "usage": {"input_tokens": tokens, "output_tokens": 10}}});
-        let path = self
-            .home
-            .write("claude/projects/app/s1.jsonl", &format!("{line}\n"));
+    /// Writes a transcript of `lines`; returns its path.
+    fn transcript_lines(&self, lines: &[Value]) -> String {
+        let text: String = lines.iter().map(|line| format!("{line}\n")).collect();
+        let path = self.home.write("claude/projects/app/s1.jsonl", &text);
         path.display().to_string()
     }
 
+    /// Writes a transcript whose last request holds `tokens` of context; returns its path.
+    fn transcript(&self, tokens: u64) -> String {
+        self.transcript_lines(&[request(tokens)])
+    }
+
     fn input(&self, event: &str, tokens: u64) -> String {
-        json!({"hook_event_name": event, "session_id": "s1",
-            "transcript_path": self.transcript(tokens), "cwd": "/tmp"})
-        .to_string()
+        hook_input(event, &self.transcript(tokens))
     }
 
     #[expect(
@@ -96,6 +95,22 @@ fn now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// A transcript record of an API request that holds `tokens` of context.
+fn request(tokens: u64) -> Value {
+    json!({"type": "assistant", "timestamp": "2026-10-14T08:00:10.000Z",
+        "message": {"id": "m1", "model": "claude-opus-5-5",
+            "usage": {"input_tokens": tokens, "output_tokens": 10}}})
+}
+
+fn hook_input(event: &str, transcript: &str) -> String {
+    json!({"hook_event_name": event, "session_id": "s1",
+        "transcript_path": transcript, "cwd": "/tmp"})
+    .to_string()
+}
+
+const REARM: &str = "census: context was compacted; now 100k of 400k (compaction at 400k). \
+    Earlier notes that the context is nearly full are outdated.";
+
 #[test]
 fn subagent_input_prints_nothing() {
     let h = Hook::new("hook-sub");
@@ -135,12 +150,40 @@ fn context_levels_show_again_after_a_drop_below_half() {
     let h = Hook::new("hook-rearm");
     assert!(h.hook(h.input("PostToolUse", 330_000).as_bytes()).is_some());
     assert_eq!(h.hook(h.input("PostToolUse", 335_000).as_bytes()), None);
-    assert_eq!(h.hook(h.input("PostToolUse", 100_000).as_bytes()), None);
+    assert_eq!(
+        h.hook(h.input("PostToolUse", 100_000).as_bytes())
+            .as_deref(),
+        Some(REARM)
+    );
     let again = h.hook(h.input("PostToolUse", 245_000).as_bytes());
     assert_eq!(
         again.as_deref(),
         Some("census: context 245k of 400k (compaction at 400k).")
     );
+    assert_eq!(
+        h.hook(h.input("PostToolUse", 100_000).as_bytes())
+            .as_deref(),
+        Some(REARM)
+    );
+}
+
+#[test]
+fn the_compaction_message_says_once_how_many_tokens_it_removed() {
+    let h = Hook::new("hook-compaction-tokens");
+    assert!(h.hook(h.input("PostToolUse", 330_000).as_bytes()).is_some());
+    let boundary = json!({"type": "system", "subtype": "compact_boundary",
+        "timestamp": "2026-10-14T08:00:20.000Z",
+        "compactMetadata": {"trigger": "manual", "preTokens": 345_000, "postTokens": 15_000}});
+    let path = h.transcript_lines(&[request(100_000), boundary]);
+    assert_eq!(
+        h.hook(hook_input("PostToolUse", &path).as_bytes())
+            .as_deref(),
+        Some(
+            "census: context was compacted (345k → 15k); now 100k of 400k (compaction at 400k). \
+             Earlier notes that the context is nearly full are outdated."
+        )
+    );
+    assert_eq!(h.hook(hook_input("PostToolUse", &path).as_bytes()), None);
 }
 
 #[test]

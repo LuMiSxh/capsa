@@ -150,6 +150,15 @@ pub fn last_context(transcript: &Path) -> Option<(String, u64)> {
     find_last(&std::fs::read_to_string(transcript).ok()?)
 }
 
+/// Returns the tokens before and after the last compaction at the end of a transcript that records
+/// both numbers.
+pub fn last_compaction(transcript: &Path) -> Option<(u64, u64)> {
+    let (tail, _) = read_tail(transcript)?;
+    transcript::records(&tail)
+        .rev()
+        .find_map(|record| record.compaction())
+}
+
 fn find_last(text: &str) -> Option<(String, u64)> {
     transcript::records(text)
         .rev()

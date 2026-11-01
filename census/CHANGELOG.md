@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1]
+
+### Fixed
+
+- The hook tells the main agent once after a compaction that the context is small again, so stale
+  notes in the compaction summary do not trigger a handoff.
+
 ## [0.1.0]
 
 ### Added
