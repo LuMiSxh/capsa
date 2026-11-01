@@ -7,6 +7,7 @@ use super::scan;
 use super::state::{self, Layout};
 use super::{Opts, UpdateReport};
 use std::collections::HashSet;
+use std::time::Instant;
 
 type Result<T> = std::result::Result<T, LedgerError>;
 
@@ -22,13 +23,30 @@ pub(super) fn run(layout: &Layout, opts: &Opts) -> Result<UpdateReport> {
     let mut fresh = Vec::new();
     if !todo.is_empty() {
         let mut seen: HashSet<String> = state::load_ids(&layout.rows, folded_before)?;
-        for (path, meta) in &todo {
+        for (i, (path, meta)) in todo.iter().enumerate() {
+            if i > 0 && opts.deadline.is_some_and(|d| Instant::now() >= d) {
+                report.partial = true;
+                break;
+            }
             let Some(st) = index.files.get_mut(path.to_string_lossy().as_ref()) else {
                 continue;
             };
-            if let Ok(s) = scan::scan_file(path, meta, st, folded_before, &mut seen, &mut fresh) {
+            let scanned = scan::scan_file(
+                path,
+                meta,
+                st,
+                folded_before,
+                &mut seen,
+                &mut fresh,
+                opts.deadline,
+            );
+            if let Ok(s) = scanned {
                 report.bytes_read += s.bytes;
                 report.files_scanned += 1;
+                if s.partial {
+                    report.partial = true;
+                    break;
+                }
             }
         }
         dirty = true;

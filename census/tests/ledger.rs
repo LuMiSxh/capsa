@@ -9,6 +9,7 @@ use census::ledger::{Filter, Ledger, Opts};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 const BASE: u64 = 1_792_583_740;
 
@@ -331,6 +332,98 @@ fn rows_appended_before_a_lost_index_are_not_counted_twice() {
     let l = e.update(BASE + 20);
     assert_eq!(l.rows().unwrap().len(), 2);
     assert_eq!(l.report().rows_added, 0);
+}
+
+#[test]
+fn torn_last_line_in_rows_is_cut_before_the_next_append() {
+    let e = env();
+    let f = e.file("a.jsonl");
+    append(&f, &rec("m1", BASE, None));
+    e.update(BASE + 10);
+    append(&e.state.join("rows.jsonl"), r#"{"id":"torn","t":17"#);
+    append(&f, &rec("m2", BASE + 5, None));
+    let l = e.update(BASE + 20);
+    assert_eq!(l.rows().unwrap().len(), 2);
+    let text = std::fs::read_to_string(e.state.join("rows.jsonl")).unwrap();
+    assert!(text.ends_with('\n'));
+    assert_eq!(text.lines().count(), 2);
+    assert!(text.lines().all(|l| l.starts_with('{') && l.ends_with('}')));
+}
+
+/// Updates with a deadline that has already passed until nothing is left; returns the update count.
+fn drain(e: &Env, now: u64) -> usize {
+    let mut runs = 0;
+    loop {
+        let opts = Opts {
+            deadline: Some(Instant::now()),
+            ..e.opts(now)
+        };
+        let l = Ledger::open_and_update(&opts).unwrap();
+        runs += 1;
+        assert!(l.report().bytes_read > 0 || !l.report().partial);
+        if !l.report().partial {
+            return runs;
+        }
+        assert!(runs < 100, "partial updates do not converge");
+    }
+}
+
+#[test]
+fn expired_deadline_keeps_progress_file_by_file_and_converges() {
+    let e = env();
+    for (i, name) in ["a", "b", "c"].iter().enumerate() {
+        let t = BASE + i as u64 * 10;
+        append(
+            &e.file(&format!("{name}.jsonl")),
+            &(rec(&format!("{name}1"), t, None) + &rec(&format!("{name}2"), t + 1, None)),
+        );
+    }
+    let first = Ledger::open_and_update(&Opts {
+        deadline: Some(Instant::now()),
+        ..e.opts(BASE + 100)
+    })
+    .unwrap();
+    assert!(first.report().partial);
+    assert_eq!(first.report().files_scanned, 1);
+    assert_eq!(first.rows().unwrap().len(), 2);
+
+    assert!(drain(&e, BASE + 100) >= 2);
+    let full = env();
+    for name in ["a", "b", "c"] {
+        std::fs::copy(
+            e.file(&format!("{name}.jsonl")),
+            full.file(&format!("{name}.jsonl")),
+        )
+        .unwrap();
+    }
+    let all = full.update(BASE + 100);
+    assert!(!all.report().partial);
+    let drained = e.update(BASE + 100);
+    assert_eq!(total(&drained), total(&all));
+    assert_eq!(total(&drained).requests, 6);
+}
+
+#[test]
+fn expired_deadline_stops_inside_a_large_file_without_double_counting() {
+    let e = env();
+    let n = 20_000_u64;
+    let body: String = (0..n)
+        .map(|i| rec(&format!("m{i}"), BASE + i, None))
+        .collect();
+    append(&e.file("big.jsonl"), &body);
+    let first = Ledger::open_and_update(&Opts {
+        deadline: Some(Instant::now()),
+        ..e.opts(BASE + n + 10)
+    })
+    .unwrap();
+    assert!(first.report().partial);
+    let got = first.rows().unwrap().len();
+    assert!(got > 0 && (got as u64) < n);
+
+    assert!(drain(&e, BASE + n + 10) >= 1);
+    let done = e.update(BASE + n + 10);
+    assert_eq!(total(&done).requests, n);
+    assert_eq!(done.rows().unwrap().len() as u64, n);
 }
 
 #[test]

@@ -31,7 +31,19 @@ async fn a_rate_limit_line_is_forwarded_unchanged_and_each_window_is_recorded_on
     assert_eq!(h.recv_line().await, RATE_LIMIT_LINE);
     h.recv_until(|m| m["id"] == 3).await;
 
-    let text = std::fs::read_to_string(state.join("census").join("snapshots")).unwrap();
+    // The proxy writes snapshots off the forwarding path, so give the writes a moment to land.
+    let file = state.join("census").join("snapshots");
+    let mut text = String::new();
+    for _ in 0..200 {
+        text = std::fs::read_to_string(&file).unwrap_or_default();
+        if text.lines().count() >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    // Let a wrongly repeated write land too before counting.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    text = std::fs::read_to_string(&file).unwrap_or(text);
     let rows: Vec<Value> = text
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())

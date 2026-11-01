@@ -34,6 +34,26 @@ struct Input {
     agent_id: Option<Value>,
 }
 
+/// Reads, decides and records the shown levels under the session's lock, so two concurrent calls
+/// never print the same level. A call that cannot get the lock prints nothing.
+fn announce(
+    file: &std::path::Path,
+    context: Option<&context::ContextUse>,
+    limits: Option<&LimitStatus>,
+    now: u64,
+) -> Result<Vec<String>, HookError> {
+    let Some(_guard) = state::lock(file)? else {
+        return Ok(Vec::new());
+    };
+    let mut shown = state::load(file)?;
+    let before = shown.clone();
+    let messages = levels::decide(context, limits, now, &mut shown);
+    if shown != before {
+        state::store(file, &shown)?;
+    }
+    Ok(messages)
+}
+
 /// Returns the hook output for `input`, the JSON text of `hookSpecificOutput`, or `None` when
 /// there is nothing new to say: a subagent, another event, or no level crossed.
 ///
@@ -55,21 +75,50 @@ pub fn run(
     let Some(file) = input.session_id.as_deref().and_then(state::hints_file) else {
         return Ok(None);
     };
-    let mut shown = state::load(&file)?;
-    let before = shown.clone();
     let context = input
         .transcript_path
         .as_deref()
         .and_then(context::of_transcript);
     let limits = limits();
-    let messages = levels::decide(context.as_ref(), limits.as_ref(), now, &mut shown);
-    if shown != before {
-        state::store(&file, &shown)?;
-    }
+    let messages = announce(&file, context.as_ref(), limits.as_ref(), now)?;
     if messages.is_empty() {
         return Ok(None);
     }
     let text: String = messages.join(" ").chars().take(MAX_CHARS).collect();
     let out = json!({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}});
     Ok(Some(out.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{Threshold, at};
+    use std::sync::Barrier;
+
+    #[test]
+    fn concurrent_calls_announce_a_level_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("hints").join("s1");
+        let threshold = Threshold {
+            tokens: 100,
+            source: "test".to_owned(),
+        };
+        let context = at(70, None, threshold);
+        for _ in 0..20 {
+            let _ = std::fs::remove_dir_all(dir.path().join("hints"));
+            let barrier = Barrier::new(2);
+            let sent: usize = std::thread::scope(|s| {
+                let calls: Vec<_> = (0..2)
+                    .map(|_| {
+                        s.spawn(|| {
+                            barrier.wait();
+                            announce(&file, Some(&context), None, 1).unwrap().len()
+                        })
+                    })
+                    .collect();
+                calls.into_iter().map(|c| c.join().unwrap()).sum()
+            });
+            assert_eq!(sent, 1);
+        }
+    }
 }

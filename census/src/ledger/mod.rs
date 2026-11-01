@@ -21,7 +21,7 @@ pub use model::{Filter, Hourly, Row, Tokens, family_of};
 use state::Layout;
 use std::cell::OnceCell;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Days of raw rows kept; the weekly limit window needs seven.
 pub const RETENTION_DAYS: u64 = 8;
@@ -39,6 +39,9 @@ pub struct Opts {
     pub now: u64,
     /// Seconds raw rows are kept before they fold into hourly aggregates.
     pub retention_s: u64,
+    /// When set, the update stops reading at this time, keeps what it read and reports
+    /// [`UpdateReport::partial`]. The next update continues from there.
+    pub deadline: Option<Instant>,
 }
 
 impl Opts {
@@ -48,6 +51,7 @@ impl Opts {
             state_dir,
             now,
             retention_s: RETENTION_DAYS * 86_400,
+            deadline: None,
         }
     }
 
@@ -75,6 +79,8 @@ pub struct UpdateReport {
     pub rows_added: usize,
     /// Rows moved into hourly aggregates.
     pub folded: usize,
+    /// True when the deadline stopped the update before all transcript bytes were read.
+    pub partial: bool,
 }
 
 /// Gives read access to the ledger state after an update.
@@ -115,11 +121,23 @@ impl Ledger {
     /// # Errors
     /// Fails when `rows.jsonl` cannot be read.
     pub fn rows(&self) -> Result<&[Row], LedgerError> {
-        if self.rows.get().is_none() {
-            let folded = state::folded_before(&self.layout.hourly);
-            let _ = self.rows.set(state::load_rows(&self.layout.rows, folded)?);
-        }
+        self.load()?;
         Ok(self.rows.get().map_or(&[], Vec::as_slice))
+    }
+
+    /// Reads the hourly aggregates and the raw rows together under the shared lock, so a fold
+    /// running in between cannot make a row count twice or not at all. Without the lock (a long
+    /// writer), the hourly file is read first and rows it already holds are dropped.
+    fn load(&self) -> Result<(), LedgerError> {
+        if self.rows.get().is_some() && self.hourly.get().is_some() {
+            return Ok(());
+        }
+        let _guard = state::lock_shared(&self.layout.lock, LOCK_WAIT);
+        let (folded, hourly) = state::load_hourly(&self.layout.hourly)?;
+        let rows = state::load_rows(&self.layout.rows, folded)?;
+        let _ = self.hourly.set(hourly);
+        let _ = self.rows.set(rows);
+        Ok(())
     }
 
     /// Returns the hourly aggregates, ordered by hour.
@@ -127,10 +145,7 @@ impl Ledger {
     /// # Errors
     /// Fails when `hourly.jsonl` cannot be read.
     pub fn hourly(&self) -> Result<&[Hourly], LedgerError> {
-        if self.hourly.get().is_none() {
-            let (_, hourly) = state::load_hourly(&self.layout.hourly)?;
-            let _ = self.hourly.set(hourly);
-        }
+        self.load()?;
         Ok(self.hourly.get().map_or(&[], Vec::as_slice))
     }
 

@@ -205,10 +205,12 @@ impl Out {
                     Self::queue(&self.client, &self.a2c, line);
                 }
                 Action::Census { file, snapshot } => {
-                    if let Err(err) = append_to(&file, &snapshot) {
-                        self.logger
-                            .log(Dir::Pons, format!("census: {err}").as_bytes());
-                    }
+                    let logger = self.logger.clone();
+                    tokio::task::spawn_blocking(move || {
+                        if let Err(err) = append_to(&file, &snapshot) {
+                            logger.log(Dir::Pons, format!("census: {err}").as_bytes());
+                        }
+                    });
                 }
                 Action::Note(note) => self.logger.log(Dir::Pons, note.as_bytes()),
             }

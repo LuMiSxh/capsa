@@ -9,6 +9,7 @@ use std::path::PathBuf;
 /// The log is moved aside once it passes this size.
 const LOG_LIMIT: u64 = 256 * 1024;
 const ID_LIMIT: usize = 128;
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
 
 fn dir() -> PathBuf {
     state_dir("census")
@@ -30,6 +31,32 @@ pub(super) fn load(file: &std::path::Path) -> std::io::Result<Shown> {
         Ok(text) => Ok(text.lines().map(str::to_owned).collect()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Shown::new()),
         Err(e) => Err(e),
+    }
+}
+
+/// Takes an exclusive lock on a sibling `.lock` file of `file`, retrying for about 10 ms. `None`
+/// means another hook call holds it. The lock lasts until the returned file is dropped.
+pub(super) fn lock(file: &std::path::Path) -> std::io::Result<Option<std::fs::File>> {
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(file.with_extension("lock"))?;
+    let start = std::time::Instant::now();
+    loop {
+        match f.try_lock() {
+            Ok(()) => return Ok(Some(f)),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if start.elapsed() >= LOCK_WAIT {
+                    return Ok(None);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(std::fs::TryLockError::Error(e)) => return Err(e),
+        }
     }
 }
 

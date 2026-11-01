@@ -7,7 +7,7 @@ use super::model::{Hourly, Row};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -191,7 +191,33 @@ pub(super) fn load_ids(path: &Path, folded_before: u64) -> Result<HashSet<String
         .collect())
 }
 
-/// Appends rows as whole lines in one write and flushes them.
+/// Cuts a trailing line without newline, left by a writer killed mid-write, so the next append
+/// does not glue onto it. The caller holds the writer lock.
+fn drop_partial_tail(f: &mut File) -> io::Result<()> {
+    let len = f.metadata()?.len();
+    if len == 0 {
+        return Ok(());
+    }
+    let mut end = len;
+    let mut block = vec![0_u8; 64 * 1024];
+    while end > 0 {
+        let start = end.saturating_sub(block.len() as u64);
+        let n = usize::try_from(end - start).unwrap_or(block.len());
+        f.seek(SeekFrom::Start(start))?;
+        f.read_exact(&mut block[..n])?;
+        if let Some(i) = block[..n].iter().rposition(|&b| b == b'\n') {
+            let keep = start + i as u64 + 1;
+            if keep < len {
+                f.set_len(keep)?;
+            }
+            return Ok(());
+        }
+        end = start;
+    }
+    f.set_len(0)
+}
+
+/// Appends rows as whole lines in one write and flushes them. A torn last line is cut first.
 pub(super) fn append_rows(path: &Path, rows: &[Row]) -> Result<()> {
     if rows.is_empty() {
         return Ok(());
@@ -203,9 +229,13 @@ pub(super) fn append_rows(path: &Path, rows: &[Row]) -> Result<()> {
     }
     let mut f = OpenOptions::new()
         .create(true)
-        .append(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
         .open(path)
         .map_err(io_at(path))?;
+    drop_partial_tail(&mut f).map_err(io_at(path))?;
+    f.seek(SeekFrom::End(0)).map_err(io_at(path))?;
     f.write_all(&body).map_err(io_at(path))?;
     f.sync_data().map_err(io_at(path))
 }
@@ -221,6 +251,30 @@ pub(super) fn rewrite_rows(path: &Path, rows: &[Row]) -> Result<()> {
 
 /// Holds the exclusive writer lock until dropped.
 pub(super) struct Lock(#[expect(dead_code, reason = "the open file keeps the lock")] File);
+
+/// Holds a shared reader lock until dropped.
+pub(super) struct SharedLock(#[expect(dead_code, reason = "the open file keeps the lock")] File);
+
+/// Takes the shared lock, retrying until `wait` has passed. `None` means a writer holds it or the
+/// lock file cannot be opened; the caller then reads without it.
+pub(super) fn lock_shared(path: &Path, wait: Duration) -> Option<SharedLock> {
+    let f = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .ok()?;
+    let start = Instant::now();
+    loop {
+        match f.try_lock_shared() {
+            Ok(()) => return Some(SharedLock(f)),
+            Err(std::fs::TryLockError::WouldBlock) if start.elapsed() < wait => {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(_) => return None,
+        }
+    }
+}
 
 /// Takes the lock, retrying until `wait` has passed; `None` means another process holds it.
 pub(super) fn try_lock(path: &Path, wait: Duration) -> Result<Option<Lock>> {

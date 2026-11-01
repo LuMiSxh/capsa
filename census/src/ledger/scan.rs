@@ -8,6 +8,10 @@ use std::collections::HashSet;
 use std::fs::{File, Metadata};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+/// Bytes read between two looks at the deadline; the first chunk is always read.
+const CHUNK: u64 = 2 << 20;
 
 /// Lists the `*.jsonl` files below the roots, subagent transcripts included.
 pub(super) fn list_files(roots: &[PathBuf]) -> Vec<(PathBuf, Metadata)> {
@@ -81,10 +85,13 @@ fn key(path: &Path) -> String {
 #[derive(Default)]
 pub(super) struct ScanStats {
     pub bytes: u64,
+    /// The deadline stopped the scan at a line boundary before the end of the file.
+    pub partial: bool,
 }
 
 /// Reads the complete new lines of a file into `out`. Rows older than `folded_before` and ids
-/// already in `seen` are skipped. A trailing line without newline stays unread.
+/// already in `seen` are skipped. A trailing line without newline stays unread. After the first
+/// chunk, a passed `deadline` stops the scan; the offset then sits after the last line read.
 pub(super) fn scan_file(
     path: &Path,
     meta: &Metadata,
@@ -92,12 +99,23 @@ pub(super) fn scan_file(
     folded_before: u64,
     seen: &mut HashSet<String>,
     out: &mut Vec<Row>,
+    deadline: Option<Instant>,
 ) -> std::io::Result<ScanStats> {
     let mut reader = BufReader::with_capacity(1 << 20, File::open(path)?);
     reader.seek(SeekFrom::Start(st.offset))?;
     let mut stats = ScanStats::default();
     let mut buf = Vec::new();
+    let mut checked = 0;
     loop {
+        if let Some(d) = deadline
+            && stats.bytes - checked >= CHUNK
+        {
+            checked = stats.bytes;
+            if Instant::now() >= d {
+                stats.partial = true;
+                break;
+            }
+        }
         buf.clear();
         if reader.read_until(b'\n', &mut buf)? == 0 || buf.last() != Some(&b'\n') {
             break;
@@ -114,6 +132,11 @@ pub(super) fn scan_file(
         st.last_t = Some(row.t);
         out.push(row);
     }
-    st.size = meta.len().max(st.offset);
+    // A partial scan must not look finished to `pending`, which skips a file whose size is known.
+    st.size = if stats.partial {
+        st.offset
+    } else {
+        meta.len().max(st.offset)
+    };
     Ok(stats)
 }

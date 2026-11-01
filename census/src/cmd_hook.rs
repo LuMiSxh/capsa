@@ -14,6 +14,9 @@ use std::time::{Duration, Instant};
 const MAX_INPUT: u64 = 1 << 20;
 /// Time after which the limits are skipped for this call.
 const LIMITS_DEADLINE: Duration = Duration::from_millis(150);
+/// Time after which the ledger update stops reading and saves its progress, early enough for the
+/// helper to finish before `LIMITS_DEADLINE`. A cold ledger so warms over a few calls.
+const LEDGER_DEADLINE: Duration = Duration::from_millis(100);
 
 pub fn run() -> Outcome {
     let start = Instant::now();
@@ -55,7 +58,7 @@ fn limits_within(start: Instant) -> Option<LimitStatus> {
     let now = now_secs();
     std::thread::Builder::new()
         .spawn(move || {
-            let _ = tx.send(limits::status(now).ok());
+            let _ = tx.send(limits::status_by(now, Some(start + LEDGER_DEADLINE)).ok());
         })
         .ok()?;
     rx.recv_timeout(LIMITS_DEADLINE.saturating_sub(start.elapsed()))

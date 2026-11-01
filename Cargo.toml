@@ -17,7 +17,6 @@ acus-walk = { path = "acus/crates/acus-walk" }
 acus-syntax = { path = "acus/crates/acus-syntax", default-features = false }
 acus-edit = { path = "acus/crates/acus-edit" }
 acus-search = { path = "acus/crates/acus-search" }
-
 acus-decide = { path = "acus/crates/acus-decide" }
 acus-guard = { path = "acus/crates/acus-guard", default-features = false }
 # shared

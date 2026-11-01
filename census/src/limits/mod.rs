@@ -26,6 +26,7 @@ use clock::HOUR_S;
 use cost::Costed;
 use pattern::{Expect, WEEK_HOURS};
 use serde::Serialize;
+use std::time::Instant;
 use window::Span;
 
 /// A snapshot this young is the reading itself; an older one only calibrates the estimate.
@@ -132,7 +133,16 @@ impl Table {
 /// # Errors
 /// Fails when the ledger or the snapshot file cannot be read or written.
 pub fn status(now: u64) -> Result<LimitStatus, LimitsError> {
-    let (ledger, snapshots) = load(now)?;
+    status_by(now, None)
+}
+
+/// Like [`status`], but the ledger update stops reading transcripts at `deadline`, keeps its
+/// progress and the limits are computed from what is read so far.
+///
+/// # Errors
+/// Fails when the ledger or the snapshot file cannot be read or written.
+pub fn status_by(now: u64, deadline: Option<Instant>) -> Result<LimitStatus, LimitsError> {
+    let (ledger, snapshots) = load(now, deadline)?;
     let history = History {
         rows: ledger.rows()?,
         hourly: ledger.hourly()?,
@@ -146,7 +156,7 @@ pub fn status(now: u64) -> Result<LimitStatus, LimitsError> {
 /// # Errors
 /// Fails when the ledger or the snapshot file cannot be read or written.
 pub fn usage_by(now: u64, kind: Kind) -> Result<Table, LimitsError> {
-    let (ledger, snapshots) = load(now)?;
+    let (ledger, snapshots) = load(now, None)?;
     let costs = Costed::new(ledger.rows()?, ledger.hourly()?);
     let expect = Expect::build(&costs, weekly_spans(&snapshots), now);
     Ok(Table {
@@ -156,8 +166,11 @@ pub fn usage_by(now: u64, kind: Kind) -> Result<Table, LimitsError> {
     })
 }
 
-fn load(now: u64) -> Result<(Ledger, Vec<Snapshot>), LimitsError> {
-    let ledger = Ledger::open_and_update(&Opts::defaults(now))?;
+fn load(now: u64, deadline: Option<Instant>) -> Result<(Ledger, Vec<Snapshot>), LimitsError> {
+    let ledger = Ledger::open_and_update(&Opts {
+        deadline,
+        ..Opts::defaults(now)
+    })?;
     let snapshots = census_snapshot::read_since(0)?;
     Ok((ledger, snapshots))
 }
@@ -281,7 +294,7 @@ fn full_at(used: f64, k: f64, usd_per_hour: f64, now: u64, end: u64) -> Full {
     if pct_per_s <= 0.0 {
         return Full::AfterReset;
     }
-    let t = now + ((100.0 - used) / pct_per_s) as u64;
+    let t = now.saturating_add(((100.0 - used) / pct_per_s) as u64);
     if t < end {
         Full::At { t }
     } else {
