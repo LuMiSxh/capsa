@@ -30,6 +30,20 @@ fn finish_entry_uses_retitled_card_and_last_agent_text() {
 }
 
 #[test]
+fn a_task_notification_marker_logs_its_raw_meta() {
+    let t0 = Instant::now();
+    let mut e = engine();
+    e.on_client(&prompt(1), t0);
+    let out = e.on_agent(&task_notification(), t0 + secs(1));
+    let note = notes(&out)
+        .into_iter()
+        .find(|n| n.starts_with("task-notification marker in"))
+        .expect("the marker is logged");
+    assert!(note.contains(r#""kind":"task-notification""#), "{note}");
+    assert!(note.contains(r#""producer":"session-task""#), "{note}");
+}
+
+#[test]
 fn finish_entry_can_be_disabled() {
     let t0 = Instant::now();
     let mut e = engine();

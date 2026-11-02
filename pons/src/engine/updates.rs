@@ -190,6 +190,12 @@ impl Engine {
                 // The adapter ends the turn that handled the notification with
                 // this marker, so its text is complete: finish the subagent
                 // now and let the held entries out.
+                // The marker names no task; log its raw `_meta` so a log shows
+                // whether a future adapter adds an id to match on.
+                let meta = update.get("_meta").unwrap_or(&Value::Null);
+                out.push(Action::Note(format!(
+                    "task-notification marker in {sid}: _meta {meta}"
+                )));
                 self.folds.note_notification(sid, now);
                 let finished = self.folds.poll(now);
                 out.extend(self.finished(finished));
