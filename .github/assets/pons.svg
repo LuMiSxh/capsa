@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<defs><linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#363c4b"/><stop offset="1" stop-color="#1b1e27"/></linearGradient><radialGradient id="g" cx=".44" cy=".4" r=".6"><stop offset="0" stop-color="#ee7346" stop-opacity=".3"/><stop offset="1" stop-color="#ee7346" stop-opacity="0"/></radialGradient><filter id="s" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="9"/></filter><filter id="s2" x="-20%" y="-60%" width="140%" height="220%"><feGaussianBlur stdDeviation="3"/></filter><linearGradient id="nT" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#ece5d8"/><stop offset="1" stop-color="#fbf8f2"/></linearGradient><linearGradient id="nF" x1="0" y1="0" x2="0" y2="1.6"><stop offset="0" stop-color="#d6cdbe"/><stop offset="1" stop-color="#a39a8b"/></linearGradient><linearGradient id="nR" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a39a8b"/><stop offset="1" stop-color="#6f675b"/></linearGradient><linearGradient id="aT" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#ee7346"/><stop offset="1" stop-color="#ffb391"/></linearGradient><linearGradient id="ia" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6f675b"/><stop offset="1" stop-color="#4a443c"/></linearGradient><linearGradient id="ring" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbf8f2"/><stop offset="1" stop-color="#bfb5a5"/></linearGradient><clipPath id="k"><path d="M337 344A110 110 0 0 0 117 344Z"/></clipPath><clipPath id="kb"><rect x="0" y="0" width="512" height="344"/></clipPath></defs>
+<rect width="512" height="512" rx="112" fill="url(#t)"/><rect width="512" height="512" rx="112" fill="url(#g)"/><rect x="2" y="2" width="508" height="508" rx="110" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="4"/>
+<ellipse cx="277.0" cy="340" rx="196" ry="30" fill="#000" fill-opacity=".55" filter="url(#s)"/>
+<path d="M137 356H317M165 369H289" stroke="#ffb391" stroke-opacity=".4" stroke-width="3.5" stroke-linecap="round"/>
+<polygon points="70,212 384,212 444,172 130,172" fill="url(#nT)"/>
+<path d="M70 212H384V344H337A110 110 0 0 0 117 344H70Z" fill="url(#nF)"/>
+<polygon points="384,212 444,172 444,304 384,344" fill="url(#nR)"/>
+<g clip-path="url(#k)"><path d="M337 344A110 110 0 0 0 117 344Z" fill="url(#ia)"/><path d="M337 344A110 110 0 0 0 117 344Z" fill="#20232b" fill-opacity=".85" transform="translate(60 -40)"/></g>
+<path d="M355 344A128 128 0 0 0 99 344H117A110 110 0 0 1 337 344Z" fill="url(#ring)" clip-path="url(#kb)"/>
+<path d="M120.7 315.5L103.4 310.9M131.7 289L116.1 280M149.2 266.2L136.5 253.5M172 248.7L163 233.1M198.5 237.7L193.9 220.4M255.5 237.7L260.1 220.4M282 248.7L291 233.1M304.8 266.2L317.5 253.5M322.3 289L337.9 280M333.3 315.5L350.6 310.9" stroke="#a39a8b" stroke-width="2.5"/>
+<polygon points="212,237.1 242,237.1 248.1,213.7 205.9,213.7" fill="#ee7346" stroke="#a23e1d" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="85,202 399,202 429,182 115,182" fill="url(#aT)"/>
+<polyline points="85,202 399,202" stroke="#a23e1d" stroke-width="2"/>
+<path d="M70 226H384" stroke="#000" stroke-opacity=".12" stroke-width="4"/>
+<polyline points="70,344 70,212 384,212" fill="none" stroke="#fff" stroke-opacity=".75" stroke-width="2.5" stroke-linejoin="round"/>
+</svg>

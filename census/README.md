@@ -1,5 +1,5 @@
 <div align="center">
-<img src="../assets/github/census.svg" width="112" height="112" alt="census logo" />
+<img src="../.github/assets/census.svg" width="112" height="112" alt="census logo" />
 
 # census
 

@@ -1,5 +1,5 @@
 <div align="center">
-<img src="../assets/github/pons.svg" width="112" height="112" alt="pons logo" />
+<img src="../.github/assets/pons.svg" width="112" height="112" alt="pons logo" />
 
 # pons
 

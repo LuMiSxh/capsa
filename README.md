@@ -1,5 +1,5 @@
 <div align="center">
-<img src="assets/github/capsa.svg" width="112" height="112" alt="Capsa logo" />
+<img src=".github/assets/capsa.svg" width="112" height="112" alt="Capsa logo" />
 
 # Capsa
 

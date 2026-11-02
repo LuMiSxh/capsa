@@ -1,5 +1,5 @@
 <div align="center">
-<img src="../assets/github/acus.svg" width="112" height="112" alt="Acus logo" />
+<img src="../.github/assets/acus.svg" width="112" height="112" alt="Acus logo" />
 
 # Acus
 
