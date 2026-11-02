@@ -49,6 +49,8 @@ impl Hook {
             .env("XDG_STATE_HOME", self.home.path().join("state"))
             .env("CLAUDE_CONFIG_DIR", self.home.path().join("claude"))
             .env("HOME", self.home.path())
+            .env("USERPROFILE", self.home.path())
+            .env("LOCALAPPDATA", self.home.path().join("state"))
             .env("CENSUS_NOW", self.now.to_string())
             .env_remove("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
             .env_remove("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")
@@ -85,8 +87,12 @@ impl Hook {
     fn snapshot(&self, window: &str, used: f64, resets_at: u64) {
         let line = json!({"t": self.now, "source": "statusline", "window": window,
             "used_percentage": used, "resets_at": resets_at});
-        self.home
-            .write("state/census/snapshots", &format!("{line}\n"));
+        let rel = if cfg!(windows) {
+            "state/census/state/snapshots"
+        } else {
+            "state/census/snapshots"
+        };
+        self.home.write(rel, &format!("{line}\n"));
     }
 }
 
@@ -241,13 +247,15 @@ fn self_skill_prints_the_skill_and_install_writes_it() {
     let h = Hook::new("hook-skill");
     let out = h.run(&["self", "skill"], b"");
     assert_eq!(out.status.code(), Some(0));
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    // A Windows checkout may store the skill with CRLF line endings, so line endings are compared as LF.
+    let text = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
     assert!(text.starts_with("---\nname: census\n"), "{text}");
     assert!(text.lines().count() < 60);
     let out = h.run(&["self", "skill", "--install"], b"");
     assert_eq!(out.status.code(), Some(0));
     let installed = h.home.path().join(".claude/skills/census/SKILL.md");
-    assert_eq!(std::fs::read_to_string(installed).expect("installed"), text);
+    let installed = std::fs::read_to_string(installed).expect("installed");
+    assert_eq!(installed.replace("\r\n", "\n"), text);
 }
 
 #[test]

@@ -36,8 +36,10 @@ fn setup_with(exe: &Path, home: &Scratch, args: &[&str]) -> Output {
         .args(["self", "setup"])
         .args(args)
         .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
         .env("CLAUDE_CONFIG_DIR", home.path().join("claude"))
         .env("XDG_STATE_HOME", home.path().join("state"))
+        .env("LOCALAPPDATA", home.path().join("state"))
         .env_remove("CAPSA_HUMAN");
     output_retrying_busy(&mut command).expect("run census self setup")
 }
@@ -109,6 +111,8 @@ fn runs_census(command: &str, args: &str) -> bool {
         .expect("canonicalize the census binary");
     command
         .strip_suffix(args)
+        // The Windows command quotes its path, so the quotes are dropped before the path is read.
+        .map(|path| path.trim_matches('"'))
         .and_then(|path| Path::new(path).canonicalize().ok())
         .is_some_and(|path| path == exe)
 }

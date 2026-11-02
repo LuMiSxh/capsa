@@ -236,9 +236,13 @@ fn wire_hook(hooks: &mut Map<String, Value>, event: &str, command: &str) -> Resu
 }
 
 /// The command Claude Code runs: this binary, quoted when its path has a space, then `sub`.
+/// On Windows the path always gets forward slashes and quotes: Claude Code runs commands in Git
+/// Bash, where a backslash is an escape.
 fn census_command(exe: &Path, sub: &str) -> String {
     let exe = exe.display().to_string();
-    if exe.contains(' ') {
+    if cfg!(windows) {
+        format!("\"{}\" {sub}", exe.replace(std::path::MAIN_SEPARATOR, "/"))
+    } else if exe.contains(' ') {
         format!("\"{exe}\" {sub}")
     } else {
         format!("{exe} {sub}")
@@ -383,6 +387,7 @@ mod tests {
         assert!(!left_behind);
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn a_binary_path_with_a_space_is_quoted() {
         assert_eq!(
@@ -393,5 +398,13 @@ mod tests {
             census_command(Path::new("/My Apps/census"), "hook"),
             "\"/My Apps/census\" hook"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_binary_path_is_quoted_with_forward_slashes_and_still_recognised() {
+        let command = census_command(Path::new(r"C:\My Apps\census.exe"), "hook");
+        assert_eq!(command, r#""C:/My Apps/census.exe" hook"#);
+        assert!(runs_census(&command, "hook"));
     }
 }

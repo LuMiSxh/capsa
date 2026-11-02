@@ -12,8 +12,8 @@ use std::process::{Command, Output, Stdio};
 
 const STATUS: &str = r#"{"session_id":"s1","model":{"id":"claude-opus-5-5","display_name":"Opus"},"context_window":{"total_input_tokens":44000,"context_window_size":1000000},"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":1793530800},"seven_day":{"used_percentage":1,"resets_at":1794106800}}}"#;
 
-/// Runs census in `cwd` with `XDG_STATE_HOME` at `home/state` and `CLAUDE_CONFIG_DIR` at
-/// `home/claude`, feeding `stdin`.
+/// Runs census in `cwd` with `home` as the user profile, the state root at `home/state` and
+/// `CLAUDE_CONFIG_DIR` at `home/claude`, feeding `stdin`.
 #[expect(
     clippy::expect_used,
     reason = "a census binary that cannot run must fail the test"
@@ -23,6 +23,8 @@ fn census(home: &Path, cwd: &Path, args: &[&str], stdin: &str, extra: &[(&str, &
         .args(args)
         .current_dir(cwd)
         .env("XDG_STATE_HOME", home.join("state"))
+        .env("LOCALAPPDATA", home.join("state"))
+        .env("USERPROFILE", home)
         .env("CLAUDE_CONFIG_DIR", home.join("claude"))
         .env_remove("CLAUDE_SESSION_ID")
         .env_remove("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
@@ -56,7 +58,12 @@ fn jsonl(records: &[Value]) -> String {
 )]
 fn claude_session(home: &Scratch, cwd: &Path) -> &'static str {
     let recorded = cwd.canonicalize().expect("the working directory exists");
+    // On Windows `canonicalize` adds a verbatim prefix that Claude Code never records.
     let recorded = recorded.display().to_string();
+    let recorded = recorded
+        .strip_prefix("\u{5c}\u{5c}?\u{5c}")
+        .unwrap_or(&recorded)
+        .to_string();
     home.write("claude/settings.json", r#"{"autoCompactWindow": 400000}"#);
     home.write(
         "claude/projects/app/s1.jsonl",
@@ -86,7 +93,11 @@ fn statusline_records_snapshots_once_per_change() {
     let out = census(home.path(), &cwd, &["statusline", "--line"], STATUS, &[]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(text(&out.stdout), "ctx 44k/400k · 5h 6% · wk 1%\n");
-    let file = home.path().join("state/census/snapshots");
+    let file = home.path().join(if cfg!(windows) {
+        "state/census/state/snapshots"
+    } else {
+        "state/census/snapshots"
+    });
     assert_eq!(
         std::fs::read_to_string(&file)
             .expect("snapshots")

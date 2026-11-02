@@ -74,10 +74,10 @@ forecasts the weekly one. Cost is the list price from the ledger, as in `census 
   the share reaches 100 % at the 60-minute rate; otherwise `lasts until reset`.
 - Pattern: the list-price cost of every hour of the history, weighted by `0.5^(age / 28 days)`.
   Hours are keyed by weekday and hour, and by hours since the weekly reset once the snapshots map two
-  weeks of hours to their windows. Times are UTC.
+  weeks of hours to their windows. Times are local.
 - Forecast: the share now plus `k` times the expected cost until the weekly reset. For the first two
   hours the expected cost is half the 60-minute rate and half the pattern. The output is
-  `runs out around Sat 21:00 UTC` or `ends at about 30 % unused`.
+  `runs out around Sat 21:00` or `ends at about 30 % unused`.
 - Five-hour windows: windows start at the first request after the previous one ended. The expected
   count is per weekday, weighted the same way. The typical peak is the median of the highest share of
   the last 20 windows in the snapshots (three or more) or else `k` times their cost.

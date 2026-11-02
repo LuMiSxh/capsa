@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- On Windows, `census limits` and `census usage` use the local time zone for the weekly and daily
+  boundaries and label it `local`, instead of UTC.
+- `census self setup` writes the hook and status line commands with a quoted path that uses forward
+  slashes. A backslash path was read as escapes by the Git Bash that runs them.
+
 ## [0.2.0]
 
 ### Added

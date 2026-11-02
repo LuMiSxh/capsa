@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Owns the calendar of the limits: weekdays, hours and day starts of unix seconds in the local
-//! zone, or in UTC on Windows.
+//! zone.
 
 /// Seconds in a day.
 pub const DAY_S: u64 = 86_400;
@@ -8,8 +8,6 @@ pub const DAY_S: u64 = 86_400;
 pub const HOUR_S: u64 = 3_600;
 /// English weekday names, Monday first.
 pub const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-/// Names the zone after a displayed time: empty where the times are local.
-const ZONE_SUFFIX: &str = if cfg!(unix) { "" } else { " UTC" };
 const DAY_I: i64 = DAY_S as i64;
 const HOUR_I: i64 = HOUR_S as i64;
 
@@ -43,13 +41,12 @@ pub(super) fn next_day_start(day: u64) -> u64 {
     day_start(day + DAY_S + HOUR_S)
 }
 
-/// Returns the local weekday and clock time of `t`, such as `Sat 21:00`. Windows, where the times
-/// are UTC, adds ` UTC`.
+/// Returns the local weekday and clock time of `t`, such as `Sat 21:00`.
 pub fn when(t: u64) -> String {
     let local = local_secs(t);
     let s = local.rem_euclid(DAY_I);
     format!(
-        "{} {:02}:{:02}{ZONE_SUFFIX}",
+        "{} {:02}:{:02}",
         WEEKDAYS[weekday_of(local)],
         s / HOUR_I,
         s % HOUR_I / 60
@@ -101,8 +98,88 @@ fn fits<A, B: TryFrom<A>>(a: A) -> Option<B> {
     B::try_from(a).ok()
 }
 
-/// Returns zero: Windows keeps the times in UTC.
-#[cfg(not(unix))]
+/// Returns the offset of the local zone from UTC at `t`, in seconds east, from the zone rules
+/// Windows has for the year of `t`.
+#[cfg(windows)]
+fn offset_at(t: i64) -> i64 {
+    use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows_sys::Win32::System::Time::{
+        FileTimeToSystemTime, GetTimeZoneInformationForYear, SystemTimeToFileTime,
+        SystemTimeToTzSpecificLocalTime, TIME_ZONE_INFORMATION,
+    };
+    // Seconds from 1601, the FILETIME epoch, to 1970, the unix epoch.
+    const UNIX_TO_FILETIME_S: i64 = 11_644_473_600;
+    const TICKS_PER_S: i64 = 10_000_000;
+
+    let Some(ticks) = t
+        .checked_add(UNIX_TO_FILETIME_S)
+        .and_then(|s| s.checked_mul(TICKS_PER_S))
+        .and_then(|ticks| u64::try_from(ticks).ok())
+    else {
+        return 0;
+    };
+    let utc_file = FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+    let mut utc_sys: SYSTEMTIME = zeroed();
+    let mut zone: TIME_ZONE_INFORMATION = zeroed();
+    let mut local_sys: SYSTEMTIME = zeroed();
+    let mut local_file: FILETIME = zeroed();
+    // SAFETY: `utc_file` is read and `utc_sys` written, both valid for the call.
+    if unsafe { FileTimeToSystemTime(&utc_file, &mut utc_sys) } == 0 {
+        return 0;
+    }
+    // SAFETY: a null pointer selects the current zone, which is not read; `zone` is written.
+    if unsafe { GetTimeZoneInformationForYear(utc_sys.wYear, std::ptr::null(), &mut zone) } == 0 {
+        return 0;
+    }
+    // SAFETY: `zone` and `utc_sys` are read and `local_sys` written, all valid for the call.
+    if unsafe { SystemTimeToTzSpecificLocalTime(&zone, &utc_sys, &mut local_sys) } == 0 {
+        return 0;
+    }
+    // SAFETY: `local_sys` is read and `local_file` written, both valid for the call.
+    if unsafe { SystemTimeToFileTime(&local_sys, &mut local_file) } == 0 {
+        return 0;
+    }
+    let local = (u64::from(local_file.dwHighDateTime) << 32) | u64::from(local_file.dwLowDateTime);
+    (local as i64 - ticks as i64) / TICKS_PER_S
+}
+
+/// Returns an all-zero Windows struct, which the calls that fill it overwrite before any read.
+#[cfg(windows)]
+fn zeroed<T>() -> T {
+    // SAFETY: the Windows structs used here are plain C data, for which all zeros is valid.
+    unsafe { std::mem::zeroed() }
+}
+
+/// Returns zero where the platform has no zone rules to ask, so the times are UTC.
+#[cfg(not(any(unix, windows)))]
 fn offset_at(_t: i64) -> i64 {
     0
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::{offset_at, zeroed};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+
+    /// The offset now must be the bias the system reports for the current zone state.
+    #[test]
+    fn offset_now_matches_the_system_bias() {
+        const TIME_ZONE_ID_DAYLIGHT: u32 = 2;
+        let mut zone: TIME_ZONE_INFORMATION = zeroed();
+        // SAFETY: `zone` is valid for the call to write.
+        let id = unsafe { GetTimeZoneInformation(&mut zone) };
+        let bias_min = if id == TIME_ZONE_ID_DAYLIGHT {
+            zone.Bias + zone.DaylightBias
+        } else {
+            zone.Bias + zone.StandardBias
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+        assert_eq!(offset_at(now), -i64::from(bias_min) * 60);
+    }
 }
