@@ -10,11 +10,10 @@ AGENTS.md before working in its directory.
 |-----------|------|---------|
 | `acus/`   | `acus`  | Code search, outline, patch, build output (`ctx`) and the PreToolUse guard |
 | `pons/`   | `pons`  | ACP proxy between Zed and the Claude ACP adapter |
-| `velum/`  | `velum` | Policy shield that runs Claude Code inside Anthropic's sandbox-runtime (`srt`) |
 | `census/` | `census` | Usage analytics, limits and context awareness for the main agent |
-| `core/`   | `capsa-core` | Shared library: hints, output formats, exit rendering, executable lookup, package managers, self update and uninstall (feature `update`) |
+| `core/`   | `capsa-core` | Shared library. Modules: `render`, `cli` (feature `clap`), `log`, `skill`, `claude_settings`, `update` (feature `update`), `exit`, `format`, `hint`, `paths`, `pkg`, `which`, `census_snapshot` |
 
-`PLAN.md` holds the design, the open questions and the phases.
+`PLAN.md` holds the current architecture and the open questions.
 
 ## Rules
 
@@ -25,21 +24,34 @@ AGENTS.md before working in its directory.
   features, so `acus` stays synchronous and fast to start.
 - **CLI shape, every tool:** commands are `<tool> <action>`; actions about the
   tool itself are `<tool> self <action>`. `self` holds installation and
-  health: `update`, `uninstall`, `doctor`, `setup` and, for acus, `skill`. A
-  rename is hard, with no aliases.
-- **Output contract, every tool:** the agent format is the default; `--human`
-  gives coloured, structured output (TTY only, never with `NO_COLOR`);
-  `--json` is stable. All three render from one result value. `CAPSA_HUMAN=1`
-  makes `--human` the default but is ignored under `CLAUDECODE=1` or Codex,
-  and velum never passes it to an agent. Exit codes: 0 result, 1 nothing
-  found, 2 error with an `error:` line and, when there is a fix, a `hint:`
-  line. Every truncation names the command that shows the rest.
+  health: `update` and `uninstall` always; `doctor` and `setup` where a tool
+  installs something (acus and census: the skill and hooks; pons: the Claude
+  ACP adapter); `skill` where a tool ships an agent skill (acus, census);
+  `config` for a tool's own configuration (census). A rename is hard, with no
+  aliases.
+- **Output contract, every tool:** a result is a value that implements
+  `capsa_core::render::Render`, and `render::emit` prints it: the agent format
+  by default, `--human` for structure and colour, `--json` for scripts (stable
+  bytes). Colour comes only from core and is off under `NO_COLOR`; `--human`
+  colours only on a TTY. `CAPSA_HUMAN=1` makes `--human` the default but is
+  ignored under `CLAUDECODE=1` or Codex. Protocol output (the guard hook
+  decision, `census hook`, `census statusline`) stays outside `render`.
+  Streaming commands (acus `find`, `show`, ...) keep their own agent text,
+  pinned by snapshots. Exit codes: 0 result, 1 nothing found, 2 error with an
+  `error:` line and, when there is a fix, a `hint:` line. Every truncation
+  names the command that shows the rest.
+- **Logs:** each tool keeps its own directory and file (acus `guard.jsonl`,
+  census `hook.jsonl`, pons `pons-<time>-<pid>.jsonl` per start). `capsa_core::log`
+  writes one JSON object per line: the envelope `ts` (unix seconds), `level`
+  (`info`, `warn`, `error`) and `event`, then the tool's fields. A file rotates
+  to `<file name>.old` past its size limit. The `guard.jsonl` field names are a
+  contract: `census usage --guard` reads them, so rename one only together
+  with census.
 - **Performance first, with numbers.** A change made for speed or size states
   the benchmark and the before/after result in the tool's CHANGELOG entry.
   `acus guard` runs on every agent tool call: keep its startup path free of
   new work.
-- **Security-sensitive code:** velum's policy defaults, environment filter,
-  shim and generated srt settings, and pons's handling of
+- **Security-sensitive code:** pons's handling of
   `clientCapabilities`. Do not loosen a default without the user's explicit
   approval; every change there needs tests and a review before it is
   committed.
@@ -47,7 +59,7 @@ AGENTS.md before working in its directory.
   and records user-visible changes under `## [Unreleased]` in its own
   CHANGELOG. Never bump or release a tool you did not change. Tags are
   `<tool>-vX.Y.Z`.
-- **Commits:** prefix the subject with the area: `acus:`, `census:`, `pons:`, `velum:`,
+- **Commits:** prefix the subject with the area: `acus:`, `census:`, `pons:`,
   `core:`, `ci:`, `docs:`. One area per commit where possible.
 
 ## Rust
@@ -65,8 +77,7 @@ AGENTS.md before working in its directory.
 - **Clippy:** `all` plus a chosen set of `pedantic` and `restriction` lints
   in `[workspace.lints.clippy]`. Silence a lint only with
   `#[expect(clippy::…, reason = "…")]`, never with a bare `allow`.
-- **Errors:** library crates (`capsa-core`, `acus-*` except `acus-cli`,
-  velum's policy code) define `thiserror` enums that callers can match on.
+- **Errors:** library crates (`capsa-core`, `acus-*` except `acus-cli`) define `thiserror` enums that callers can match on.
   Binaries collect errors with `anyhow` and `.context(...)`. A fix for the
   user comes from `capsa_core::Hint`, never as text glued into a message.
   `capsa_core::exit` renders `error:`, the context chain and `hint:` in every
@@ -85,7 +96,9 @@ AGENTS.md before working in its directory.
   `[workspace.dependencies]`.
 - **Hot paths:** borrow instead of clone, `&str`/`Cow` over `String`, no
   async in code that does not wait on I/O. Measure before and after.
-- **Output:** libraries never print; they return values or errors.
+- **Output:** libraries never print, except `capsa_core`, whose `render`,
+  `exit` and `update::run` write the tool's output. Everything else returns
+  values or errors.
 
 ## Comments
 
@@ -127,9 +140,9 @@ say: intent, a reason, an invariant, an outside constraint.
 - Full check, as in CI: `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
   `cargo test --workspace --all-features`.
-- One tool: add `-p <crate>` (`-p pons`, `-p velum`, `-p acus-cli` and the
+- One tool: add `-p <crate>` (`-p pons`, `-p acus-cli` and the
   other `acus-*` crates).
-- Release builds: `cargo build --release -p acus-cli` (also velum);
+- Release builds: `cargo build --release -p acus-cli`;
   pons only with `--profile release-unwind`.
 
 ## Conventions
@@ -139,8 +152,7 @@ say: intent, a reason, an invariant, an outside constraint.
   library features are welcome. Bump both together.
 - Versions of shared dependencies live once in `[workspace.dependencies]`;
   crates add features locally. Lints come from `[workspace.lints]`.
-- macOS is the primary platform; Linux and Windows are checked in CI. velum
-  is macOS-only for now.
+- macOS is the primary platform; Linux and Windows are checked in CI.
 
 ## Gotchas
 
