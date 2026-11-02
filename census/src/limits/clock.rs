@@ -183,3 +183,58 @@ mod windows_tests {
         assert_eq!(offset_at(now), -i64::from(bias_min) * 60);
     }
 }
+
+use crate::usage::time::{civil_from_days, days_from_civil};
+
+/// Returns the first second of the local month of `t`, its local midnight on the 1st.
+pub fn month_start(t: u64) -> u64 {
+    month_boundary(t, 0)
+}
+
+/// Returns the first second of the local month after the one of `t`.
+pub(super) fn next_month_start(t: u64) -> u64 {
+    month_boundary(t, 1)
+}
+
+/// Returns the local midnight on the 1st of the month `months_ahead` after the month of `t`.
+fn month_boundary(t: u64, months_ahead: i64) -> u64 {
+    let (year, month, _) = civil_from_days(local_secs(t).div_euclid(DAY_I));
+    let index = year * 12 + month - 1 + months_ahead;
+    let local = days_from_civil(index.div_euclid(12), index.rem_euclid(12) + 1, 1) * DAY_I;
+    // The offset on the 1st can differ from the one at `t`, so it is read at the first guess.
+    let guess = local - offset_at(signed(t));
+    u64::try_from(local - offset_at(guess)).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod month_tests {
+    use super::*;
+
+    fn utc(y: i64, m: i64, d: i64, secs: i64) -> u64 {
+        u64::try_from(days_from_civil(y, m, d) * DAY_I + secs).unwrap_or(0)
+    }
+
+    fn local_first(y: i64, m: i64) -> i64 {
+        days_from_civil(y, m, 1) * DAY_I
+    }
+
+    #[test]
+    fn month_start_is_local_midnight_of_the_first() {
+        let t = utc(2026, 11, 17, 12 * HOUR_I);
+        assert_eq!(local_secs(month_start(t)), local_first(2026, 11));
+    }
+
+    #[test]
+    fn month_start_changes_exactly_at_the_local_month_boundary() {
+        let first = month_start(utc(2026, 11, 17, 0));
+        assert_eq!(month_start(first), first);
+        assert_eq!(local_secs(month_start(first - 1)), local_first(2026, 10));
+        assert_eq!(next_month_start(first - 1), first);
+    }
+
+    #[test]
+    fn next_month_start_rolls_over_the_year() {
+        let t = utc(2026, 12, 31, 12 * HOUR_I);
+        assert_eq!(local_secs(next_month_start(t)), local_first(2027, 1));
+    }
+}

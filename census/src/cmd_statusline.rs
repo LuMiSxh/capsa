@@ -4,7 +4,8 @@
 
 use capsa_core::census_snapshot;
 use capsa_core::exit::Outcome;
-use census::statusline;
+use census::config::{Config, Mode};
+use census::{limits, statusline};
 use std::io::Read;
 
 #[derive(clap::Args)]
@@ -25,7 +26,14 @@ pub fn run(a: &Args) -> Outcome {
     let snapshots = statusline::snapshots(&input, crate::now_secs());
     let _ = statusline::record(&census_snapshot::path(), &snapshots);
     if a.line {
-        let line = statusline::line(&input, &snapshots);
+        let config = Config::load();
+        let month = (config.mode == Mode::Budget)
+            .then(|| limits::month_stored(crate::now_secs(), config.monthly_budget_usd).ok())
+            .flatten();
+        let line = match month {
+            Some(month) => statusline::budget_line(&input, &month),
+            None => statusline::line(&input, &snapshots),
+        };
         if !line.is_empty() {
             println!("{line}");
         }

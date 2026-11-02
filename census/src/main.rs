@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The `census` binary: parses the command line and dispatches to the `cmd_*` modules.
 
+mod cmd_config;
 mod cmd_context;
 mod cmd_hook;
 mod cmd_limits;
@@ -46,8 +47,10 @@ enum Cmd {
     Usage(cmd_usage::Args),
     /// Context size of the current session against its auto-compaction threshold.
     Context(cmd_context::Args),
-    /// Subscription limit windows: estimates, burn rate and the weekly forecast.
+    /// Subscription limit windows (plan mode) or the spend of the month (budget mode).
     Limits,
+    /// Shows or sets the limit mode (plan or budget) and the monthly budget.
+    Config(cmd_config::Args),
     /// Summary of the current session: duration, cost, spawns per role, context and compactions.
     Session(cmd_session::Args),
     /// Records the limit snapshots of the statusLine input; `--line` prints the status line.
@@ -78,6 +81,7 @@ fn execute(cli: Cli, format: Format) -> Result<Outcome> {
         Cmd::Usage(a) => cmd_usage::run(a, &out),
         Cmd::Context(a) => cmd_context::run(&a, &out),
         Cmd::Limits => cmd_limits::run(&out),
+        Cmd::Config(a) => cmd_config::run(a, &out),
         Cmd::Session(a) => cmd_session::run(&a, &out),
         Cmd::Statusline(a) => Ok(cmd_statusline::run(&a)),
         Cmd::Prune(a) => cmd_prune::run(a, &out),
@@ -86,11 +90,17 @@ fn execute(cli: Cli, format: Format) -> Result<Outcome> {
     }
 }
 
-/// Seconds since the Unix epoch, or 0 when the clock is before it.
+/// Seconds since the Unix epoch, or 0 when the clock is before it. `CENSUS_NOW` replaces the clock
+/// so that the tests can fix it.
 fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+    std::env::var("CENSUS_NOW")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs())
+        })
 }
 
 /// Clap value parser for path arguments: `~` and `~/…` become $HOME, as a shell would expand them.

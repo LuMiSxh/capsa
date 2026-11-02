@@ -283,3 +283,140 @@ fn limits_and_usage_by_without_data_exit_one() {
     );
     assert_eq!(out.status.code(), Some(1));
 }
+
+#[test]
+fn budget_mode_switches_limits_and_statusline() {
+    let home = Scratch::new("cli-budget");
+    let cfg = home.path().join("config");
+    let state = home.path().join("state");
+    home.write("claude/settings.json", r#"{"autoCompactWindow": 400000}"#);
+    let extra = [
+        ("XDG_CONFIG_HOME", cfg.to_str().expect("utf-8 path")),
+        ("APPDATA", cfg.to_str().expect("utf-8 path")),
+        ("LOCALAPPDATA", state.to_str().expect("utf-8 path")),
+    ];
+    let run = |args: &[&str], stdin: &str| census(home.path(), home.path(), args, stdin, &extra);
+
+    let shown = text(&run(&["config", "show"], "").stdout);
+    assert!(shown.contains("plan"), "{shown}");
+    assert_eq!(
+        run(&["config", "set", "mode", "budget"], "").status.code(),
+        Some(0)
+    );
+    let set = run(&["config", "set", "monthly-budget", "200"], "");
+    assert_eq!(set.status.code(), Some(0));
+    assert!(text(&set.stdout).contains("$200.00"));
+    assert_eq!(
+        run(&["config", "set", "monthly-budget", "-5"], "")
+            .status
+            .code(),
+        Some(2)
+    );
+    assert_eq!(
+        run(&["config", "set", "mode", "free"], "").status.code(),
+        Some(2)
+    );
+
+    let json: Value =
+        serde_json::from_str(&text(&run(&["--json", "limits"], "").stdout)).expect("json");
+    assert_eq!(json["mode"], "budget");
+    assert_eq!(json["budget_usd"], 200.0);
+
+    let line = run(&["statusline", "--line"], STATUS);
+    assert_eq!(text(&line.stdout), "ctx 44k/400k · $0/$200 0% →$0\n");
+
+    run(&["config", "set", "mode", "plan"], "");
+    let line = run(&["statusline", "--line"], STATUS);
+    assert_eq!(text(&line.stdout), "ctx 44k/400k · 5h 6% · wk 1%\n");
+}
+
+/// The environment that points census's config, state, home and clock at `home`, with the clock
+/// at 2026-10-14 08:00 UTC.
+fn isolated_env(home: &Path) -> Vec<(&'static str, String)> {
+    let at = |rel: &str| home.join(rel).display().to_string();
+    vec![
+        ("HOME", home.display().to_string()),
+        ("USERPROFILE", home.display().to_string()),
+        ("XDG_CONFIG_HOME", at("config")),
+        ("APPDATA", at("config")),
+        ("LOCALAPPDATA", at("state")),
+        ("CENSUS_NOW", "1791964800".to_owned()),
+    ]
+}
+
+/// Writes a config in `mode` with a $100 budget, and two October 2026 requests of 400k input
+/// tokens. They are older than the raw retention, so they fold into hourly aggregates.
+fn october_spend(home: &Scratch, mode: &str) {
+    let request = |timestamp: &str, id: &str| {
+        json!({"type": "assistant", "timestamp": timestamp,
+            "message": {"id": id, "model": "claude-opus-5-5",
+                "usage": {"input_tokens": 400_000, "output_tokens": 10}}})
+    };
+    home.write(
+        "claude/projects/app/s1.jsonl",
+        &jsonl(&[
+            request("2026-10-02T10:00:00.000Z", "m1"),
+            request("2026-10-03T10:00:00.000Z", "m2"),
+        ]),
+    );
+    home.write(
+        "config/census/config.json",
+        &format!(r#"{{"mode":"{mode}","monthly_budget_usd":100.0}}"#),
+    );
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "output that is not the prune JSON must fail the test"
+)]
+fn removed(out: &Output) -> u64 {
+    serde_json::from_str::<Value>(&text(&out.stdout)).expect("json")["hourly_removed"]
+        .as_u64()
+        .expect("a count of hourly aggregates")
+}
+
+#[test]
+fn budget_mode_prune_keeps_the_current_months_aggregates_and_spend() {
+    let home = Scratch::new("cli-prune-month");
+    october_spend(&home, "budget");
+    let owned = isolated_env(home.path());
+    let env: Vec<(&str, &str)> = owned.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let run = |args: &[&str]| census(home.path(), home.path(), args, "", &env);
+    let spend = || -> f64 {
+        serde_json::from_str::<Value>(&text(&run(&["--json", "limits"]).stdout))
+            .expect("json")["spent_usd"]
+            .as_f64()
+            .expect("a month spend")
+    };
+    let before = spend();
+    assert!(before > 0.0, "{before}");
+
+    let by_date = run(&["--json", "prune", "--before", "2026-10-10"]);
+    assert_eq!(by_date.status.code(), Some(1));
+    assert_eq!(removed(&by_date), 0);
+    assert!(text(&by_date.stderr).contains("budget mode keeps"));
+
+    let by_days = run(&["--json", "prune", "--keep", "1"]);
+    assert_eq!(by_days.status.code(), Some(1));
+    assert_eq!(removed(&by_days), 0);
+
+    assert_eq!(spend(), before);
+}
+
+#[test]
+fn plan_mode_prune_removes_the_october_aggregates() {
+    let home = Scratch::new("cli-prune-plan");
+    october_spend(&home, "plan");
+    let owned = isolated_env(home.path());
+    let env: Vec<(&str, &str)> = owned.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let out = census(
+        home.path(),
+        home.path(),
+        &["--json", "prune", "--before", "2026-10-10"],
+        "",
+        &env,
+    );
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(removed(&out), 2);
+    assert!(!text(&out.stderr).contains("budget mode"));
+}

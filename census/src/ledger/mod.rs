@@ -112,6 +112,17 @@ impl Ledger {
         })
     }
 
+    /// Returns the ledger as it is in `state_dir`, without reading any transcript or taking the
+    /// writer lock.
+    pub fn open(state_dir: &std::path::Path) -> Ledger {
+        Ledger {
+            layout: Layout::new(state_dir),
+            report: UpdateReport::default(),
+            rows: OnceCell::new(),
+            hourly: OnceCell::new(),
+        }
+    }
+
     pub fn report(&self) -> UpdateReport {
         self.report
     }

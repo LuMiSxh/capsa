@@ -7,9 +7,12 @@ use crate::out::Out;
 use anyhow::{Result, bail};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use census::config::{Config, Mode};
 use census::ledger::{Ledger, Opts};
+use census::limits::month_start;
 use census::usage::parse_date;
 use serde::Serialize;
+use std::io::Write;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -37,6 +40,20 @@ struct PruneOut {
     snapshots_removed: usize,
 }
 
+/// Keeps the current month's hourly aggregates in budget mode, since the month's spend is read
+/// from them. A cutoff after the month start moves back to the start, with a note.
+fn keep_current_month(cutoff: u64, now: u64) -> u64 {
+    let start = month_start(now);
+    if Config::load().mode != Mode::Budget || cutoff <= start {
+        return cutoff;
+    }
+    let _ = writeln!(
+        std::io::stderr(),
+        "note: budget mode keeps this month's hourly aggregates; the cutoff stops at the month start"
+    );
+    start
+}
+
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     let now = now_secs();
     let (cutoff, older_than) = match (a.before, a.keep) {
@@ -57,6 +74,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         }
         _ => bail!("give exactly one of --before YYYY-MM-DD or --keep DAYS"),
     };
+    let cutoff = keep_current_month(cutoff, now);
     let mut ledger = Ledger::open_and_update(&Opts::defaults(now))?;
     let report = ledger.prune(cutoff, a.dry_run)?;
     if out.format == Format::Json {

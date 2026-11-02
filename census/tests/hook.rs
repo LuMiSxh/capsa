@@ -50,6 +50,8 @@ impl Hook {
             .env("CLAUDE_CONFIG_DIR", self.home.path().join("claude"))
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
+            .env("XDG_CONFIG_HOME", self.home.path().join("config"))
+            .env("APPDATA", self.home.path().join("config"))
             .env("LOCALAPPDATA", self.home.path().join("state"))
             .env("CENSUS_NOW", self.now.to_string())
             .env_remove("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
@@ -321,4 +323,32 @@ fn a_five_hour_forecast_at_sixty_percent_after_forty_minutes_is_said() {
         text.contains("census: 5h limit 60%, full around "),
         "{text}"
     );
+}
+
+#[test]
+fn budget_mode_warns_when_the_month_spend_passes_the_budget() {
+    let h = Hook::new("hook-budget");
+    h.home.write(
+        "config/census/config.json",
+        r#"{"mode":"budget","monthly_budget_usd":0.5}"#,
+    );
+    let path = h.transcript_lines(&[request_at("2026-10-02T10:00:00.000Z", "m1", 400_000)]);
+    let text = h
+        .hook(hook_input("UserPromptSubmit", &path).as_bytes())
+        .expect("a budget warning");
+    assert!(text.contains("census: monthly budget used up"), "{text}");
+}
+
+#[test]
+fn plan_mode_never_reports_the_monthly_budget() {
+    let h = Hook::new("hook-budget-plan");
+    h.home.write(
+        "config/census/config.json",
+        r#"{"mode":"plan","monthly_budget_usd":0.5}"#,
+    );
+    let path = h.transcript_lines(&[request_at("2026-10-02T10:00:00.000Z", "m1", 400_000)]);
+    let text = h
+        .hook(hook_input("UserPromptSubmit", &path).as_bytes())
+        .unwrap_or_default();
+    assert!(!text.contains("monthly budget"), "{text}");
 }

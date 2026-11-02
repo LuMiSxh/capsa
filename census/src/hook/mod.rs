@@ -8,7 +8,7 @@ mod state;
 pub use state::log_line;
 
 use crate::context;
-use crate::limits::LimitStatus;
+use crate::limits::{LimitStatus, MonthStatus};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -40,6 +40,7 @@ fn announce(
     file: &std::path::Path,
     context: Option<&context::ContextUse>,
     limits: Option<&LimitStatus>,
+    month: Option<&MonthStatus>,
     compacted: Option<(u64, u64)>,
     now: u64,
     prompt: bool,
@@ -53,10 +54,12 @@ fn announce(
     if prompt {
         let due = levels::prompt_due(&mut shown, now);
         if due {
-            messages.extend(levels::status_message(context, limits));
+            messages.extend(levels::status_message(context, limits, month));
         }
     }
-    messages.extend(levels::decide(context, limits, compacted, now, &mut shown));
+    messages.extend(levels::decide(
+        context, limits, month, compacted, now, &mut shown,
+    ));
     if shown != before {
         state::store(file, &shown)?;
     }
@@ -66,7 +69,8 @@ fn announce(
 /// Returns the hook output for `input`, the JSON text of `hookSpecificOutput`, or `None` when
 /// there is nothing new to say: a subagent, another event, or no level crossed.
 ///
-/// `limits` runs only when the main agent is addressed, so the caller can bound its time.
+/// `limits` and `month` run only when the main agent is addressed, so the caller can bound their
+/// time. The caller supplies the one that the mode needs and `None` from the other.
 ///
 /// # Errors
 /// Fails when the input is not JSON or the hint state cannot be read or written; the levels shown
@@ -75,6 +79,7 @@ pub fn run(
     input: &str,
     now: u64,
     limits: impl FnOnce() -> Option<LimitStatus>,
+    month: impl FnOnce() -> Option<MonthStatus>,
 ) -> Result<Option<String>, HookError> {
     let input: Input = serde_json::from_str(input)?;
     let event = match input.hook_event_name.as_deref() {
@@ -88,10 +93,12 @@ pub fn run(
     let context = transcript.and_then(context::of_transcript);
     let compacted = transcript.and_then(context::last_compaction);
     let limits = limits();
+    let month = month();
     let messages = announce(
         &file,
         context.as_ref(),
         limits.as_ref(),
+        month.as_ref(),
         compacted,
         now,
         event == "UserPromptSubmit",
@@ -127,7 +134,7 @@ mod tests {
                     .map(|_| {
                         s.spawn(|| {
                             barrier.wait();
-                            announce(&file, Some(&context), None, None, 1, false)
+                            announce(&file, Some(&context), None, None, None, 1, false)
                                 .unwrap()
                                 .len()
                         })

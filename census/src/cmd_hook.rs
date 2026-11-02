@@ -4,8 +4,9 @@
 
 use crate::now_secs;
 use capsa_core::exit::Outcome;
+use census::config::{Config, Mode};
 use census::hook;
-use census::limits::{self, LimitStatus};
+use census::limits::{self, LimitStatus, MonthStatus};
 use std::io::{IsTerminal, Read, Write};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -20,9 +21,21 @@ const LEDGER_DEADLINE: Duration = Duration::from_millis(100);
 
 pub fn run() -> Outcome {
     let start = Instant::now();
-    let now = clock();
+    let now = now_secs();
     if let Some(input) = read_input() {
-        match hook::run(&input, now, || limits_within(start, now)) {
+        let config = Config::load();
+        let budget = config.mode == Mode::Budget;
+        let result = hook::run(
+            &input,
+            now,
+            || (!budget).then(|| limits_within(start, now)).flatten(),
+            || {
+                budget
+                    .then(|| month_within(start, now, config.monthly_budget_usd))
+                    .flatten()
+            },
+        );
+        match result {
             Ok(Some(out)) => {
                 let _ = writeln!(std::io::stdout(), "{out}");
             }
@@ -31,14 +44,6 @@ pub fn run() -> Outcome {
         }
     }
     Outcome::Found
-}
-
-/// Returns the time of the call; `CENSUS_NOW` replaces the clock so that the tests can fix it.
-fn clock() -> u64 {
-    std::env::var("CENSUS_NOW")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or_else(now_secs)
 }
 
 /// Reads stdin up to the cap; `None` for a terminal, a larger input or text that is not UTF-8.
@@ -62,10 +67,26 @@ fn read_input() -> Option<String> {
 /// Computes the limits on a helper thread and gives up when `LIMITS_DEADLINE` has passed since
 /// `start`. A busy ledger lock already makes `limits::status` skip its update.
 fn limits_within(start: Instant, now: u64) -> Option<LimitStatus> {
+    within(start, move || {
+        limits::status_by(now, Some(start + LEDGER_DEADLINE)).ok()
+    })
+}
+
+/// Like `limits_within`, for the spend of the month in budget mode.
+fn month_within(start: Instant, now: u64, budget: Option<f64>) -> Option<MonthStatus> {
+    within(start, move || {
+        limits::month(now, budget, Some(start + LEDGER_DEADLINE)).ok()
+    })
+}
+
+fn within<T: Send + 'static>(
+    start: Instant,
+    work: impl FnOnce() -> Option<T> + Send + 'static,
+) -> Option<T> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .spawn(move || {
-            let _ = tx.send(limits::status_by(now, Some(start + LEDGER_DEADLINE)).ok());
+            let _ = tx.send(work());
         })
         .ok()?;
     rx.recv_timeout(LIMITS_DEADLINE.saturating_sub(start.elapsed()))

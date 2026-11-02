@@ -2,7 +2,7 @@
 //! Decides which context and limit levels the hook has newly crossed and words them.
 
 use crate::context::ContextUse;
-use crate::limits::{Forecast, Full, LimitStatus, Reading, WindowStatus, when};
+use crate::limits::{Forecast, Full, LimitStatus, MonthStatus, Reading, WindowStatus, when};
 use capsa_core::census_snapshot::Window;
 use std::collections::BTreeSet;
 
@@ -25,6 +25,11 @@ const FORECAST_MIN_PCT: f64 = 50.0;
 const FIVE_HOUR_MIN_ELAPSED_S: u64 = 30 * 60;
 /// The weekly forecast needs this many weeks of history mapped to weekly windows.
 const WEEKLY_BASIS_WEEKS: f64 = 2.0;
+/// The budget warns at this share of the budget of the month, then again when it is used up.
+const BUDGET_WARN_PCT: f64 = 80.0;
+const BUDGET_FULL_PCT: f64 = 100.0;
+/// A projection is said only after this much of the month, since the first days are noise.
+const PROJECTION_MIN_ELAPSED_S: u64 = 3 * 86_400;
 /// The status line comes back after this long without a prompt: the main agent's cache TTL.
 const STATUS_GAP_S: u64 = 3600;
 const PROMPT_KEY: &str = "prompt:";
@@ -35,6 +40,7 @@ const PROMPT_KEY: &str = "prompt:";
 pub(super) fn decide(
     context: Option<&ContextUse>,
     limits: Option<&LimitStatus>,
+    month: Option<&MonthStatus>,
     compacted: Option<(u64, u64)>,
     now: u64,
     shown: &mut Shown,
@@ -49,6 +55,7 @@ pub(super) fn decide(
             out.extend(weekly_left_message(w, now, shown));
         }
     }
+    out.extend(month.and_then(|m| budget_message(m, shown)));
     out
 }
 
@@ -57,6 +64,7 @@ pub(super) fn decide(
 pub(super) fn status_message(
     c: Option<&ContextUse>,
     limits: Option<&LimitStatus>,
+    month: Option<&MonthStatus>,
 ) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(c) = c {
@@ -81,7 +89,61 @@ pub(super) fn status_message(
             .map_or_else(String::new, |r| format!(" (reset {})", when(r)));
         parts.push(format!("{label} {used:.0}%{reset}"));
     }
+    if let Some(m) = month {
+        let budget = m
+            .budget_usd
+            .zip(m.percent)
+            .map_or_else(String::new, |(b, p)| format!(" of {} ({p:.0}%)", usd(b)));
+        parts.push(format!(
+            "budget {}{budget}, month ends near {}, {} days left",
+            usd(m.spent_usd),
+            usd(m.projected_usd),
+            m.days_left
+        ));
+    }
     (!parts.is_empty()).then(|| format!("census: status: {}.", parts.join("; ")))
+}
+
+fn usd(v: f64) -> String {
+    format!("${v:.0}")
+}
+
+/// The budget rungs and the projection, once per month (its start time).
+fn budget_message(m: &MonthStatus, shown: &mut Shown) -> Option<String> {
+    let (budget, percent) = (m.budget_usd?, m.percent?);
+    let key = |what: &str| format!("bud:{what}:{}", m.start);
+    let mut hit = Vec::new();
+    let projected =
+        percent < BUDGET_FULL_PCT && m.projected_over && m.elapsed_s >= PROJECTION_MIN_ELAPSED_S;
+    if projected {
+        hit.push(key("proj"));
+    }
+    if percent >= BUDGET_WARN_PCT {
+        hit.push(key("80"));
+    }
+    if percent >= BUDGET_FULL_PCT {
+        hit.push(key("100"));
+    }
+    if hit.is_empty() || hit.iter().all(|k| shown.contains(k)) {
+        return None;
+    }
+    shown.extend(hit);
+    let state = if percent >= BUDGET_FULL_PCT {
+        "used up".to_owned()
+    } else {
+        format!("{percent:.0}% used")
+    };
+    let projection = if projected {
+        format!(", on course for {} by month end", usd(m.projected_usd))
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "census: monthly budget {state} ({} of {}, {} days left{projection}). {LIMIT_ADVICE}",
+        usd(m.spent_usd),
+        usd(budget),
+        m.days_left
+    ))
 }
 
 /// Records a UserPromptSubmit at `now` in `shown` and says whether the status line is due: the
@@ -231,6 +293,47 @@ mod tests {
             calibration: None,
             full,
         }
+    }
+
+    fn month(spent: f64, elapsed_days: u64) -> MonthStatus {
+        let start = 1_000_000;
+        MonthStatus::new(
+            spent,
+            start,
+            start + 30 * 86_400,
+            start + elapsed_days * 86_400,
+            Some(200.0),
+            true,
+        )
+    }
+
+    #[test]
+    fn the_budget_warns_at_eighty_percent_once_and_again_when_used_up() {
+        let mut shown = Shown::new();
+        assert_eq!(budget_message(&month(100.0, 20), &mut shown), None);
+        let warn = budget_message(&month(170.0, 20), &mut shown).unwrap();
+        assert!(warn.starts_with("census: monthly budget 85% used ($170 of $200, 10 days left"));
+        assert_eq!(budget_message(&month(175.0, 20), &mut shown), None);
+        let full = budget_message(&month(205.0, 21), &mut shown).unwrap();
+        assert!(full.contains("monthly budget used up ($205 of $200"));
+    }
+
+    #[test]
+    fn a_projection_over_the_budget_is_said_once_after_three_days() {
+        let mut shown = Shown::new();
+        assert_eq!(budget_message(&month(60.0, 2), &mut shown), None);
+        let said = budget_message(&month(60.0, 6), &mut shown).unwrap();
+        assert!(said.contains("on course for $300 by month end"));
+        assert_eq!(budget_message(&month(61.0, 6), &mut shown), None);
+    }
+
+    #[test]
+    fn a_new_month_shows_the_budget_levels_again() {
+        let mut shown = Shown::new();
+        assert!(budget_message(&month(170.0, 20), &mut shown).is_some());
+        let mut next = month(170.0, 20);
+        next.start += 31 * 86_400;
+        assert!(budget_message(&next, &mut shown).is_some());
     }
 
     fn five_hour(used: f64, elapsed: u64) -> Option<String> {

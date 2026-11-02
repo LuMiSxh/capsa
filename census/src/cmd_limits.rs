@@ -8,12 +8,20 @@ use anyhow::Result;
 use capsa_core::census_snapshot::Window;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use census::config::{Config, Mode};
 use census::limits::{
-    self, FiveHourDay, Forecast, Full, LimitStatus, PeakSource, Reading, WindowStatus, when,
+    self, FiveHourDay, Forecast, Full, LimitStatus, MonthStatus, PeakSource, Reading, WindowStatus,
+    when,
 };
+use serde::Serialize;
 
-/// Prints the limit state. Exit 1 when the ledger and the snapshot file hold nothing.
+/// Prints the limit state, or the month summary in budget mode. Exit 1 when the ledger and the
+/// snapshot file hold nothing.
 pub fn run(out: &Out) -> Result<Outcome> {
+    let config = Config::load_from(&Config::path())?;
+    if config.mode == Mode::Budget {
+        return run_budget(&config, out);
+    }
     let status = limits::status(now_secs())?;
     if out.format == Format::Json {
         println!("{}", serde_json::to_string(&status)?);
@@ -27,6 +35,62 @@ pub fn run(out: &Out) -> Result<Outcome> {
     } else {
         Outcome::Empty
     })
+}
+
+#[derive(Serialize)]
+struct BudgetOut<'a> {
+    mode: &'static str,
+    #[serde(flatten)]
+    month: &'a MonthStatus,
+}
+
+fn run_budget(config: &Config, out: &Out) -> Result<Outcome> {
+    let month = limits::month(now_secs(), config.monthly_budget_usd, None)?;
+    if out.format == Format::Json {
+        let body = BudgetOut {
+            mode: "budget",
+            month: &month,
+        };
+        println!("{}", serde_json::to_string(&body)?);
+    } else if month.data {
+        print_month(&month, out);
+    } else {
+        println!("no usage data yet: no transcript to read");
+    }
+    Ok(if month.data {
+        Outcome::Found
+    } else {
+        Outcome::Empty
+    })
+}
+
+fn print_month(m: &MonthStatus, out: &Out) {
+    let spent = match (m.budget_usd, m.percent) {
+        (Some(budget), Some(percent)) => {
+            format!("${:.2} of ${budget:.2} ({percent:.0} %)", m.spent_usd)
+        }
+        _ => format!(
+            "${:.2}; no budget set: census config set monthly-budget <usd>",
+            m.spent_usd
+        ),
+    };
+    println!("{}", out.field("mode", "budget"));
+    println!("{}", out.field("spent", &spent));
+    let verdict = match m.budget_usd {
+        Some(budget) if m.projected_over => {
+            format!(", ${:.2} over the budget", m.projected_usd - budget)
+        }
+        Some(_) => ", within the budget".to_owned(),
+        None => String::new(),
+    };
+    let projected = format!("${:.2} at the month-to-date rate{verdict}", m.projected_usd);
+    println!("{}", out.field("projected", &projected));
+    if let Some(per_day) = m.per_day_left_usd {
+        let left = format!("${:.2} a day for {} days", per_day, m.days_left);
+        println!("{}", out.field("left", &left));
+    }
+    let ends = format!("{} days, at {}", m.days_left, when(m.end));
+    println!("{}", out.field("month ends", &ends));
 }
 
 fn print_text(s: &LimitStatus, out: &Out) {

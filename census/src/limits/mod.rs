@@ -8,8 +8,10 @@ mod clock;
 mod cost;
 mod error;
 mod forecast;
+mod month;
 mod pattern;
 mod window;
+pub use clock::month_start;
 
 #[cfg(test)]
 mod tests;
@@ -18,6 +20,7 @@ pub use calibrate::Calibration;
 pub use clock::when;
 pub use error::LimitsError;
 pub use forecast::{FiveHourDay, Forecast, PeakSource};
+pub use month::{MonthStatus, compute_month, month, month_stored};
 pub use pattern::{Bucket, Kind, Pattern};
 
 use crate::ledger::{Hourly, Ledger, Opts, Row};

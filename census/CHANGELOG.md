@@ -9,6 +9,16 @@
 - `census self setup` writes the hook and status line commands with a quoted path that uses forward
   slashes. A backslash path was read as escapes by the Git Bash that runs them.
 
+### Added
+
+- Budget mode for API billing. `census config set mode budget` and `census config set
+  monthly-budget <usd>` (`census config show`) write `config.json` in the census config directory;
+  without the file census stays in plan mode. In budget mode `census limits` prints the spend of the
+  local calendar month, the budget share, the projection to the end of the month and the budget left
+  per remaining day instead of the 5h and weekly windows, `census statusline --line` shows
+  `$42/$200 21% →$310` (`↑` when the projection exceeds the budget), and `census hook` warns at 80 %
+  and 100 % of the budget and when the projection exceeds it.
+
 ## [0.2.0]
 
 ### Added

@@ -8,7 +8,7 @@ mod handback;
 mod merge;
 pub(crate) mod prices;
 mod read;
-mod time;
+pub(crate) mod time;
 mod tools;
 mod walk;
 

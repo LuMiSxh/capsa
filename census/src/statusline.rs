@@ -3,6 +3,7 @@
 //! census renders from it.
 
 use crate::context;
+use crate::limits::MonthStatus;
 use capsa_core::census_snapshot::{self, Snapshot, SnapshotError, Source, Window};
 use serde::Deserialize;
 use serde_json::Value;
@@ -101,19 +102,7 @@ pub fn record(file: &Path, snapshots: &[Snapshot]) -> Result<usize, SnapshotErro
 /// compaction threshold, then each limit window of `snapshots`. Empty when there is nothing
 /// to show.
 pub fn line(input: &Input, snapshots: &[Snapshot]) -> String {
-    let mut parts = Vec::new();
-    if let Some(tokens) = input
-        .context_window
-        .as_ref()
-        .and_then(|c| c.total_input_tokens)
-    {
-        let context = context::measure(tokens, input.model_id());
-        parts.push(format!(
-            "ctx {}k/{}k",
-            context.tokens / 1000,
-            context.threshold.tokens / 1000
-        ));
-    }
+    let mut parts: Vec<String> = context_part(input).into_iter().collect();
     for snapshot in snapshots {
         let label = match snapshot.window {
             Window::FiveHour => "5h",
@@ -122,6 +111,32 @@ pub fn line(input: &Input, snapshots: &[Snapshot]) -> String {
         parts.push(format!("{label} {:.0}%", snapshot.used_percentage));
     }
     parts.join(" · ")
+}
+
+/// Renders the status line of the budget mode, such as `ctx 44k/400k · $42/$200 21% →$310`: the
+/// context, then the spend of the month with its budget and the projection to the end of the
+/// month, which is marked `↑` instead of `→` when it exceeds the budget.
+pub fn budget_line(input: &Input, month: &MonthStatus) -> String {
+    let mut parts: Vec<String> = context_part(input).into_iter().collect();
+    let arrow = if month.projected_over { '↑' } else { '→' };
+    parts.push(match (month.budget_usd, month.percent) {
+        (Some(budget), Some(percent)) => format!(
+            "${:.0}/${budget:.0} {percent:.0}% {arrow}${:.0}",
+            month.spent_usd, month.projected_usd
+        ),
+        _ => format!("${:.0} {arrow}${:.0}", month.spent_usd, month.projected_usd),
+    });
+    parts.join(" · ")
+}
+
+fn context_part(input: &Input) -> Option<String> {
+    let tokens = input.context_window.as_ref()?.total_input_tokens?;
+    let context = context::measure(tokens, input.model_id());
+    Some(format!(
+        "ctx {}k/{}k",
+        context.tokens / 1000,
+        context.threshold.tokens / 1000
+    ))
 }
 
 fn same_reading(a: &Snapshot, b: &Snapshot) -> bool {
