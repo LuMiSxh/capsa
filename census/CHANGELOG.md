@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0]
+
 ### Fixed
 
 - On Windows, `census limits` and `census usage` use the local time zone for the weekly and daily
