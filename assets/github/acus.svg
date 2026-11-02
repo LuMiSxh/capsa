@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- acus: a needle with an eye and a short thread, faceted shaft -->
+  <defs>
+    <linearGradient id="acus-plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2119"/>
+      <stop offset="1" stop-color="#120d09"/>
+    </linearGradient>
+    <linearGradient id="acus-light" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a4f2df"/>
+      <stop offset="1" stop-color="#41c4ad"/>
+    </linearGradient>
+    <linearGradient id="acus-mid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#41c4ad"/>
+      <stop offset="1" stop-color="#1f8c7d"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#acus-plate)"/>
+  <rect x="1.5" y="1.5" width="509" height="509" rx="110.5" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="3"/>
+  <g transform="rotate(-45 256 256)">
+    <polygon points="104,256 136,236 392,236 408,256" fill="url(#acus-light)"/>
+    <polygon points="104,256 408,256 392,276 136,276" fill="url(#acus-mid)"/>
+    <ellipse cx="360" cy="256" rx="14" ry="8" fill="#120d09"/>
+    <polyline points="104,256 136,236 392,236 408,256" fill="none" stroke="#ffffff" stroke-opacity="0.75" stroke-width="3" stroke-linejoin="round"/>
+    <polyline points="408,256 392,276 136,276 104,256" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3" stroke-linejoin="round"/>
+  </g>
+  <path d="M330 182 C368 172 404 196 386 236" fill="none" stroke="#c9f7ea" stroke-width="8" stroke-linecap="round"/>
+</svg>

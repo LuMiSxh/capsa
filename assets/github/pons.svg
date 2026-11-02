@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- pons: a Roman three-arch bridge on piers, front, top and shadow faces -->
+  <defs>
+    <linearGradient id="pons-plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2119"/>
+      <stop offset="1" stop-color="#120d09"/>
+    </linearGradient>
+    <linearGradient id="pons-light" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6b08a"/>
+      <stop offset="1" stop-color="#d9764e"/>
+    </linearGradient>
+    <linearGradient id="pons-mid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9764e"/>
+      <stop offset="1" stop-color="#a34628"/>
+    </linearGradient>
+    <linearGradient id="pons-dark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a34628"/>
+      <stop offset="1" stop-color="#5e2414"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#pons-plate)"/>
+  <rect x="1.5" y="1.5" width="509" height="509" rx="110.5" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="3"/>
+  <polygon points="152,156 392,156 360,180 120,180" fill="url(#pons-light)"/>
+  <rect x="120" y="180" width="240" height="176" fill="url(#pons-mid)"/>
+  <path d="M138 356 L138 288 A28 28 0 0 1 194 288 L194 356 Z" fill="#120d09"/>
+  <path d="M212 356 L212 288 A28 28 0 0 1 268 288 L268 356 Z" fill="#120d09"/>
+  <path d="M286 356 L286 288 A28 28 0 0 1 342 288 L342 356 Z" fill="#120d09"/>
+  <polygon points="360,180 392,156 392,332 360,356" fill="url(#pons-dark)"/>
+  <rect x="120" y="180" width="240" height="12" fill="#ffffff" fill-opacity="0.22"/>
+  <polyline points="120,356 120,180 152,156 392,156" fill="none" stroke="#ffffff" stroke-opacity="0.75" stroke-width="3" stroke-linejoin="round"/>
+  <polyline points="392,156 392,332 360,356" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3" stroke-linejoin="round"/>
+</svg>

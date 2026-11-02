@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- capsa: Roman scroll case, an upright cylinder with lid and two bands, faceted -->
+  <defs>
+    <linearGradient id="capsa-plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2119"/>
+      <stop offset="1" stop-color="#120d09"/>
+    </linearGradient>
+    <linearGradient id="capsa-light" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7d99a"/>
+      <stop offset="1" stop-color="#d9973f"/>
+    </linearGradient>
+    <linearGradient id="capsa-mid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9973f"/>
+      <stop offset="1" stop-color="#9a6226"/>
+    </linearGradient>
+    <linearGradient id="capsa-dark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9a6226"/>
+      <stop offset="1" stop-color="#5a3815"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#capsa-plate)"/>
+  <rect x="1.5" y="1.5" width="509" height="509" rx="110.5" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="3"/>
+  <polygon points="206,144 346,144 306,168 166,168" fill="url(#capsa-light)"/>
+  <polygon points="166,168 306,168 306,368 166,368" fill="url(#capsa-mid)"/>
+  <polygon points="306,168 346,144 346,344 306,368" fill="url(#capsa-dark)"/>
+  <rect x="166" y="216" width="140" height="16" fill="#ffffff" fill-opacity="0.22"/>
+  <rect x="166" y="300" width="140" height="16" fill="#ffffff" fill-opacity="0.22"/>
+  <polygon points="306,216 346,192 346,208 306,232" fill="#ffffff" fill-opacity="0.12"/>
+  <polygon points="306,300 346,276 346,292 306,316" fill="#ffffff" fill-opacity="0.12"/>
+  <polyline points="166,368 166,168 206,144 346,144" fill="none" stroke="#ffffff" stroke-opacity="0.75" stroke-width="3" stroke-linejoin="round"/>
+  <polyline points="306,168 346,144 346,344" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3" stroke-linejoin="round"/>
+</svg>
