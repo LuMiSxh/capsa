@@ -12,6 +12,13 @@
 mod common;
 
 use common::Scratch;
+
+/// Where census reads its config under a scratch home: macOS ignores `XDG_CONFIG_HOME`.
+const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
+    "Library/Application Support/census/config.json"
+} else {
+    "config/census/config.json"
+};
 use serde_json::json;
 use std::io::Write;
 use std::path::Path;
@@ -71,7 +78,12 @@ fn golden(name: &str, out: &Output, home: &Path, code: i32) {
         String::from_utf8_lossy(&out.stderr)
     );
     let root = home.display().to_string();
+    let resolved = home
+        .canonicalize()
+        .map_or_else(|_| root.clone(), |p| p.display().to_string());
     let shown = String::from_utf8_lossy(&out.stdout)
+        .replace(&resolved, "<HOME>")
+        .replace("Library/Application Support/census", "config/census")
         .replace(&root.replace('\\', r"\\"), "<HOME>")
         .replace(&root, "<HOME>")
         .replace(r"\\", "/");
@@ -164,7 +176,7 @@ fn budget_fixture(home: &Scratch, config: &str) {
             request("2026-10-14T06:00:00.000Z", "m3"),
         ]),
     );
-    home.write("config/census/config.json", config);
+    home.write(CONFIG_FILE, config);
 }
 
 /// A session recorded in `cwd`: a main transcript with 60k context on `claude-opus-5-5`, one

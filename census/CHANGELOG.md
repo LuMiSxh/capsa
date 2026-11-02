@@ -67,6 +67,8 @@
   configuration no longer changes the expected status line.
 - The digest parses floats exactly (`serde_json` `float_roundtrip`), so the priced values match the
   ledger files.
+- `census context` and `census session` find the transcript of a directory that Claude Code
+  recorded under its canonical path, such as a Windows short name or a symlinked prefix.
 
 ## [0.3.0]
 

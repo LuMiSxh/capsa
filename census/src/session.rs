@@ -135,8 +135,16 @@ fn recent(roots: &[PathBuf], cwd: &Path) -> Result<Resolved, SessionError> {
 }
 
 /// Whether `recorded` is `cwd`, an ancestor of it or a descendant of it.
+///
+/// Falls back to canonical paths, since `current_dir` can hold a Windows short name (`RUNNER~1`)
+/// or a symlinked prefix that Claude Code recorded in its resolved form.
 fn related(cwd: &Path, recorded: &Path) -> bool {
-    cwd.starts_with(recorded) || recorded.starts_with(cwd)
+    let nested = |a: &Path, b: &Path| a.starts_with(b) || b.starts_with(a);
+    nested(cwd, recorded) || nested(&canonical(cwd), &canonical(recorded))
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
 }
 
 /// The main transcripts under the roots: `<root>/<project>/<session>.jsonl`.

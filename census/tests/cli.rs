@@ -5,6 +5,13 @@
 mod common;
 
 use common::Scratch;
+
+/// Where census reads its config under a scratch home: macOS ignores `XDG_CONFIG_HOME`.
+const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
+    "Library/Application Support/census/config.json"
+} else {
+    "config/census/config.json"
+};
 use serde_json::{Value, json};
 use std::io::Write;
 use std::path::Path;
@@ -22,6 +29,7 @@ fn census(home: &Path, cwd: &Path, args: &[&str], stdin: &str, extra: &[(&str, &
     let mut child = Command::new(env!("CARGO_BIN_EXE_census"))
         .args(args)
         .current_dir(cwd)
+        .env("HOME", home)
         .env("XDG_STATE_HOME", home.join("state"))
         .env("LOCALAPPDATA", home.join("state"))
         .env("USERPROFILE", home)
@@ -179,7 +187,7 @@ fn doctor_is_one_json_value_and_exits_1_only_when_a_check_fails() {
         .collect();
     assert_eq!(groups, ["install", "config", "skill", "hooks", "state"]);
 
-    home.write("config/census/config.json", "{not json");
+    home.write(CONFIG_FILE, "{not json");
     let broken = census(home.path(), &cwd, &["self", "doctor", "--json"], "", &extra);
     assert_eq!(broken.status.code(), Some(1), "{}", text(&broken.stderr));
     let v: Value = serde_json::from_slice(&broken.stdout).expect("doctor --json is one value");
@@ -255,7 +263,7 @@ fn daily_limit_is_set_shown_and_cleared() {
     ];
     let run = |args: &[&str]| census(home.path(), home.path(), args, "", &extra);
     let saved = || -> Value {
-        let text = std::fs::read_to_string(cfg.join("census/config.json")).expect("config file");
+        let text = std::fs::read_to_string(home.path().join(CONFIG_FILE)).expect("config file");
         serde_json::from_str(&text).expect("config json")
     };
 
@@ -309,7 +317,7 @@ fn budget_limits_json_carries_today_and_its_daily_limit() {
     assert!(derived["today"]["limit"].as_f64().is_some_and(|l| l > 0.0));
 
     home.write(
-        "config/census/config.json",
+        CONFIG_FILE,
         r#"{"mode":"budget","monthly_budget_usd":100.0,"daily_limit_usd":8.0}"#,
     );
     let fixed = limits(&extra);
@@ -596,7 +604,7 @@ fn october_spend(home: &Scratch, mode: &str) {
         ]),
     );
     home.write(
-        "config/census/config.json",
+        CONFIG_FILE,
         &format!(r#"{{"mode":"{mode}","monthly_budget_usd":100.0}}"#),
     );
 }

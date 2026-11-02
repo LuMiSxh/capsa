@@ -4,6 +4,13 @@
 mod common;
 
 use common::Scratch;
+
+/// Where census reads its config under a scratch home: macOS ignores `XDG_CONFIG_HOME`.
+const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
+    "Library/Application Support/census/config.json"
+} else {
+    "config/census/config.json"
+};
 use serde_json::{Value, json};
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
@@ -330,10 +337,8 @@ fn a_five_hour_forecast_at_sixty_percent_after_forty_minutes_is_said() {
 #[test]
 fn budget_mode_warns_when_the_month_spend_passes_the_budget() {
     let h = Hook::new("hook-budget");
-    h.home.write(
-        "config/census/config.json",
-        r#"{"mode":"budget","monthly_budget_usd":0.5}"#,
-    );
+    h.home
+        .write(CONFIG_FILE, r#"{"mode":"budget","monthly_budget_usd":0.5}"#);
     let path = h.transcript_lines(&[request_at("2026-10-02T10:00:00.000Z", "m1", 400_000)]);
     let text = h
         .hook(hook_input("UserPromptSubmit", &path).as_bytes())
@@ -345,7 +350,7 @@ fn budget_mode_warns_when_the_month_spend_passes_the_budget() {
 fn daily_budget_reached_is_said_once_per_day() {
     let h = Hook::new("hook-daily");
     h.home.write(
-        "config/census/config.json",
+        CONFIG_FILE,
         r#"{"mode":"budget","monthly_budget_usd":100.0,"daily_limit_usd":0.01}"#,
     );
     // The request is at the clock's instant, so it falls on today in any time zone.
@@ -359,10 +364,8 @@ fn daily_budget_reached_is_said_once_per_day() {
 #[test]
 fn plan_mode_never_reports_the_monthly_budget() {
     let h = Hook::new("hook-budget-plan");
-    h.home.write(
-        "config/census/config.json",
-        r#"{"mode":"plan","monthly_budget_usd":0.5}"#,
-    );
+    h.home
+        .write(CONFIG_FILE, r#"{"mode":"plan","monthly_budget_usd":0.5}"#);
     let path = h.transcript_lines(&[request_at("2026-10-02T10:00:00.000Z", "m1", 400_000)]);
     let text = h
         .hook(hook_input("UserPromptSubmit", &path).as_bytes())
