@@ -63,10 +63,7 @@ pub(super) fn rewrite_parsed(cmd: &str, p: &Parsed, scope: Option<&Scope>) -> Op
     // comment, `&`). It must parse and pass the guard like `fold_all` results, or fall through.
     if let Some(command) = sed_patch::fold(segs, 0, scope)
         .filter(|_| cmd.trim() == segs[0].orig.trim())
-        .filter(|c| {
-            parse(c, Dialect::Bash).is_some()
-                && !matches!(check_in(c, false, scope), Some(Verdict::Deny(..)))
-        })
+        .filter(|c| accepted(c, scope))
     {
         return Some(Rewrite {
             command,
@@ -77,9 +74,7 @@ pub(super) fn rewrite_parsed(cmd: &str, p: &Parsed, scope: Option<&Scope>) -> Op
     }
     let folded = fold_all(cmd, segs, scope, false)?;
     // The result must parse and pass the guard itself.
-    if parse(&folded.out, Dialect::Bash).is_none()
-        || matches!(check_in(&folded.out, false, scope), Some(Verdict::Deny(..)))
-    {
+    if !accepted(&folded.out, scope) {
         return None;
     }
     Some(Rewrite {
@@ -90,6 +85,16 @@ pub(super) fn rewrite_parsed(cmd: &str, p: &Parsed, scope: Option<&Scope>) -> Op
         ),
         rule: folded.first?,
         deferred: folded.deferred,
+    })
+}
+
+/// Reports whether a rewritten command parses and passes the guard. It is parsed once, here.
+fn accepted(text: &str, scope: Option<&Scope>) -> bool {
+    parse(text, Dialect::Bash).is_some_and(|p| {
+        !matches!(
+            check_parsed(text, &p, false, scope),
+            Some(Verdict::Deny(..))
+        )
     })
 }
 

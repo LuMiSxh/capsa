@@ -38,8 +38,17 @@ pub struct Args {
     cut: Option<u64>,
 }
 
+/// Names the first path that does not exist, with the hint `acus find` gives for it.
+fn check_paths(paths: &[PathBuf]) -> Result<()> {
+    match paths.iter().find(|p| !p.exists()) {
+        Some(p) => Err(crate::source::not_found(&p.to_string_lossy())),
+        None => Ok(()),
+    }
+}
+
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     check_kinds(&a.kinds)?;
+    check_paths(&a.paths)?;
     let (exclude, include): (Vec<String>, Vec<String>) =
         a.globs.into_iter().partition(|g| g.starts_with('!'));
     let found = Mutex::new(Vec::new());

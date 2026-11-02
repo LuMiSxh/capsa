@@ -3,9 +3,9 @@
 
 use crate::fmt::Out;
 use crate::git::git;
-use crate::source::{Span, locate};
+use crate::source::{Span, locate, read_text};
 use acus_syntax::Address;
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use std::collections::HashMap;
@@ -43,11 +43,7 @@ struct Commit {
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     let addr = Address::parse(&a.addr);
     let path = addr.path.as_str();
-    let src = std::fs::read_to_string(path).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => anyhow!("path not found: {path}"),
-        std::io::ErrorKind::InvalidData => anyhow!("{path}: binary file, not shown"),
-        _ => anyhow!("{path}: {e}"),
-    })?;
+    let src = read_text(path)?;
     let lines: Vec<&str> = src.lines().collect();
     if lines.is_empty() {
         bail!("{path} is empty");

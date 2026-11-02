@@ -116,37 +116,6 @@ fn guard_never_fails_on_malformed_input() {
     }
 }
 
-#[cfg(not(feature = "cmd-decide"))]
-#[test]
-fn decide_without_feature_has_hint() {
-    let (code, _, err) = acus(&["decide", "ok?", "--state", "x"]);
-    assert_eq!(code, 2);
-    assert!(err.contains("--features cmd-decide"), "{err}");
-}
-
-#[cfg(feature = "cmd-decide")]
-#[test]
-fn decide_without_endpoint_has_hint() {
-    let (code, _, err) = acus(&["decide", "ok?", "--state", "x"]);
-    assert_eq!(code, 2);
-    assert!(err.contains("ACUS_DECIDE_URL"), "{err}");
-}
-
-#[cfg(feature = "cmd-decide")]
-#[test]
-fn decide_without_key_warns_and_skips() {
-    let env = [
-        ("ACUS_DECIDE_URL", "http://127.0.0.1:9"),
-        ("ACUS_DECIDE_API_KEY_ENV", "ACUS_TEST_UNSET_KEY"),
-    ];
-    let (code, _, err) = acus_env(&["decide", "ok?", "--state", "x"], &env);
-    assert_eq!(code, 2);
-    assert!(
-        err.contains("warning: no API key in $ACUS_TEST_UNSET_KEY"),
-        "{err}"
-    );
-}
-
 #[cfg(any(feature = "guard-bash", feature = "guard-zsh"))]
 #[test]
 fn guard_rewrite_quotes_every_copied_argument() {
@@ -327,4 +296,23 @@ fn unusable_hint_state_still_shows_hints() {
         let out = run_hook(&config, &["guard"], bash_call("s1", "git status"));
         assert!(!out.is_empty());
     }
+}
+
+/// A config that does not parse must not stop the guard: it answers with the defaults, names the
+/// problem once per session, and still rewrites.
+#[test]
+fn guard_answers_with_defaults_under_a_broken_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("acus.toml");
+    std::fs::write(&config, "[guard]\nhint_every = \"ten\"\n").unwrap();
+    let first = run_hook(&config, &["guard"], bash_call("c1", "ls"));
+    assert!(
+        first.contains("acus config error") && first.contains("acus.toml"),
+        "{first}"
+    );
+    let second = run_hook(&config, &["guard"], bash_call("c1", "ls"));
+    assert!(second.is_empty(), "{second}");
+    let rewrite = run_hook(&config, &["guard"], bash_call("c2", "tail -n 5 src/a.rs"));
+    assert!(rewrite.contains("updatedInput"), "{rewrite}");
+    assert!(rewrite.contains("acus config error"), "{rewrite}");
 }

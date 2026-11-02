@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The `acus` binary: parses the command line and dispatches to the `cmd_*` modules.
 
-mod agents;
 mod cmd_blame;
 mod cmd_ctx;
-mod cmd_decide;
 mod cmd_diff;
+mod cmd_doctor;
 mod cmd_files;
 mod cmd_find;
 mod cmd_follow;
@@ -17,6 +16,7 @@ mod cmd_outline;
 mod cmd_patch;
 mod cmd_run;
 mod cmd_self;
+mod cmd_setup;
 mod cmd_show;
 mod cmd_skill;
 mod cmd_uninstall;
@@ -29,11 +29,13 @@ mod globs;
 mod source;
 
 use anyhow::{Result, bail};
-use capsa_core::exit::{Outcome, finish, report, reset_sigpipe};
-use capsa_core::format::{Format, resolve};
+use capsa_core::cli::{App, FormatArgs};
+use capsa_core::exit::Outcome;
+use capsa_core::format::Format;
 use clap::{Parser, Subcommand};
-use std::convert::Infallible;
 use std::process::ExitCode;
+
+pub use capsa_core::cli::home;
 
 /// This binary as the self-update and uninstall code sees it.
 #[cfg(feature = "cmd-update")]
@@ -46,18 +48,8 @@ pub const TOOL: capsa_core::update::Tool = capsa_core::update::Tool {
 #[derive(Parser)]
 #[command(name = "acus", version)]
 pub struct Cli {
-    /// Output format: agent, human or json. Agent unless CAPSA_HUMAN=1 selects human.
-    #[arg(long, value_enum, global = true)]
-    format: Option<Format>,
-    /// Shorthand for --format json.
-    #[arg(long, global = true)]
-    json: bool,
-    /// Shorthand for --format human.
-    #[arg(long, global = true)]
-    human: bool,
-    /// Shorthand for --format agent. Not global: `skill --agent NAME` is a different option.
-    #[arg(long)]
-    agent: bool,
+    #[command(flatten)]
+    format: FormatArgs,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -87,9 +79,6 @@ enum Cmd {
     /// `*** Delete File`, `*** Copy File`, `*** Replace Symbol`, `*** Insert Before/After`,
     /// `*** Delete Symbol`, `*** Move Symbol` and `*** Replace All` (`acus patch --help` has the syntax).
     Patch(cmd_patch::Args),
-
-    /// Yes/no, choice or score judgement via a Jev-compatible API (needs `cmd-decide`).
-    Decide(cmd_decide::Args),
     /// Run a shell command; print its output plus the code its `path:line` references point at.
     Ctx(cmd_ctx::Args),
     /// Uncommitted (or `REV`, `A..B`) changes grouped by enclosing symbol; `-p` adds the lines.
@@ -101,7 +90,7 @@ enum Cmd {
     /// PreToolUse hook for Claude Code and Codex: rewrites Bash, PowerShell, Read, Grep and Glob calls
     /// into the acus command that does the same work, or adds a hint or refusal that names it.
     Guard(cmd_guard::Args),
-    /// Installation and health of acus itself: `self update`, `self skill`, `self uninstall`.
+    /// Installation and health of acus itself: `self update`, `self setup`, `self doctor`, `self skill`, `self uninstall`.
     #[command(name = "self")]
     Itself(cmd_self::Args),
 }
@@ -118,7 +107,6 @@ impl Cmd {
             Cmd::Follow(_) => "follow",
             Cmd::Patch(_) => "patch",
 
-            Cmd::Decide(_) => "decide",
             Cmd::Run(_) => "run",
             Cmd::Ctx(_) => "ctx",
             Cmd::Diff(_) => "diff",
@@ -137,20 +125,28 @@ impl Cmd {
     }
 }
 
-impl Cli {
-    /// The output format: an explicit flag wins (json, human, agent), then `CAPSA_HUMAN`.
+impl App for Cli {
     fn format(&self) -> Format {
-        resolve(
-            self.human || self.format == Some(Format::Human),
-            self.json || self.format == Some(Format::Json),
-            self.agent || self.format == Some(Format::Agent),
-        )
+        self.format.resolve()
+    }
+
+    fn parse_error(e: &clap::Error, args: &[String]) -> anyhow::Error {
+        parse_error(e, args)
     }
 }
 
 /// Runs one parsed command line in `format`; `run` calls this for every batch entry.
 pub fn execute(cli: Cli, format: Format, nested: bool) -> Result<Outcome> {
-    let cfg = config::load()?;
+    // A broken config file must not stop guard, which answers every tool call: it runs with the
+    // defaults and reports the problem to the agent.
+    // `self doctor` reports a broken config itself, so it gets the same lenient load.
+    let (cfg, config_problem) = if matches!(cli.cmd, Cmd::Guard(_))
+        || matches!(&cli.cmd, Cmd::Itself(a) if a.is_doctor())
+    {
+        config::load_or_default()
+    } else {
+        (config::load()?, None)
+    };
     let name = cli.cmd.name();
     let null_on = cli.cmd.json_null_on();
     if cfg.commands.disabled.iter().any(|d| d == name) {
@@ -173,26 +169,18 @@ pub fn execute(cli: Cli, format: Format, nested: bool) -> Result<Outcome> {
         Cmd::Blame(a) => cmd_blame::run(a, &out),
         Cmd::Follow(a) => cmd_follow::run(a, &out),
         Cmd::Patch(a) => cmd_patch::run(a, &out, nested, &cfg),
-
-        Cmd::Decide(a) => cmd_decide::run(a, &out, &cfg),
         Cmd::Run(_) if nested => bail!("`run` cannot be nested"),
         Cmd::Run(a) => cmd_run::run(a, &out),
         Cmd::Ctx(a) => cmd_ctx::run(a, &out, &cfg),
         Cmd::Diff(a) => cmd_diff::run(a, &out),
         Cmd::Log(a) => cmd_log::run(a, &out),
-        Cmd::Guard(a) => cmd_guard::run(a, &cfg),
-        Cmd::Itself(a) => cmd_self::run(a, &cfg),
+        Cmd::Guard(a) => cmd_guard::run(a, &cfg, config_problem.as_deref()),
+        Cmd::Itself(a) => cmd_self::run(a, &cfg, format),
     }?;
     if !nested && out.format == Format::Json && null_on.is_some_and(|o| o == result) {
         println!("null");
     }
     Ok(result)
-}
-
-/// Clap value parser for path arguments: `~` and `~/…` become $HOME, as a shell would expand
-/// them.
-pub fn home<T: From<String>>(arg: &str) -> Result<T, Infallible> {
-    Ok(T::from(capsa_core::paths::expand_home(arg)))
 }
 
 /// A hint for a grep or rg flag that `acus find` lacks, printed after clap's own error; `args`
@@ -224,8 +212,7 @@ pub fn find_flag_hint(e: &clap::Error, args: &[String]) -> Option<String> {
 /// The error for a command line clap rejected; the find flag hint becomes its `Hint`.
 pub fn parse_error(e: &clap::Error, args: &[String]) -> anyhow::Error {
     let Some(hint) = find_flag_hint(e, args) else {
-        let message = e.to_string();
-        return anyhow::Error::msg(message.trim().trim_start_matches("error: ").to_owned());
+        return capsa_core::cli::plain_parse_error(e);
     };
     let flag = match e.get(clap::error::ContextKind::InvalidArg) {
         Some(clap::error::ContextValue::String(f)) => f.as_str(),
@@ -237,35 +224,7 @@ pub fn parse_error(e: &clap::Error, args: &[String]) -> anyhow::Error {
     ))
 }
 
-/// The format of a command line clap could not parse, read from its raw flags.
-fn raw_format(args: &[String]) -> Format {
-    let has = |flag: &str| args.iter().any(|a| a == flag);
-    let value = args.iter().enumerate().find_map(|(i, a)| {
-        a.strip_prefix("--format=")
-            .or_else(|| (a == "--format").then(|| args.get(i + 1).map_or("", String::as_str)))
-    });
-    resolve(
-        has("--human") || value == Some("human"),
-        has("--json") || value == Some("json"),
-        has("--agent") || value == Some("agent"),
-    )
-}
-
+/// Runs acus: the shared skeleton parses the command line, then `execute` runs it.
 fn main() -> ExitCode {
-    // `acus … | head` should end quietly like other CLI tools, not panic on a closed pipe.
-    reset_sigpipe();
-    let cli = match Cli::try_parse() {
-        Ok(cli) => cli,
-        // Help and version are output, not errors.
-        Err(e) if !e.use_stderr() => {
-            let _ = e.print();
-            return ExitCode::SUCCESS;
-        }
-        Err(e) => {
-            let args: Vec<String> = std::env::args().collect();
-            return report(&parse_error(&e, &args), raw_format(&args));
-        }
-    };
-    let format = cli.format();
-    finish(execute(cli, format, false), format)
+    capsa_core::cli::main::<Cli>(|cli, format| execute(cli, format, false))
 }

@@ -11,3 +11,4 @@ expression: out
 (no results)
 >>> acus show nope.rs
 error: path not found: nope.rs
+hint: paths are relative to the working directory; `acus files` lists them

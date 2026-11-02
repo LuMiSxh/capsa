@@ -232,41 +232,39 @@ fn check_in(cmd: &str, ps: bool, scope: Option<&Scope>) -> Option<Verdict> {
 /// Runs `check_in` for a command that is already parsed, so `decide_bash` parses it once.
 fn check_parsed(cmd: &str, p: &Parsed, ps: bool, scope: Option<&Scope>) -> Option<Verdict> {
     let Parsed { segs, docs } = p;
-    let scripts = docs.iter().filter_map(|Doc { openers, body }| {
-        let interp = openers.iter().find_map(|opener| {
-            head(opener)
-                .map(|(h, _)| h.to_owned())
-                .filter(|h| is_interpreter(h))
-                .or_else(|| script_writer(opener).map(str::to_owned))
-        })?;
-        is_edit_script(body).then(|| script_hint(&interp))
-    });
-    let mark = |esc: bool, v: Verdict| if esc { v.escaped() } else { v };
-    // Each verdict with the first and last segment it is about.
-    let filtered = segs.windows(2).enumerate().filter_map(|(i, w)| {
-        if w[0].opaque() || w[1].opaque() {
-            return None;
-        }
-        // A build piped on into anything but a filter does not reach the model as it is.
-        let build = if feeds_other(segs, i + 1) {
-            None
-        } else {
-            let last = filter_last(segs, i);
-            filtered_build(
-                &w[0],
-                &w[1],
-                &segs[i + 2..=last.max(i + 1)],
-                continues(segs, last),
-            )
-            .map(|v| (mark(w[0].low_unescaped().0, v), i, i + 1))
-        };
-        build.or_else(|| {
-            let v = listed_search(&w[0], &w[1], ps)?;
-            Some((mark(w[0].orig_unescaped().0, v), i, i + 1))
-        })
-    });
-    let verdicts: Vec<(Verdict, usize, usize)> = segs
+    let mut found = segment_verdicts(cmd, segs, ps, scope);
+    found.extend(filtered_verdicts(segs, ps));
+    found.extend(script_hints(docs).into_iter().map(|v| (v, 0, 0)));
+    // The refusals by the segment each names: a compound refusal names one that has no rewrite.
+    let refusals: Vec<(usize, Rule, String)> = found
         .iter()
+        .filter_map(|(v, at, _)| match v {
+            Verdict::Deny(rule, why) => Some((*at, *rule, why.clone())),
+            _ => None,
+        })
+        .collect();
+    let (v, from, to) = found.into_iter().min_by_key(|(v, ..)| match v {
+        Verdict::Deny(..) => 0,
+        Verdict::Hint(..) => 1,
+        Verdict::Escape(_) | Verdict::Rewrite(_) => 2,
+    })?;
+    let compound = segs.iter().filter(|s| !s.low.trim().is_empty()).count() > 1;
+    let v = match v {
+        // A refusal stops the whole command, so a compound one says which part and what to run.
+        Verdict::Deny(rule, reason) if compound => {
+            compound_refusal(cmd, segs, &refusals, scope, ps, (rule, reason), (from, to))
+        }
+        v => v,
+    };
+    Some(escaped_if(cmd.contains("acus-skip"), v))
+}
+
+/// A verdict with the first and last segment it is about.
+type Found = (Verdict, usize, usize);
+
+/// Returns the verdicts about single segments: a read, search or build that reaches the agent.
+fn segment_verdicts(cmd: &str, segs: &[Segment], ps: bool, scope: Option<&Scope>) -> Vec<Found> {
+    segs.iter()
         .enumerate()
         .filter_map(|(i, s)| {
             // Inside a loop or group the output still reaches the agent, so a read or search there
@@ -305,31 +303,56 @@ fn check_parsed(cmd: &str, p: &Parsed, ps: bool, scope: Option<&Scope>) -> Optio
                         && filter_name(&n.low)
                             .is_some_and(|f| matches!(f.as_str(), "head" | "tail"))
                 });
-            Some((mark(esc, v), i, if read { i + 1 } else { i }))
+            Some((escaped_if(esc, v), i, if read { i + 1 } else { i }))
         })
-        .chain(filtered)
-        .chain(scripts.map(|v| (v, 0, 0)))
-        .collect();
-    // The refusals by the segment each names: a compound refusal names one that has no rewrite.
-    let refusals: Vec<(usize, Rule, String)> = verdicts
-        .iter()
-        .filter_map(|(v, at, _)| match v {
-            Verdict::Deny(rule, why) => Some((*at, *rule, why.clone())),
-            _ => None,
+        .collect()
+}
+
+/// Returns the verdicts about a build piped into a filter, found for each pair of segments.
+fn filtered_verdicts(segs: &[Segment], ps: bool) -> Vec<Found> {
+    segs.windows(2)
+        .enumerate()
+        .filter_map(|(i, w)| {
+            if w[0].opaque() || w[1].opaque() {
+                return None;
+            }
+            // A build piped on into anything but a filter does not reach the model as it is.
+            let build = if feeds_other(segs, i + 1) {
+                None
+            } else {
+                let last = filter_last(segs, i);
+                filtered_build(
+                    &w[0],
+                    &w[1],
+                    &segs[i + 2..=last.max(i + 1)],
+                    continues(segs, last),
+                )
+                .map(|v| (escaped_if(w[0].low_unescaped().0, v), i, i + 1))
+            };
+            build.or_else(|| {
+                let v = listed_search(&w[0], &w[1], ps)?;
+                Some((escaped_if(w[0].orig_unescaped().0, v), i, i + 1))
+            })
         })
-        .collect();
-    let (v, from, to) = verdicts.into_iter().min_by_key(|(v, ..)| match v {
-        Verdict::Deny(..) => 0,
-        Verdict::Hint(..) => 1,
-        Verdict::Escape(_) | Verdict::Rewrite(_) => 2,
-    })?;
-    let compound = segs.iter().filter(|s| !s.low.trim().is_empty()).count() > 1;
-    let v = match v {
-        // A refusal stops the whole command, so a compound one says which part and what to run.
-        Verdict::Deny(rule, reason) if compound => {
-            compound_refusal(cmd, segs, &refusals, scope, ps, (rule, reason), (from, to))
-        }
-        v => v,
-    };
-    Some(mark(cmd.contains("acus-skip"), v))
+        .collect()
+}
+
+/// Returns the hints for the edit scripts that an interpreter runs from a heredoc or inline body.
+fn script_hints(docs: &[Doc]) -> Vec<Verdict> {
+    docs.iter()
+        .filter_map(|Doc { openers, body }| {
+            let interp = openers.iter().find_map(|opener| {
+                head(opener)
+                    .map(|(h, _)| h.to_owned())
+                    .filter(|h| is_interpreter(h))
+                    .or_else(|| script_writer(opener).map(str::to_owned))
+            })?;
+            is_edit_script(body).then(|| script_hint(&interp))
+        })
+        .collect()
+}
+
+/// Returns v marked as escaped when esc is set.
+fn escaped_if(esc: bool, v: Verdict) -> Verdict {
+    if esc { v.escaped() } else { v }
 }

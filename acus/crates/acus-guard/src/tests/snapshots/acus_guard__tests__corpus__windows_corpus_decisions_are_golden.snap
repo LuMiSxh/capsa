@@ -1,0 +1,211 @@
+---
+source: acus/crates/acus-guard/src/tests/corpus.rs
+expression: out
+---
+skipped 0 cases (grammar not built)
+0001 rewrite build-pipe ⇒ acus ctx 'pytest -q' --tail 5
+0002 rewrite acus-pipe ⇒ cd C:\repo && acus find 'alpha|beta|__new__|def fn_c' tests/conftest.py tests/unit/test_mod_a.py --head 20; acus ctx 'PYTHONPATH="../pkg_b" uv run pytest tests/unit -q' --tail 3
+0003 pass - ⇒
+0004 rewrite build-pipe ⇒ acus ctx 'pnpm run check' --grep '(?i)alpha|COMPLETED|svelte-check found' --max-output 20
+0005 rewrite git-diff ⇒ cd C:\repo && acus diff; git diff package.json pnpm-workspace.yaml; acus ctx 'pnpm run lint' --tail 15; acus ctx 'pnpm run check' --tail 15; acus ctx 'pnpm run build' --tail 8
+0006 rewrite ctx-pipe ⇒ acus ctx 'cargo test --lib -q' --tail 15; acus ctx 'cargo clippy --all-targets -q' --tail 20
+0007 pass - ⇒
+0008 rewrite build-pipe ⇒ npx prettier --write src/lib/features/mod_a 2>&1 | grep -v unchanged | tail; acus ctx 'pnpm run lint' --tail 20; acus ctx 'pnpm run check' --tail 20
+0009 rewrite build-pipe ⇒ acus ctx 'pnpm run test' --tail 12; acus ctx 'pnpm run check' --tail 8; npx eslint . 2>&1 | tail -8; acus ctx 'pnpm run build' --tail 6; git status --short | grep -E 'package|pnpm'
+0010 pass - ⇒
+0011 rewrite build-pipe ⇒ cd C:\repo && acus ctx 'uv run --no-sync pytest pkg_a/api/mod_b pkg_a/api/mod_c -q' --tail 25; git status --short | grep uv.lock; acus diff
+0012 rewrite grep ⇒ acus find 'foo' 'src'
+0013 rewrite patch-quiet ⇒ cd C:\Users\user/Temp/an && printf '%s\n' '<<<<<<< SEARCH' "('shell', 'shell_command', 'exec_command')" '=======' "('shell', 'shell_command', 'exec_command', 'exec')" '>>>>>>> REPLACE' | acus patch -q -f /dev/stdin 2>&1; grep -c "'exec')" an.py; python an.py
+0014 pass - ⇒
+0015 rewrite grep ⇒ cd C:\repo && acus find 'invoke' 'src' -g '*.ts' -g '*.js' -g '*.svelte' --max-hits 20
+0016 rewrite grep ⇒ acus outline src/lib/mod_a --depth 1; acus find '^#' 'NOTES.md' --max-hits 80
+0017 pass - ⇒
+0018 rewrite grep ⇒ acus find '^#|ID_A|ID_B|ID_C|ID_D|ID_E|ID_F|ID_G' 'NOTES.md' --max-hits 80; acus show 'src/lib/components/Toast.svelte'; ls src/lib/utils src/lib/actions; cat vitest.config.* vite.config.* 2>/dev/null | head -60
+0019 rewrite ctx-pipe ⇒ acus ctx 'pnpm exec vitest run --project component src/lib/components/Select.test.ts src/lib/components/ActionButton.test.ts src/lib/components/data-table' --tail 80; grep -n "test:component" package.json
+0020 pass - ⇒
+0021 deny grep ⇒
+0022 pass - ⇒
+0023 pass - ⇒
+0024 pass - ⇒
+0025 rewrite grep ⇒ cd C:\repo; git diff --name-only --diff-filter=U; acus find '^(<<<<<<<|=======|>>>>>>>)' 'pkg_a/mod_a/file_a.py'
+0026 rewrite read-shell ⇒ acus show 'src/install.py'
+0027 rewrite read-shell ⇒ cd C:\repo && git checkout -b guard-powershell-git-status && acus map . | head -40; acus show 'CHANGELOG.md:1-30'
+0028 pass - ⇒
+0029 rewrite read-shell ⇒ acus show 'src/lib/mod_a/index.ts' 'src/lib/mod_a/types.ts' && acus show 'src/lib/mod_a/README.md:1-200'
+0030 rewrite read-shell ⇒ cd C:\repo; acus show 'pkg_a/mod_a/file_a.py:350-375'; acus find 'alpha|beta' pkg_a/mod_a/file_b.py --head 20
+0031 rewrite read-shell ⇒ cd C:\repo && acus show 'pkg_a/maths.py:90-118'; acus find 'fn_c' '.' -g '*.py'; acus show 'pkg_a/mod_c.py:625-655'; git status --short
+0032 rewrite read-shell ⇒ cd C:\repo && acus show 'pkg_a/mod_a/data.py:60-170' && acus show 'pkg_a/mod_a/data.py:325-385'; acus find 'fn_a|fn_b' 'C:\repo' -g '*.py' -g '!.venv' --max-hits 30
+0033 rewrite read-shell ⇒ acus show 'test_a.py'; acus show 'test_b.py'; acus show 'test_c.py'; acus find 'alpha|beta|gamma' test_d.py test_e.py
+0034 deny read-shell ⇒
+0035 rewrite read-shell ⇒ cd C:\repo/src/lib/features/mod_a && acus show 'sharedState.svelte.ts' 'sharedState.test.ts' 'state.svelte.ts' 'utils/stateB.svelte.ts'; acus show 'types.ts:1-167'; cat ../../core/i18n/translations.ts
+0036 rewrite read-shell ⇒ git status --short && git diff -- src/lib/features src/lib/core/i18n/locales/xx.po | head -700 && acus show 'src/lib/features/mod_a/utils/item_a.ts' 'src/lib/features/mod_a/components/dir_a/ItemB.svelte'
+0037 rewrite read-shell ⇒ cd C:\repo/src/lib/features/mod_a && acus show 'utils/item_a.ts' 'components/dir_a/ItemB.svelte'; acus find 'ItemB|ItemC|ItemD' types.ts --block
+0038 deny read-shell ⇒
+0039 deny sed-i ⇒
+0040 deny sed-i ⇒
+0041 deny sed-i ⇒
+0042 deny sed-i ⇒
+0043 deny sed-i ⇒
+0044 deny sed-i ⇒
+0045 deny sed-i ⇒
+0046 deny sed-i ⇒
+0047 pass - ⇒
+0048 pass - ⇒
+0049 escape grep ⇒
+0050 escape grep ⇒
+0051 pass - ⇒
+0052 escape grep ⇒
+0053 escape grep ⇒
+0054 escape grep ⇒
+0055 rewrite git-diff ⇒ cd C:\repo && acus diff; command grep -n "def \|fixture" tests/conftest.py
+0056 pass - ⇒
+0057 pass - ⇒
+0058 pass - ⇒
+0059 escape grep ⇒
+0060 escape grep ⇒
+0061 pass - ⇒
+0062 pass - ⇒
+0063 escape read-shell ⇒
+0064 escape read-shell ⇒
+0065 escape read-shell ⇒
+0066 escape read-shell ⇒
+0067 escape read-shell ⇒
+0068 escape read-shell ⇒
+0069 pass - ⇒
+0070 escape sed-i ⇒
+0071 escape sed-i ⇒
+0072 escape sed-i ⇒
+0073 hint edit-script ⇒
+0074 hint edit-script ⇒
+0075 hint edit-script ⇒
+0076 hint edit-script ⇒
+0077 hint edit-script ⇒
+0078 rewrite git-diff ⇒ cd C:\repo && python - <<'EOF'\np='pkg_a/mod_a/file_a.py'\nb=open(p,'rb').read().replace(b'\r\n',b'\n').replace(b'\n',b'\r\n')\nopen(p,'wb').write(b)\nEOF\nacus diff; acus show pkg_a/mod_a/file_a.py:385-420
+0079 rewrite git-diff ⇒ acus diff -p
+0080 hint git-diff ⇒
+0081 hint git-diff ⇒
+0082 hint git-diff ⇒
+0083 hint git-diff ⇒
+0084 rewrite git-diff ⇒ cd C:\repo; git status --short; acus diff -p pkg_a/
+0085 rewrite git-diff ⇒ cd C:\repo && acus diff tests/unit/test_a.py; git diff tests/unit/test_a.py | command head -30
+0086 hint git-diff ⇒
+0087 hint git-diff ⇒
+0088 hint git-diff ⇒
+0089 hint git-diff ⇒
+0090 hint git-diff ⇒
+0091 hint git-diff ⇒
+0092 hint git-diff ⇒
+0093 pass - ⇒
+0094 hint git-diff ⇒
+0095 hint git-show ⇒
+0096 hint git-show ⇒
+0097 hint git-show ⇒
+0098 hint git-show ⇒
+0099 hint git-status ⇒
+0100 hint grep ⇒
+0101 hint grep ⇒
+0102 hint tree ⇒
+0103 hint tree ⇒
+0104 hint tree ⇒
+0105 rewrite acus-pipe ⇒ acus find 'Process\(|Thread\(|Queue\(|SharedMemory|multiprocessing|zmq|socket|ProcessPoolExecutor|ThreadPoolExecutor|perf_counter|time\.time\(\)|monotonic' C:\repo C:\repo -t py -l --head 120
+0106 rewrite acus-pipe ⇒ acus show C:\repo/main.py C:\repo/pkg_a/mod_a.py C:\repo/pkg_a/mod_b.py:66-90 C:\repo/pkg_a/mod_c/file_a.py#EnumA.__init__ C:\repo/pkg_a/mod_c/file_a.py#EnumA._build_pool C:\repo/pkg_a/mod_c/file_a.py#EnumA.start_all --head 500
+0107 rewrite acus-pipe ⇒ acus show C:\repo/pkg_a/mod_c/file_b.py#fn_a C:\repo/pkg_a/mod_d/file_c.py#fn_b C:\repo/pkg_a/mod_d/file_c.py#fn_c --head 400
+0108 rewrite acus-pipe ⇒ acus show "src/routes/(content)/+page.svelte:675-688"; acus find 'ConfirmModal' "src/routes/(content)/+page.svelte" --head 3
+0109 rewrite acus-pipe ⇒ acus find 'command ' acus/crates/acus-guard/src -g '!tests/*' -g '!*.jsonl' -g '!*.snap' --head 60; acus show acus/crates/acus-guard/src/build/chain.rs#filter_name acus/crates/acus-guard/src/build/chain.rs#stage --head 80
+0110 rewrite acus-pipe ⇒ acus diff --head 50
+0111 rewrite acus-pipe ⇒ cd C:\repo && acus find 'fn_a|KEY_A' pkg_a/config -g '*.py' --head 20
+0112 rewrite acus-pipe ⇒ cd C:\repo/.worktrees/feat-census-monthly-budget && acus find 'config_dir|fn ' core/src/paths.rs --head 30; acus find 'fn |RETENTION' census/src/ledger/fold.rs census/src/cmd_prune.rs
+0113 rewrite acus-pipe ⇒ cd C:\repo/.worktrees/feat-census-monthly-budget/census && acus show src/ledger/mod.rs:94-200 src/cmd_prune.rs:36-85; acus show src/ledger/fold.rs:60-90; acus find 'SharedLock|fn load_rows|fn load_hourly' src --cut 140; acus diff -p -- tests/cli.rs --head 80
+0114 rewrite acus-pipe ⇒ acus find -n -E '^\s*(Config|Self_?|SelfAction|Setup|Doctor)\b' census/src/main.rs pons/src/cli.rs acus/crates/acus-cli/src/*.rs --head 20 | cut -c1-160; acus find -n -i -E 'self (setup|doctor|skill|update|uninstall)' census/AGENTS.md --head 10 | cut -c1-200
+0115 rewrite acus-pipe ⇒ acus find '^name = ' C:\repo/Cargo.lock -A 1 -c --head 5; acus find -F -A 1 'name = "' C:\repo/Cargo.lock -c
+0116 rewrite acus-pipe ⇒ cd C:\repo/pons && acus find 'initialize\(true\)|initialize\(false\)' src -B3 -A12 --head 90; acus find 'fn flood|^fn send|^fn update' examples/mock_agent.rs --block; acus show src/engine/route.rs:1-36
+0117 rewrite acus-pipe ⇒ acus find 'fn a_rate_limit_line_is_forwarded' pons/tests --block --head 60; acus show core/src/paths.rs#state_dir 2>/dev/null || acus find 'fn state_dir' core/src --block
+0118 rewrite acus-pipe ⇒ acus outline core/src/exit.rs core/src/format.rs core/src/hint.rs core/src/paths.rs --head 120; acus show acus/CHANGELOG.md:1-30; acus outline acus/crates/acus-cli/tests/cli/ctx.rs --depth 0 >/dev/null; acus show acus/crates/acus-cli/src/cmd_skill.rs:215-240
+0119 rewrite build-pipe ⇒ acus ctx 'pnpm check' --tail 30; echo "check exit=$?"
+0120 rewrite build-pipe ⇒ uv run ruff format . 2>&1 | tail -3; uv run ruff check . 2>&1 | tail -40; acus ctx 'uv run pytest -q' --tail 40
+0121 rewrite build-pipe ⇒ export KEY_A="$KEY_B" KEY_C=false && acus patch --file 'C:\Users\user\Temp\p2.patch' -q && acus patch --file 'C:\Users\user\Temp\p3.patch' -q && uv run ruff format . | tail -1; uv run ruff check . | tail -30; acus ctx 'uv run pytest -q' --tail 30
+0122 rewrite build-pipe ⇒ acus ctx 'cargo test -p census --test cli limits_and_usage_by_without_data_exit_one' --tail 12; echo "exit $?"; acus ctx 'cargo test -p census --test cli -- --test-threads=1' --grep '^test |test result' --max-output 40
+0123 rewrite build-pipe ⇒ cd C:\repo/.worktrees/pons-bench-base && export CARGO_TARGET_DIR=C:\repo/.worktrees/pons-bench-base/target && acus ctx 'cargo build --profile release-unwind -p pons --examples' --tail 1; for i in 1 2 3; do cargo test --profile release-unwind -p pons --test proxy -- --ignored --nocapture proxy_line_cost 2>&1 | grep -E "proxy,"; done; unset CARGO_TARGET_DIR; cd ../.. && acus ctx 'cargo build --profile release-unwind -p pons --examples' --tail 1; for i in 1 2 3; do cargo test --profile release-unwind -p pons --test proxy -- --ignored --nocapture proxy_line_cost 2>&1 | grep -E "proxy,"; done
+0124 rewrite build-pipe ⇒ timeout 580 bash -c 'until cargo check -p pons --all-targets -q >/dev/null 2>&1; do sleep 45; done'; echo "wait_exit=$?"; acus ctx 'cargo check -p pons --all-targets -q' --max-output 5
+0125 rewrite build-pipe ⇒ acus ctx 'cargo test -p census --test cli --test hook --no-run' --tail 15; echo "exit=$?"
+0126 rewrite build-pipe ⇒ cargo clean -p census 2>&1 | tail -n 3; acus ctx 'cargo test -p census --no-run' --tail 12; echo "exit=$?"
+0127 rewrite build-pipe ⇒ acus ctx 'cargo build -p pons' --tail 2; echo "== human"; target/debug/pons.exe self doctor --human; echo "== exit $?"; echo "== agent"; target/debug/pons.exe self doctor --agent; echo "== exit $?"; echo "== flag on self"; target/debug/pons.exe self --json doctor | head -c 200; echo; echo "== exit $?"
+0128 rewrite build-pipe ⇒ acus ctx 'cargo test -p census' --tail 150; echo "exit=$?"
+0129 rewrite build-pipe ⇒ acus ctx 'cargo build -p census' --tail 2; T=$(cygpath -w "$(mktemp -d)"); B=C:\repo/target/debug/census.exe; run() { env HOME="$T" USERPROFILE="$T" APPDATA="$T\\config" XDG_CONFIG_HOME="$T\\config" LOCALAPPDATA="$T\\state" XDG_STATE_HOME="$T\\state" CLAUDE_CONFIG_DIR="$T\\claude" "$B" "$@"; }; run self setup >/dev/null; echo "setup_exit=$?"; echo "--- human"; run self doctor --human; echo "human_exit=$?"; echo "--- agent"; run self doctor --agent; echo "agent_exit=$?"; echo "T=$T"
+0130 rewrite ctx-pipe ⇒ acus ctx 'cargo test -p acus-guard log::' --tail 40
+0131 rewrite ctx-pipe ⇒ acus ctx 'cargo test -p census -- daily guard_log_reads budget_limits_json projection' --raw --grep '^test |test result|panicked|assert' --max-output 60
+0132 rewrite ctx-pipe ⇒ acus ctx 'cargo test -p census --no-fail-fast' --grep 'test result|Running|panicked' --raw --tail 60
+0133 rewrite git-diff ⇒ cd C:\repo && acus outline src --depth 2 2>/dev/null | head -80; acus files -g '*mod_a.py'; acus diff
+0134 rewrite git-diff ⇒ cd C:\repo && acus diff HEAD tests/unit/test_a.py; git diff tests/unit/test_a.py | head -20; git branch -a | head; git remote -v | head -1; ls -d .venv venv 2>/dev/null; git config core.autocrlf
+0135 rewrite git-diff ⇒ cd C:\repo && T="C:\Users\user/AppData/Local/Temp/dir_a" && .venv/Scripts/python.exe "$T/check_a.py" "$T/after.npz" > "$T/after.log" 2>&1; echo "build_exit=$?"; tail -1 "$T/after.log"; .venv/Scripts/python.exe "$T/check_a.py" --compare "$T/baseline.npz" "$T/after.npz"; echo "compare_exit=$?"; .venv/Scripts/ruff.exe check pkg_a tests/unit/test_a.py tests/unit/test_b.py; echo "ruff_check_exit=$?"; .venv/Scripts/ruff.exe format --check pkg_a tests/unit/test_a.py tests/unit/test_b.py; echo "ruff_format_exit=$?"; acus diff
+0136 rewrite git-diff ⇒ acus diff HEAD src/types/bindings.ts; git diff -w --ignore-cr-at-eol --stat -- src/routes/+layout.svelte; git diff --ignore-cr-at-eol src/types/bindings.ts | head -30
+0137 rewrite git-diff ⇒ cd C:\repo && F="pkg_a/mod_a.py tests/conftest.py tests/performance/test_a.py tests/unit/test_b.py tests/unit/test_c.py tests/unit/test_d.py"; .venv/Scripts/ruff.exe format $F; echo "format exit=$?"; .venv/Scripts/ruff.exe check $F; echo "check exit=$?"; .venv/Scripts/ruff.exe format --check $F; echo "format-check exit=$?"; acus diff
+0138 rewrite git-diff ⇒ cd C:\repo && acus diff --stat 2>/dev/null; git status --short; acus diff
+0139 rewrite git-diff ⇒ cd C:\repo && acus find 'batch_a|KEY_A' . --head 40 -g '!**/migrations/**' -g '!**/node_modules/**' -g '!**/.venv/**' -g '!**/static/**' -g '!.tmp/**' -g '!**/.pytest_cache/**' -g '!**/.ruff_cache/**'; echo "find_exit=$?"; acus diff; git status --short
+0140 rewrite git-diff ⇒ acus find 'fn census_command' pons/tests --block; acus diff HEAD pons/tests/proxy/census.rs pons/tests/proxy/main.rs core/src/paths.rs
+0141 rewrite git-diff ⇒ git ls-files --eol pons/src/fold/tests.rs pons/src/fold/mod.rs pons/src/fold/entry.rs pons/src/fold/background.rs pons/src/fold/child.rs pons/src/engine/tests/cards.rs pons/src/engine/tests/mod.rs pons/README.md pons/CHANGELOG.md && acus diff HEAD pons/src/fold pons/src/engine/tests/cards.rs pons/src/engine/tests/mod.rs pons/README.md pons/CHANGELOG.md
+0142 rewrite grep ⇒ grep -c . node_modules/@scope_a/mod/dist/primitives/FieldRow.svelte; acus find 'tooltip' 'node_modules/@scope_a/mod/dist/primitives/FieldRow.svelte' -i --max-hits 10; acus find 'Badge' 'node_modules/@scope_a/mod/dist/primitives/index.js'; acus show src/features/mod_a/ModalA.svelte:388-400
+0143 rewrite grep ⇒ cd C:\repo && acus find '^<<<<<<<|^=======|^>>>>>>>' 'pkg_a/mod_a.py'
+0144 deny grep ⇒
+0145 rewrite grep ⇒ cd C:\repo && git show HEAD~4 --stat | head -40; git show HEAD~4 -- '*mod_a/models*' | head -80; echo ===; acus find 'field_a' 'pkg_a/mod_a' -g '*.py' --max-hits 20; echo ===; acus find 'field_b' 'pkg_a/mod_b' -g '*.py' --max-hits 20; echo ===; ls pkg_a/mod_a/migrations | tail -4; ls pkg_a/mod_b/migrations | tail -4
+0146 rewrite grep ⇒ cd C:\repo/pons && file src/launcher/mod.rs src/proxy/io.rs; git ls-files --eol src/proxy/io.rs; acus find 'pub mod hint|mod hint' '../core/src/lib.rs'; git status --short . | head -30
+0147 rewrite patch-quiet ⇒ cd "C:\repo/notes/slides" && acus patch -q --help 2>&1; echo ====; acus find -U '\n\n\n' "doc a.md" "doc b.md" "doc c.md" "appendix a.md" "appendix b.md" --head 20; echo "exit=$?"
+0148 rewrite patch-quiet ⇒ acus patch -q --help 2>&1
+0149 rewrite patch-quiet ⇒ acus patch -q -f C:\repo/target/census-digest.patch 2>&1
+0150 rewrite acus-pipe ⇒ acus diff -p -- . ':!src/locales' ':!src-tauri/resources/data_a.json' ':!dir_a/raw' --head 1200; acus show 'src/lib/state/scroll-positions.svelte.ts'
+0151 rewrite read-shell ⇒ cd C:\repo && git diff --stat && git diff | head -400 && echo ---- && git log --oneline -3 perf && git log --oneline perf..origin/develop && wc -l tests/unit/test_a.py && acus show 'tests/unit/test_a.py:1-40'
+0152 rewrite read-shell ⇒ acus map . 2>&1 | head -60; git worktree list; acus show 'AGENTS.md:1-60'
+0153 rewrite read-shell ⇒ cd C:\repo && acus show 'pkg_a/mod_a/migrations/0063_alter_field_a_validator.py:1-50'; echo ======; acus show 'pkg_a/mod_b/migrations/0008_alter_field_b_choices.py:1-30'; git status --short | wc -l; git log --oneline -3
+0154 rewrite read-shell ⇒ cd C:\repo/mod_a && acus show 'types.go' 'a.go' 'listener/b.go' 'c.go'
+0155 rewrite read-shell ⇒ cd C:\repo/mod_a && acus show client.go:401-1206 --cut 200 | grep -v '^\s*[0-9]*\s*//' ; acus show 'config.go:1-120'
+0156 rewrite read-shell ⇒ acus show 'pkg_a/mod_a/client.py' 'pkg_a/mod_a/types.py' 'pkg_a/mod_a/REFERENCE.md'
+0157 rewrite read-shell ⇒ acus show 'pkg_a/file_a.py' 'pkg_a/file_b.py'
+0158 rewrite read-shell ⇒ cd C:\repo && acus diff -p --cut 220 | head -900; acus show 'docs/doc_a.md:1-200'
+0159 rewrite read-shell ⇒ cd C:\repo && git log --format='%h %ad %s' --date=short && echo ---- && ls -la && echo ---- && acus show 'README.md' && echo ---- && cat package.json
+0160 deny read-shell ⇒
+0161 rewrite read-shell ⇒ cd C:\repo && cat .github/workflows/* ; echo ----; cat .github/dependabot.yml; echo ----; cat pnpm-workspace.yaml; echo ----; acus show 'src-tauri/build.rs'; ls src-tauri/capabilities src-tauri/bin
+0162 rewrite read-shell ⇒ cd C:\repo/.worktrees/feat-census-monthly-budget/census && acus show 'src/limits/month.rs'; acus show 'src/config.rs:40-157'; acus show 'src/cmd_config.rs'; acus diff; git status --short
+0163 deny build-pipe ⇒
+0164 deny build-pipe ⇒
+0165 deny grep ⇒
+0166 deny grep ⇒
+0167 deny read-shell ⇒
+0168 deny read-shell ⇒
+0169 pass - ⇒
+0170 pass - ⇒
+0171 escape git-diff ⇒
+0172 hint git-diff ⇒
+0173 hint git-diff ⇒
+0174 pass - ⇒
+0175 hint git-show ⇒
+0176 hint git-status ⇒
+0177 hint git-status ⇒
+0178 hint tree ⇒
+0179 hint tree ⇒
+0180 rewrite read-shell ⇒ acus show 'C:/repo/src/lib.rs'
+0181 deny read-shell ⇒
+0182 deny grep ⇒
+0183 rewrite glob-tool ⇒ acus files 'C:/repo/src' -g '*.rs'
+0184 pass - ⇒
+0185 deny read-shell ⇒
+0186 pass - ⇒
+0187 pass - ⇒
+0188 deny read-shell ⇒
+0189 pass - ⇒
+0190 deny grep ⇒
+0191 deny read-shell ⇒
+0192 deny read-shell ⇒
+0193 pass - ⇒
+0194 pass - ⇒
+0195 hint tree ⇒
+0196 deny build-pipe ⇒
+0197 deny build-pipe ⇒
+0198 deny ps-replace ⇒
+0199 pass - ⇒
+0200 pass - ⇒
+0201 deny read-shell ⇒
+0202 hint read-shell ⇒
+0203 pass - ⇒
+0204 pass - ⇒
+0205 deny grep ⇒
+0206 escape read-shell ⇒

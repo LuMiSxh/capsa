@@ -72,7 +72,7 @@ pub fn run(_: Args, out: &Out) -> Result<Outcome> {
         let res = Cli::try_parse_from(&argv)
             .map_err(|e| crate::parse_error(&e, &argv))
             .and_then(|cli| {
-                let format = cli.format();
+                let format = capsa_core::cli::App::format(&cli);
                 execute(cli, format, true)
             });
         std::io::stdout().flush().ok();

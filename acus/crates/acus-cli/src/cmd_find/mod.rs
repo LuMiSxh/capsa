@@ -9,7 +9,7 @@ use crate::source::{address, locate};
 use acus_search::{FileHits, FindOpts, Hit, attach_outlines, find, find_range, find_stdin};
 use acus_syntax::{Address, Target};
 use acus_walk::WalkOpts;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use print::{print_blocks, print_json, print_lines, print_only};
@@ -271,7 +271,7 @@ fn split_paths(paths: &[String]) -> Result<(Vec<PathBuf>, Spans, bool, bool)> {
         .first()
         .filter(|_| roots.is_empty() && spans.is_empty())
     {
-        bail!("path not found: {first}");
+        return Err(crate::source::not_found(first));
     }
     for m in &missing {
         eprintln!("warning: path not found: {m}");

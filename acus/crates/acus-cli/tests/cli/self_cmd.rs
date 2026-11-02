@@ -17,7 +17,7 @@ fn the_old_top_level_names_are_gone() {
 fn self_lists_update_skill_and_uninstall() {
     let (code, out, _) = acus(&["self", "--help"]);
     assert_eq!(code, 0);
-    for name in ["update", "skill", "uninstall"] {
+    for name in ["update", "setup", "doctor", "skill", "uninstall"] {
         assert!(out.contains(name), "{name}: {out}");
     }
 }
@@ -27,6 +27,198 @@ fn a_disabled_name_still_blocks_its_self_action() {
     let (code, _, err) = acus_env(&["self", "skill"], &[("ACUS_DISABLE", "skill")]);
     assert_eq!(code, 2);
     assert!(err.contains("disabled"), "{err}");
+}
+
+/// Runs acus with HOME, USERPROFILE and CLAUDE_CONFIG_DIR set, so no real user file is touched.
+fn sandboxed<'a>(home: &'a str, claude: &'a str) -> [(&'a str, &'a str); 3] {
+    [
+        ("HOME", home),
+        ("USERPROFILE", home),
+        ("CLAUDE_CONFIG_DIR", claude),
+    ]
+}
+
+fn json_line(out: &str) -> serde_json::Value {
+    assert_eq!(out.lines().count(), 1, "not one JSON line: {out}");
+    serde_json::from_str(out.trim()).unwrap()
+}
+
+#[test]
+fn skill_target_selects_the_agent_dirs() {
+    for (target, claude, codex) in [
+        ("claude", true, false),
+        ("codex", false, true),
+        ("all", true, true),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let h = home.path().to_str().unwrap();
+        let (code, _, err) = acus_env(
+            &["self", "skill", "--install", "--target", target],
+            &[("HOME", h), ("USERPROFILE", h)],
+        );
+        assert_eq!(code, 0, "{target}: {err}");
+        let written = |dir: &str| home.path().join(dir).join("SKILL.md").is_file();
+        assert_eq!(written(".claude/skills/acus"), claude, "{target}");
+        assert_eq!(written(".agents/skills/acus"), codex, "{target}");
+    }
+}
+
+#[test]
+fn skill_refuses_unknown_targets_and_the_retired_flags() {
+    for args in [
+        &["self", "skill", "--install", "--target", "vim"][..],
+        &["self", "skill", "--install", "--agent", "claude"][..],
+        &["self", "skill", "--install", "--hooks"][..],
+    ] {
+        let (code, _, err) = acus(args);
+        assert_eq!(code, 2, "{args:?}: {err}");
+    }
+}
+
+#[test]
+fn setup_dry_run_then_setup_twice_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+
+    let (code, out, err) = acus_env(&["self", "setup", "--dry-run", "--json"], &env);
+    assert_eq!(code, 0, "{err}");
+    let v = json_line(&out);
+    assert_eq!(v["dry_run"], true);
+    let checks = v["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 3, "{out}");
+    assert!(
+        checks[1]["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("would install")
+    );
+    assert!(!claude.join("settings.json").exists());
+    assert!(!home.join(".claude/skills/acus").exists());
+
+    let (code, out, err) = acus_env(&["self", "setup", "--json"], &env);
+    assert_eq!(code, 0, "{err}");
+    let checks = json_line(&out)["checks"].as_array().unwrap().clone();
+    assert!(checks.iter().all(|c| c["status"] == "ok"), "{out}");
+    assert!(
+        checks[0]["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("installed")
+    );
+    assert!(
+        checks[1]["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("installed")
+    );
+    assert!(claude.join("settings.json").is_file());
+    assert!(home.join(".claude/skills/acus/SKILL.md").is_file());
+
+    let (code, out, err) = acus_env(&["self", "setup", "--json"], &env);
+    assert_eq!(code, 0, "{err}");
+    for check in json_line(&out)["checks"].as_array().unwrap() {
+        let detail = check["detail"].as_str().unwrap();
+        assert!(detail.starts_with("already set"), "{out}");
+    }
+}
+
+#[test]
+fn doctor_json_is_healthy_after_setup_and_fails_on_a_broken_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let h = home.to_str().unwrap();
+    let c = claude.to_str().unwrap();
+    let env = sandboxed(h, c);
+    assert_eq!(acus_env(&["self", "setup"], &env).0, 0);
+
+    let (code, out, err) = acus_env(&["self", "doctor", "--json"], &env);
+    assert_eq!(code, 0, "{err}\n{out}");
+    let v = json_line(&out);
+    assert_eq!(v["ok"], true);
+    let names: Vec<&str> = v["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["install", "config", "skill", "hooks", "guard"]);
+    let status = |name: &str| {
+        v["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["checks"].as_array().unwrap())
+            .find(|c| c["name"] == name)
+            .map(|c| c["status"].clone())
+    };
+    assert_eq!(status("claude skill").unwrap(), "ok");
+    assert_eq!(status("SessionStart hook").unwrap(), "ok");
+    assert_eq!(status("PreToolUse hook").unwrap(), "ok");
+
+    let bad = dir.path().join("acus.toml");
+    std::fs::write(&bad, "[commands\ndisabled = 1\n").unwrap();
+    let broken = [
+        ("HOME", h),
+        ("USERPROFILE", h),
+        ("CLAUDE_CONFIG_DIR", c),
+        ("ACUS_CONFIG", bad.to_str().unwrap()),
+    ];
+    let (code, out, _) = acus_env(&["self", "doctor", "--json"], &broken);
+    assert_eq!(code, 1, "{out}");
+    let broken_v = json_line(&out);
+    assert_eq!(broken_v["ok"], false);
+    let config = broken_v["groups"][1]["checks"][0].clone();
+    assert_eq!(config["name"], "config file");
+    assert_eq!(config["status"], "fail");
+}
+
+#[test]
+fn doctor_warns_when_the_guard_matcher_misses_a_tool() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    let hooks = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"acus guard 2>/dev/null || true"}]}]}}"#;
+    std::fs::write(claude.join("settings.json"), hooks).unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+
+    let (code, out, _) = acus_env(&["self", "doctor", "--json"], &env);
+    assert_eq!(code, 0, "a warning is not a failure: {out}");
+    let v = json_line(&out);
+    let guard = v["groups"][3]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "PreToolUse hook")
+        .unwrap();
+    assert_eq!(guard["status"], "warn");
+    assert!(
+        guard["detail"].as_str().unwrap().contains("Grep"),
+        "{guard}"
+    );
+}
+
+#[cfg(feature = "cmd-update")]
+#[test]
+fn uninstall_json_is_one_value_and_keeps_the_skill() {
+    let home = tempfile::tempdir().unwrap();
+    let h = home.path().to_str().unwrap();
+    let skill = home.path().join(".claude/skills/acus");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"), "x").unwrap();
+    let (code, out, err) = acus_env(
+        &["self", "uninstall", "--dry-run", "--json"],
+        &[("HOME", h), ("USERPROFILE", h)],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(json_line(&out)["removed"], false);
+    assert!(skill.join("SKILL.md").is_file());
 }
 
 #[cfg(feature = "cmd-update")]

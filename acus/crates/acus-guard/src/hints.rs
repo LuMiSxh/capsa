@@ -6,12 +6,14 @@ use crate::GuardConfig;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Once;
 use std::time::{Duration, Instant, SystemTime};
 
 /// Sets how long a state file may go unmodified before it is deleted.
 const KEEP: Duration = Duration::from_secs(2 * 86_400);
-static PRUNE: Once = Once::new();
+const DAY: Duration = Duration::from_secs(86_400);
+/// Names the file whose modification time records the last prune. Session ids cannot hold a dot,
+/// so no session uses this name.
+const MARKER: &str = ".pruned";
 /// Sets the longest `show` waits for the lock of a session.
 const WAIT: Duration = Duration::from_millis(50);
 /// Sets the age (`STALE`) from which a lock file belongs to a crashed process; a holder keeps it
@@ -114,7 +116,7 @@ pub fn show(cfg: &GuardConfig, session: &str, rule: &str) -> bool {
     let Some(path) = state_file(cfg, session) else {
         return true;
     };
-    PRUNE.call_once(|| prune(&cfg.state_dir));
+    prune_if_due(&cfg.state_dir);
     let Some(_lock) = Lock::acquire(&path) else {
         return true;
     };
@@ -175,7 +177,22 @@ fn write(path: &Path, counts: &BTreeMap<String, u64>) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
-/// Deletes the state files not modified for two days. `show` calls it once per process.
+/// Prunes the state files of `dir` at most once a day. The modification time of the marker says
+/// when the last pass ran, so a hook that is not due pays for one stat call.
+fn prune_if_due(dir: &Path) {
+    let last = std::fs::metadata(dir.join(MARKER))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok());
+    if last.is_some_and(|age| age < DAY) {
+        return;
+    }
+    if std::fs::write(dir.join(MARKER), b"").is_ok() {
+        prune(dir);
+    }
+}
+
+/// Deletes the state files not modified for two days.
 fn prune(dir: &Path) {
     let (Ok(entries), Some(cutoff)) = (std::fs::read_dir(dir), SystemTime::now().checked_sub(KEEP))
     else {
@@ -225,5 +242,27 @@ mod tests {
         std::fs::write(&lock, "successor").unwrap();
         drop(held);
         assert_eq!(std::fs::read_to_string(&lock).unwrap(), "successor");
+    }
+
+    #[test]
+    fn prune_runs_at_most_once_a_day() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old");
+        let marker = dir.path().join(MARKER);
+        std::fs::write(&old, "a 1\n").unwrap();
+        age(&old, KEEP * 2);
+        prune_if_due(dir.path());
+        assert!(!old.exists(), "without a marker the first pass is due");
+        assert!(marker.exists());
+        std::fs::write(&old, "a 1\n").unwrap();
+        age(&old, KEEP * 2);
+        prune_if_due(dir.path());
+        assert!(old.exists(), "a marker from today skips the pass");
+        age(&marker, DAY * 2);
+        prune_if_due(dir.path());
+        assert!(
+            !old.exists(),
+            "a marker older than a day makes the pass due"
+        );
     }
 }

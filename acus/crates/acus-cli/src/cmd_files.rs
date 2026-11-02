@@ -8,6 +8,7 @@ use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::paths::expand_home;
+use capsa_core::render::{Align, Doc, Table};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -103,6 +104,8 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
             None => serde_json::json!({ "files": &files[..shown], "truncated": rest }),
         };
         println!("{json}");
+    } else if out.format == Format::Human {
+        print_human(&files[..shown], counts.as_deref(), total, rest, out)?;
     } else {
         for (i, f) in files[..shown].iter().enumerate() {
             match &counts {
@@ -118,6 +121,34 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         }
     }
     Ok(Outcome::Found)
+}
+
+/// The human view: a table of paths, with line counts and a total under `--lines`, then the
+/// rest that the listing cut off.
+fn print_human(
+    shown: &[String],
+    counts: Option<&[Option<usize>]>,
+    total: usize,
+    rest: usize,
+    out: &Out,
+) -> std::io::Result<()> {
+    let mut head = vec!["path".to_owned()];
+    let mut align = vec![Align::Left];
+    let mut rows: Vec<Vec<String>> = shown.iter().map(|f| vec![f.clone()]).collect();
+    if let Some(counts) = counts {
+        head.push("lines".to_owned());
+        align.push(Align::Right);
+        for (row, n) in rows.iter_mut().zip(counts) {
+            row.push(n.map_or("-".to_owned(), |n| n.to_string()));
+        }
+        rows.push(vec!["total".to_owned(), total.to_string()]);
+    }
+    let mut doc = Doc::default();
+    doc.table(Table { head, align, rows });
+    if rest > 0 {
+        doc.more(rest, "acus files -g GLOB or PATH");
+    }
+    out.doc(&doc)
 }
 
 /// Line counts of `files`, in order, counted on all cores. Workers take the next file from a

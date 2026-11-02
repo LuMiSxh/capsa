@@ -2,16 +2,14 @@
 //! Owns the decision log that `census usage --guard` reads: one JSON line per decision.
 
 use crate::{GuardConfig, LOG_CALL_MAX, Verdict};
+use capsa_core::log::Level;
 use serde_json::Value;
-use std::io::Write;
+
+/// Past this size the log rotates to `guard.jsonl.old`, keeping one old generation.
+const MAX_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Appends one decision as a JSON line; a log that cannot be written is skipped.
 pub fn append(cfg: &GuardConfig, hook: &Value, v: &Verdict) {
-    let path = &cfg.log_path;
-    // Start over past 4 MB, keeping one old generation.
-    if std::fs::metadata(path).is_ok_and(|m| m.len() > 4 * 1024 * 1024) {
-        let _ = std::fs::rename(path, path.with_extension("jsonl.old"));
-    }
     let input = &hook["tool_input"];
     let call: String = ["command", "file_path", "pattern"]
         .iter()
@@ -20,11 +18,7 @@ pub fn append(cfg: &GuardConfig, hook: &Value, v: &Verdict) {
         .chars()
         .take(LOG_CALL_MAX)
         .collect();
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
     let entry = LogEntry {
-        ts,
         session: hook["session_id"].as_str().map(str::to_owned),
         cwd: hook["cwd"].as_str().map(str::to_owned),
         tool: hook["tool_name"].as_str().map(str::to_owned),
@@ -33,27 +27,17 @@ pub fn append(cfg: &GuardConfig, hook: &Value, v: &Verdict) {
         call,
         cmd: None,
     };
-    let Ok(line) = serde_json::to_string(&entry) else {
-        return;
-    };
-    let _ = path.parent().map(std::fs::create_dir_all);
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        // One write call per line: parallel hooks append to the same file, and a newline written
-        // apart from its line lets another hook's line land between them.
-        let _ = f.write_all(format!("{line}\n").as_bytes());
-    }
+    // `append` writes each line in one call: parallel hooks share the file, and a newline written
+    // apart from its line lets another hook's line land between them.
+    let _ = capsa_core::log::append(&cfg.log_path, MAX_BYTES, Level::Info, "decision", &entry);
 }
 
-/// Holds one line of guard.jsonl. The fields keep the order they are written in, so a line read
-/// here and written back is the same line. `cmd` is only in replay files (`--replay`).
+/// Holds the guard's fields of one guard.jsonl line. `capsa_core::log` writes `ts`, `level` and
+/// `event` before them, and reading ignores them, so lines from before the envelope still parse.
+/// The fields keep the order they are written in. `cmd` is only in replay files (`--replay`).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct LogEntry {
-    pub ts: u64,
     pub session: Option<String>,
     pub cwd: Option<String>,
     pub tool: Option<String>,
@@ -69,10 +53,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn log_entry_round_trips_and_reads_old_lines() {
+    fn log_entry_round_trips_its_fields_and_reads_old_lines() {
         let old = r#"{"ts":1,"session":"s","cwd":"/p","tool":"Bash","rule":"grep","kind":"deny","call":"grep x"}"#;
         let e: LogEntry = serde_json::from_str(old).unwrap();
-        assert_eq!(serde_json::to_string(&e).unwrap(), old);
+        assert_eq!(e.call, "grep x");
+        assert_eq!(
+            serde_json::to_string(&e).unwrap(),
+            r#"{"session":"s","cwd":"/p","tool":"Bash","rule":"grep","kind":"deny","call":"grep x"}"#
+        );
         let replay: LogEntry = serde_json::from_str(r#"{"cmd":"cat a.rs"}"#).unwrap();
         assert_eq!(replay.cmd.as_deref(), Some("cat a.rs"));
     }
@@ -109,5 +97,39 @@ mod tests {
             assert_eq!(entry.call.chars().count(), LOG_CALL_MAX);
             assert!(entry.call.starts_with(prefix));
         }
+    }
+
+    #[test]
+    fn replay_accepts_lines_with_and_without_the_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("guard.jsonl");
+        std::fs::write(
+            &path,
+            "{\"ts\":1,\"session\":\"s\",\"cwd\":\"/p\",\"tool\":\"Bash\",\"rule\":\"grep\",\"kind\":\"deny\",\"call\":\"grep x\"}\n",
+        )
+        .unwrap();
+        let cfg = GuardConfig {
+            hint_every: 10,
+            state_dir: dir.path().join("guard-hints"),
+            log_path: path.clone(),
+        };
+        let hook = serde_json::json!({
+            "session_id": "s",
+            "tool_name": "Bash",
+            "tool_input": { "command": "grep x" },
+        });
+        append(
+            &cfg,
+            &hook,
+            &Verdict::Deny(crate::Rule::Grep, "r".to_owned()),
+        );
+        crate::replay_file(&path, 1).unwrap();
+        let entries = capsa_core::log::read::<LogEntry>(&path);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].level, None);
+        assert_eq!(entries[0].event, None);
+        assert_eq!(entries[1].level, Some(Level::Info));
+        assert_eq!(entries[1].event.as_deref(), Some("decision"));
+        assert_eq!(entries[1].fields.call, "grep x");
     }
 }

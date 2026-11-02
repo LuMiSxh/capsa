@@ -49,7 +49,11 @@ fn blame_groups_lines_by_commit() {
     let (code, out, err) = acus_in(p, &["blame", "nosuch.rs"], "");
     assert_eq!(
         (code, out.as_str(), err.as_str()),
-        (2, "", "error: path not found: nosuch.rs\n")
+        (
+            2,
+            "",
+            "error: path not found: nosuch.rs\nhint: paths are relative to the working directory; `acus files` lists them\n"
+        )
     );
 }
 

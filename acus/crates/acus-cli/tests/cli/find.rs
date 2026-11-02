@@ -4,6 +4,18 @@ use crate::common::*;
 const HITS: &str = "a\nhit one\nb\nc\nd\nhit two\ne\nf\ng\nh\nhit three\n";
 
 /// `acus find hit <flags> -` over HITS, which has hits on lines 2, 6 and 11.
+/// A config that does not parse stops find, and the error names the file to fix.
+#[test]
+fn broken_config_stops_find_and_names_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("acus.toml");
+    std::fs::write(&config, "[guard]\nhint_every = \"ten\"\n").unwrap();
+    let cfg = config.display().to_string();
+    let (code, out, err) = acus_env(&["find", "fn"], &[("ACUS_CONFIG", cfg.as_str())]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("hint:") && err.contains("acus.toml"), "{err}");
+}
+
 fn find_context(flags: &[&str]) -> (i32, String, String) {
     let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
     let mut args = vec!["find", "hit"];

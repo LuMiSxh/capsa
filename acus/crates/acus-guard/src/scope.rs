@@ -2,20 +2,34 @@
 //! Owns which paths count as inside the session's repository.
 
 use super::*;
+use std::cell::OnceCell;
 
 impl Scope {
     pub fn new(cwd: Option<&str>) -> Option<Scope> {
-        let cwd = PathBuf::from(cwd?);
-        let root = cwd
-            .ancestors()
-            .find(|d| d.join(".git").exists())
-            .unwrap_or(&cwd)
-            .to_path_buf();
-        let canon = |p: PathBuf| p.canonicalize().unwrap_or(p);
         Some(Scope {
-            cwd: canon(cwd),
-            root: canon(root),
+            raw_cwd: PathBuf::from(cwd?),
+            cwd: OnceCell::new(),
+            root: OnceCell::new(),
             fixed: false,
+        })
+    }
+
+    /// Returns the session's directory with symlinks resolved.
+    fn cwd(&self) -> &Path {
+        self.cwd.get_or_init(|| self.real(self.raw_cwd.clone()))
+    }
+
+    /// Returns the repository root, the nearest ancestor with `.git` (else the directory), with
+    /// symlinks resolved.
+    fn root(&self) -> &Path {
+        self.root.get_or_init(|| {
+            let root = self
+                .raw_cwd
+                .ancestors()
+                .find(|d| d.join(".git").exists())
+                .unwrap_or(&self.raw_cwd)
+                .to_path_buf();
+            self.real(root)
         })
     }
 
@@ -24,8 +38,9 @@ impl Scope {
     #[cfg(test)]
     pub(super) fn fixed(root: &str) -> Scope {
         Scope {
-            cwd: PathBuf::from(root),
-            root: PathBuf::from(root),
+            raw_cwd: PathBuf::from(root),
+            cwd: OnceCell::from(PathBuf::from(root)),
+            root: OnceCell::from(PathBuf::from(root)),
             fixed: true,
         }
     }
@@ -33,7 +48,7 @@ impl Scope {
     /// Answers for a fixed scope: a path under the root exists when it has a file extension.
     fn exists(&self, p: &Path) -> bool {
         if self.fixed {
-            p.starts_with(&self.root) && p.extension().is_some()
+            p.starts_with(self.root()) && p.extension().is_some()
         } else {
             p.exists()
         }
@@ -74,7 +89,7 @@ impl Scope {
             None => PathBuf::from(p),
         };
         let mut full = PathBuf::new();
-        for c in self.cwd.join(path).components() {
+        for c in self.cwd().join(path).components() {
             match c {
                 std::path::Component::ParentDir => {
                     full.pop();
@@ -93,27 +108,27 @@ impl Scope {
             tail = name.join(&tail);
             base.pop();
         }
-        self.real(base).join(tail).starts_with(&self.root)
+        self.real(base).join(tail).starts_with(self.root())
     }
 
     /// Reports whether `path` names an existing file (a fixed scope takes one under the root with
     /// an extension). Returns the path of a file under the scope, or `None` where the scope
     /// does not read the disk.
     pub(super) fn path(&self, path: &str) -> Option<PathBuf> {
-        (!self.fixed).then(|| self.cwd.join(unquote(path)))
+        (!self.fixed).then(|| self.cwd().join(unquote(path)))
     }
 
     /// Answers from the disk: the path is an existing directory. A missing path is no answer,
     /// since the scope does not follow a `cd` earlier in the command; a fixed scope cannot
     /// read the disk.
     pub(super) fn is_dir(&self, path: &str) -> bool {
-        !self.fixed && self.cwd.join(unquote(path)).is_dir()
+        !self.fixed && self.cwd().join(unquote(path)).is_dir()
     }
 
     pub(super) fn is_file(&self, path: &str) -> bool {
-        let p = self.cwd.join(unquote(path));
+        let p = self.cwd().join(unquote(path));
         if self.fixed {
-            p.starts_with(&self.root) && p.extension().is_some()
+            p.starts_with(self.root()) && p.extension().is_some()
         } else {
             p.is_file()
         }
@@ -162,7 +177,12 @@ pub(super) fn relative(path: &str, cwd: Option<&str>) -> String {
 /// Returns the session's git repository, or its directory when it is in none. Reads of files
 /// outside it (`~/.claude`, `/tmp`, `~/.config`) are on purpose and are left alone.
 pub struct Scope {
-    cwd: PathBuf,
-    root: PathBuf,
+    /// The session's directory as the hook gave it.
+    raw_cwd: PathBuf,
+    /// The directory with symlinks resolved, found on first use.
+    cwd: OnceCell<PathBuf>,
+    /// The repository root with symlinks resolved, found on first use, so a rule that does not
+    /// look inside the repository never looks for it.
+    root: OnceCell<PathBuf>,
     fixed: bool,
 }

@@ -18,6 +18,7 @@ powershell = ["dep:tree-sitter", "dep:tree-sitter-powershell"]
 
 [dependencies]
 acus-syntax.workspace = true
+capsa-core.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

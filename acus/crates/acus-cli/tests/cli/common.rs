@@ -14,8 +14,7 @@ pub fn snapshot_settings() -> insta::Settings {
 pub fn bin() -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_acus"));
     c.env("ACUS_CONFIG", "/nonexistent/acus.toml")
-        .env_remove("ACUS_DISABLE")
-        .env_remove("ACUS_DECIDE_URL");
+        .env_remove("ACUS_DISABLE");
     c
 }
 

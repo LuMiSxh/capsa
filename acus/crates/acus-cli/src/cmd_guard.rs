@@ -8,7 +8,7 @@ use anyhow::Result;
 use capsa_core::exit::Outcome;
 use serde_json::Value;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -34,7 +34,7 @@ pub fn guard_config(cfg: &Config) -> GuardConfig {
     clippy::needless_pass_by_value,
     reason = "execute hands over the parsed arguments"
 )]
-pub fn run(a: Args, cfg: &Config) -> Result<Outcome> {
+pub fn run(a: Args, cfg: &Config, config_problem: Option<&str>) -> Result<Outcome> {
     if let Some(file) = &a.replay {
         acus_guard::replay_file(file, a.repeat)?;
         return Ok(Outcome::Found);
@@ -47,6 +47,8 @@ pub fn run(a: Args, cfg: &Config) -> Result<Outcome> {
     let command = input["command"].as_str().unwrap_or_default();
     let scope = Scope::new(cwd);
     let gcfg = guard_config(cfg);
+    let session = v["session_id"].as_str().unwrap_or_default();
+    let note = config_problem.and_then(|p| config_note(&gcfg, session, p, &cfg.path));
     // Codex hooks (they carry a `turn_id`) cannot rewrite a call, only refuse it.
     let can_rewrite = v["tool_name"].as_str() == Some("Bash") && v.get("turn_id").is_none();
     let verdict = match v["tool_name"].as_str() {
@@ -63,7 +65,7 @@ pub fn run(a: Args, cfg: &Config) -> Result<Outcome> {
                     "hookEventName": "PreToolUse",
                     "updatedInput": updated,
                     // No permissionDecisionReason: an allow reason would reach only the user, not the agent.
-                    "additionalContext": rw.note,
+                    "additionalContext": with_note(rw.note, note.as_deref()),
                 });
                 // A build is left undecided, so Claude Code's permission flow decides on the rewritten command.
                 if !rw.deferred {
@@ -76,31 +78,68 @@ pub fn run(a: Args, cfg: &Config) -> Result<Outcome> {
             BashDecision::Pass => None,
         },
     };
-    let Some(verdict) = verdict else {
-        return Ok(Outcome::Found);
-    };
     // A pure hint repeats for every call of its rule, so `hints` shows only some of them. A call
     // whose hint is hidden passes silently and is not logged.
-    let session = v["session_id"].as_str().unwrap_or_default();
-    if matches!(verdict, Verdict::Hint(rule, _) if !acus_guard::hints::show(&gcfg, session, rule.as_str()))
-    {
-        return Ok(Outcome::Found);
-    }
+    let Some(verdict) = verdict.filter(|v| shown(&gcfg, session, v)) else {
+        return Ok(note_only(note));
+    };
     acus_guard::log::append(&gcfg, &v, &verdict);
-    let out = match verdict {
-        Verdict::Deny(_, reason) => serde_json::json!({ "hookSpecificOutput": {
+    let fields = match verdict {
+        Verdict::Deny(_, reason) => serde_json::json!({
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }}),
+            "permissionDecisionReason": with_note(reason, note.as_deref()),
+        }),
         // The command runs as usual; only the agent's context gains the hint.
-        Verdict::Hint(_, hint) => serde_json::json!({ "hookSpecificOutput": {
+        Verdict::Hint(_, hint) => serde_json::json!({
             "hookEventName": "PreToolUse",
-            "additionalContext": hint,
-        }}),
-        Verdict::Escape(_) => return Ok(Outcome::Found),
-        Verdict::Rewrite(_) => return Ok(Outcome::Found),
+            "additionalContext": with_note(hint, note.as_deref()),
+        }),
+        Verdict::Escape(_) | Verdict::Rewrite(_) => return Ok(note_only(note)),
     };
-    println!("{out}");
+    println!("{}", serde_json::json!({ "hookSpecificOutput": fields }));
     Ok(Outcome::Found)
+}
+
+/// Reports whether a verdict is printed: a pure hint may be hidden by the throttle.
+fn shown(cfg: &GuardConfig, session: &str, verdict: &Verdict) -> bool {
+    !matches!(verdict, Verdict::Hint(rule, _) if !acus_guard::hints::show(cfg, session, rule.as_str()))
+}
+
+/// Returns the note for a config that did not load. Only the first call of each session carries
+/// it: the config rule is set so that no second call of the session shows it.
+fn config_note(gcfg: &GuardConfig, session: &str, problem: &str, path: &Path) -> Option<String> {
+    let once = GuardConfig {
+        hint_every: usize::MAX,
+        ..gcfg.clone()
+    };
+    acus_guard::hints::show(&once, session, "config").then(|| {
+        let problem = problem.split_whitespace().collect::<Vec<_>>().join(" ");
+        format!(
+            "acus config error: {problem}; guard runs with defaults; fix {}",
+            path.display()
+        )
+    })
+}
+
+/// Appends the config note, when there is one, to the text the agent reads.
+fn with_note(text: String, note: Option<&str>) -> String {
+    match note {
+        Some(note) => format!("{text}\n{note}"),
+        None => text,
+    }
+}
+
+/// Prints the config note as the hook's only context, when there is one.
+fn note_only(note: Option<String>) -> Outcome {
+    if let Some(note) = note {
+        println!(
+            "{}",
+            serde_json::json!({ "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": note,
+            }})
+        );
+    }
+    Outcome::Found
 }

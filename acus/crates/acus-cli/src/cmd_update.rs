@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use capsa_core::exit::Outcome;
+use capsa_core::format::Format;
 
 #[cfg(feature = "cmd-update")]
 pub use capsa_core::update::UpdateArgs as Args;
@@ -12,7 +13,7 @@ pub use capsa_core::update::UpdateArgs as Args;
 pub struct Args {}
 
 #[cfg(not(feature = "cmd-update"))]
-pub fn run(_: Args) -> Result<Outcome> {
+pub fn run(_: Args, _format: Format) -> Result<Outcome> {
     Err(capsa_core::hint::Hinted::new(
         "acus was built without `update`",
         "cargo install --path crates/acus-cli --features cmd-update, or rerun the installer",
@@ -21,28 +22,40 @@ pub fn run(_: Args) -> Result<Outcome> {
 }
 
 #[cfg(feature = "cmd-update")]
-pub fn run(a: Args) -> Result<Outcome> {
-    use crate::agents::{Agent, installed_agent};
-    use capsa_core::hint::{Hinted, ResultExt};
-    use std::process::Command;
+pub fn run(a: Args, format: Format) -> Result<Outcome> {
+    capsa_core::update::run(&crate::TOOL, a, format, |report| {
+        reinstall_skill(report, format)
+    })
+}
 
-    let report = capsa_core::update::update(&crate::TOOL, a.mode()).hinted()?;
-    println!("{report}");
-    if a.check {
-        return Ok(report.outcome(true));
+/// Reinstalls the skill in the agent directories that already hold it. The binary on disk carries
+/// the skill of its version, so this runs the new binary. Under `--json` its stdout is dropped,
+/// so the update still prints one JSON value.
+#[cfg(feature = "cmd-update")]
+fn reinstall_skill(report: &capsa_core::update::Report, format: Format) -> Result<()> {
+    use anyhow::Context;
+    use capsa_core::hint::Hinted;
+    use capsa_core::skill::{Target, installed_target};
+    use std::process::{Command, Stdio};
+
+    let home = std::env::home_dir().context("no home directory")?;
+    let target = match installed_target(&home, crate::cmd_skill::SKILL_DEF.tool) {
+        Some(Target::Codex) => "codex",
+        Some(Target::All) => "all",
+        Some(Target::Claude) | None => "claude",
+    };
+    let mut child = Command::new(&report.exe);
+    child.args(["self", "skill", "--install", "--target", target]);
+    if format == Format::Json {
+        child.stdout(Stdio::null());
     }
-    // The binary on disk carries the skill of its version; reinstall it where it already is.
-    let agent = std::env::home_dir().map_or(Agent::Claude, |h| installed_agent(&h));
-    let ok = Command::new(&report.exe)
-        .args(["self", "skill", "--install", "--agent", agent.flag()])
-        .status()
-        .is_ok_and(|s| s.success());
-    if !ok {
-        return Err(Hinted::new(
+    if child.status().is_ok_and(|s| s.success()) {
+        Ok(())
+    } else {
+        Err(Hinted::new(
             "cannot reinstall the skill",
             "run acus self skill --install",
         )
-        .into());
+        .into())
     }
-    Ok(Outcome::Found)
 }
