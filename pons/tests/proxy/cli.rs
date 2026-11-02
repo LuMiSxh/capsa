@@ -9,7 +9,7 @@ async fn doctor_prints_a_report_and_exits_zero() {
     let log = temp_path("doctor.log");
     std::fs::write(
         &log,
-        "1.0 pons cancel filter fired: dropped session/cancel for s1\n",
+        "{\"ts\":1,\"level\":\"info\",\"event\":\"note\",\"ms\":0,\"dir\":\"pons\",\"text\":\"cancel filter fired: dropped session/cancel for s1\"}\n",
     )
     .unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_pons"))
@@ -30,10 +30,10 @@ async fn doctor_prints_a_report_and_exits_zero() {
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(text.is_ascii(), "{text}");
     assert!(
-        text.contains("pons self doctor") && text.contains("Launcher"),
+        text.contains("pons self doctor") && text.contains("launcher"),
         "{text}"
     );
-    assert!(text.contains("command: my-agent -x"), "{text}");
+    assert!(text.contains("my-agent -x"), "{text}");
     assert!(text.contains("1 dropped"), "{text}");
 }
 

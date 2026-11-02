@@ -32,6 +32,13 @@ fn entry_json(item: &RosterItem) -> Value {
     json!({"content": item.content, "priority": "medium", "status": item.status})
 }
 
+/// The plan entries Zed should show: the adapter's, then the roster's.
+fn merged(adapter: &[Value], items: &[RosterItem]) -> Vec<Value> {
+    let mut want = adapter.to_vec();
+    want.extend(items.iter().map(entry_json));
+    want
+}
+
 fn plan_message(session: &str, template: Option<&Value>, entries: Vec<Value>) -> Value {
     let mut update = template
         .cloned()
@@ -101,8 +108,7 @@ impl Roster {
         for id in ids {
             let items = folds.roster(&id, now);
             let state = self.sessions.entry(id.clone()).or_default();
-            let mut want = state.adapter.clone();
-            want.extend(items.iter().map(entry_json));
+            let want = merged(&state.adapter, &items);
             let shown = state.shown.as_ref().unwrap_or(&state.adapter);
             if &want == shown {
                 continue;
@@ -118,6 +124,21 @@ impl Roster {
             out.push(plan_message(&id, state.template.as_ref(), want));
         }
         out
+    }
+
+    /// Returns the plan of `session` again, although it is unchanged and within the
+    /// throttle: Zed may have dropped the running entries with a cancelled turn.
+    /// `None` when no subagent is listed.
+    pub fn resend(&mut self, session: &str, folds: &Folds, now: Instant) -> Option<Value> {
+        let items = folds.roster(session, now);
+        if items.is_empty() {
+            return None;
+        }
+        let state = self.sessions.entry(session.to_owned()).or_default();
+        let want = merged(&state.adapter, &items);
+        state.shown = Some(want.clone());
+        state.last_emit = Some(now);
+        Some(plan_message(session, state.template.as_ref(), want))
     }
 }
 
@@ -165,6 +186,27 @@ mod tests {
                 {"content": "A: Read a (1 tool call, 0s)", "priority": "medium", "status": "in_progress"},
             ]})
         );
+    }
+
+    #[test]
+    fn resend_repeats_the_plan_although_unchanged_and_throttled() {
+        let t0 = Instant::now();
+        let mut folds = Folds::new(Duration::ZERO);
+        folds.launch_background("s", "P", &json!({"toolCallId": "P"}), Some("1"), t0);
+        let mut r = Roster::new(Duration::from_secs(1));
+        let plan = adapter_plan(&json!([todo("write tests", "pending")]));
+        r.on_adapter_plan("s", &plan, &[]);
+        let first = r.poll(&folds, t0);
+        assert_eq!(first.len(), 1);
+        assert!(r.poll(&folds, t0 + Duration::from_millis(100)).is_empty());
+        let again = r
+            .resend("s", &folds, t0 + Duration::from_millis(100))
+            .expect("plan sent again");
+        assert_eq!(again["params"]["update"], first[0]["params"]["update"]);
+        let entries = again["params"]["update"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], todo("write tests", "pending"));
+        assert!(r.resend("s", &Folds::new(Duration::ZERO), t0).is_none());
     }
 
     #[test]

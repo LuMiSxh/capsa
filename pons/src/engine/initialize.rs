@@ -8,9 +8,7 @@ impl Engine {
     /// subagents, asks the adapter to forward their text.
     pub(super) fn on_initialize(&mut self, msg: Value, raw: &[u8]) -> Vec<Action> {
         self.init_id = msg.get("id").map(Value::to_string);
-        self.client_notices = msg
-            .pointer("/params/clientCapabilities/session/notices")
-            .is_some_and(|n| !n.is_null());
+        self.client_notices = present(msg.pointer("/params/clientCapabilities/session/notices"));
         let mut out = Vec::new();
         let native = present(msg.pointer("/params/clientCapabilities/subagents"));
         if native {

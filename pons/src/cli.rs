@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+use capsa_core::cli::{App, FormatArgs};
+use capsa_core::format::Format;
 use capsa_core::update::{UninstallArgs, UpdateArgs};
 use clap::{Parser, Subcommand};
 
@@ -204,14 +206,26 @@ pub struct Cli {
     #[arg(long, value_enum, value_name = "LEVEL", default_value_t = LogLevel::Default)]
     pub log_level: LogLevel,
 
-    /// Rotate an explicit --log file to FILE.1 once it would exceed this many
+    /// Rotate an explicit --log file to FILE.old once it would exceed this many
     /// bytes (0: never). Default per-start logs are not rotated.
     #[arg(long, value_name = "BYTES", default_value_t = 5 * 1024 * 1024)]
     pub log_max_bytes: u64,
 
     /// The real agent command; auto-detected when omitted (see below).
-    #[arg(last = true, value_name = "AGENT")]
+    #[arg(last = true, value_name = "AGENT", id = "agent_argv")]
     pub agent: Vec<String>,
+}
+
+impl App for Cli {
+    // The proxy never reset SIGPIPE, so it keeps the default here.
+    const RESET_SIGPIPE: bool = false;
+
+    fn format(&self) -> Format {
+        match &self.sub {
+            Some(Sub::SelfCmd { output, .. }) => output.resolve(),
+            None => capsa_core::format::resolve(false, false, false),
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -222,32 +236,23 @@ pub enum Sub {
     SelfCmd {
         #[command(subcommand)]
         action: SelfAction,
+        /// Output format of the `self` commands: agent, human or json.
+        #[command(flatten)]
+        output: FormatArgs,
     },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum SelfAction {
-    /// Print a plain-text report: version, launcher that would be used, Zed
-    /// settings and adapter, and a summary of the wire log.
+    /// Print a report: version, launcher that would be used, Zed settings and
+    /// adapter, and a summary of the wire log. Exits 1 when a check fails.
     Doctor {
-        /// Print the report as one JSON object instead of text.
-        #[arg(long, conflicts_with_all = ["human", "agent"])]
-        json: bool,
-
-        /// Print the report as text, coloured on a terminal (never with NO_COLOR).
-        #[arg(long, conflicts_with_all = ["json", "agent"])]
-        human: bool,
-
-        /// Print the report as plain text without colour (the default for agents).
-        #[arg(long, conflicts_with_all = ["json", "human"])]
-        agent: bool,
-
         /// Wire log to summarize (default: PONS_LOG, else the newest log in
         /// the log directory, else pons.log in the temp directory if present).
         #[arg(long, value_name = "FILE", env = "PONS_LOG")]
         log: Option<PathBuf>,
 
-        /// Directory whose newest pons-*.log is summarized when --log is not
+        /// Directory whose newest pons-*.jsonl is summarized when --log is not
         /// given (default: the default log directory).
         #[arg(long, value_name = "DIR")]
         log_dir: Option<PathBuf>,
@@ -262,18 +267,6 @@ pub enum SelfAction {
     /// when it is found, otherwise install `@agentclientprotocol/claude-agent-acp`
     /// globally.
     Setup {
-        /// Print the report as one JSON object instead of text.
-        #[arg(long, conflicts_with_all = ["human", "agent"])]
-        json: bool,
-
-        /// Print the report as text, coloured on a terminal (never with NO_COLOR).
-        #[arg(long, conflicts_with_all = ["json", "agent"])]
-        human: bool,
-
-        /// Print the report as plain text without colour (the default for agents).
-        #[arg(long, conflicts_with_all = ["json", "human"])]
-        agent: bool,
-
         /// Package manager to install with. Default: the first of pnpm, bun and
         /// npm found on PATH.
         #[arg(long, value_enum, value_name = "NAME")]
@@ -343,10 +336,10 @@ mod tests {
     #[test]
     fn parses_name_command_and_comma_separated_args() {
         assert_eq!(
-            parse(&["velum=/Users/me/.cargo/bin/velum,mcp,--verbose"]).unwrap(),
+            parse(&["shield=/Users/me/.cargo/bin/shield,mcp,--verbose"]).unwrap(),
             vec![server(
-                "velum",
-                "/Users/me/.cargo/bin/velum",
+                "shield",
+                "/Users/me/.cargo/bin/shield",
                 &["mcp", "--verbose"]
             )]
         );
@@ -355,16 +348,16 @@ mod tests {
     #[test]
     fn a_command_without_args_has_no_args() {
         assert_eq!(
-            parse(&["velum=velum"]).unwrap(),
-            vec![server("velum", "velum", &[])]
+            parse(&["shield=shield"]).unwrap(),
+            vec![server("shield", "shield", &[])]
         );
     }
 
     #[test]
     fn only_the_first_equals_sign_splits_the_name() {
         assert_eq!(
-            parse(&["velum=/bin/velum,--opt=1"]).unwrap(),
-            vec![server("velum", "/bin/velum", &["--opt=1"])]
+            parse(&["shield=/bin/shield,--opt=1"]).unwrap(),
+            vec![server("shield", "/bin/shield", &["--opt=1"])]
         );
     }
 
@@ -384,14 +377,14 @@ mod tests {
     #[test]
     fn a_value_without_equals_is_a_usage_error() {
         assert_eq!(
-            parse(&["velum"]).unwrap_err().kind(),
+            parse(&["shield"]).unwrap_err().kind(),
             ErrorKind::ValueValidation
         );
     }
 
     #[test]
     fn an_empty_name_or_command_is_a_usage_error() {
-        for value in ["=/bin/velum", "velum=", "velum=,mcp"] {
+        for value in ["=/bin/shield", "shield=", "shield=,mcp"] {
             assert_eq!(
                 parse(&[value]).unwrap_err().kind(),
                 ErrorKind::ValueValidation,
@@ -402,7 +395,7 @@ mod tests {
 
     #[test]
     fn a_name_with_other_characters_is_a_usage_error() {
-        for value in ["ve lum=/bin/velum", "velum.x=/bin/velum", "velum/x=cmd"] {
+        for value in ["ve lum=/bin/shield", "shield.x=/bin/shield", "shield/x=cmd"] {
             assert_eq!(
                 parse(&[value]).unwrap_err().kind(),
                 ErrorKind::ValueValidation,

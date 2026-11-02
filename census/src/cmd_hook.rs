@@ -8,16 +8,34 @@ use census::config::{Config, Mode};
 use census::hook;
 use census::limits::{self, LimitStatus, MonthStatus};
 use std::io::{IsTerminal, Read, Write};
-use std::sync::mpsc;
+use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
 /// The most hook input read; a larger one is not a hook input.
 const MAX_INPUT: u64 = 1 << 20;
-/// Time after which the limits are skipped for this call.
-const LIMITS_DEADLINE: Duration = Duration::from_millis(150);
-/// Time after which the ledger update stops reading and saves its progress, early enough for the
-/// helper to finish before `LIMITS_DEADLINE`. A cold ledger so warms over a few calls.
-const LEDGER_DEADLINE: Duration = Duration::from_millis(100);
+/// Default time after which the limits are skipped for this call, in milliseconds.
+const LIMITS_DEADLINE_MS: u64 = 150;
+/// Time before the limits deadline at which the ledger update stops reading and saves its progress,
+/// early enough for the helper to finish. A cold ledger so warms over a few calls.
+const LEDGER_MARGIN: Duration = Duration::from_millis(50);
+
+/// The limits deadline. `CENSUS_HOOK_DEADLINE_MS` replaces the default, read once, so that the
+/// tests can allow the hook time under a loaded machine.
+fn limits_deadline() -> Duration {
+    static DEADLINE: OnceLock<Duration> = OnceLock::new();
+    *DEADLINE.get_or_init(|| {
+        let ms = std::env::var("CENSUS_HOOK_DEADLINE_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(LIMITS_DEADLINE_MS);
+        Duration::from_millis(ms)
+    })
+}
+
+/// The ledger deadline, `LEDGER_MARGIN` before `limits_deadline`.
+fn ledger_deadline() -> Duration {
+    limits_deadline().saturating_sub(LEDGER_MARGIN)
+}
 
 pub fn run() -> Outcome {
     let start = Instant::now();
@@ -28,6 +46,7 @@ pub fn run() -> Outcome {
         let result = hook::run(
             &input,
             now,
+            &config,
             || (!budget).then(|| limits_within(start, now)).flatten(),
             || {
                 budget
@@ -40,7 +59,7 @@ pub fn run() -> Outcome {
                 let _ = writeln!(std::io::stdout(), "{out}");
             }
             Ok(None) => {}
-            Err(e) => hook::log_line(now, &e.to_string()),
+            Err(e) => hook::log_error(&e.to_string()),
         }
     }
     Outcome::Found
@@ -64,18 +83,18 @@ fn read_input() -> Option<String> {
     String::from_utf8(buf).ok()
 }
 
-/// Computes the limits on a helper thread and gives up when `LIMITS_DEADLINE` has passed since
+/// Computes the limits on a helper thread and gives up when `limits_deadline` has passed since
 /// `start`. A busy ledger lock already makes `limits::status` skip its update.
 fn limits_within(start: Instant, now: u64) -> Option<LimitStatus> {
     within(start, move || {
-        limits::status_by(now, Some(start + LEDGER_DEADLINE)).ok()
+        limits::status_by(now, Some(start + ledger_deadline())).ok()
     })
 }
 
 /// Like `limits_within`, for the spend of the month in budget mode.
 fn month_within(start: Instant, now: u64, budget: Option<f64>) -> Option<MonthStatus> {
     within(start, move || {
-        limits::month(now, budget, Some(start + LEDGER_DEADLINE)).ok()
+        limits::month(now, budget, Some(start + ledger_deadline())).ok()
     })
 }
 
@@ -89,7 +108,7 @@ fn within<T: Send + 'static>(
             let _ = tx.send(work());
         })
         .ok()?;
-    rx.recv_timeout(LIMITS_DEADLINE.saturating_sub(start.elapsed()))
+    rx.recv_timeout(limits_deadline().saturating_sub(start.elapsed()))
         .ok()
         .flatten()
 }

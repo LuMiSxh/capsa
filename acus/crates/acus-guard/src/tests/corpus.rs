@@ -13,6 +13,27 @@ fn decide_ps(cmd: &str, scope: Option<&Scope>) -> Decision {
 
 #[test]
 fn corpus_decisions_are_golden() {
+    check_corpus(
+        include_str!("corpus.jsonl"),
+        include_str!("snapshots/acus_guard__tests__corpus__corpus_decisions_are_golden.snap"),
+        "corpus_decisions_are_golden",
+    );
+}
+
+// Windows-only: the guard's scope and home handling differ by OS, so `C:\` cwds decide differently elsewhere.
+#[cfg(windows)]
+#[test]
+fn windows_corpus_decisions_are_golden() {
+    check_corpus(
+        include_str!("corpus-windows.jsonl"),
+        include_str!(
+            "snapshots/acus_guard__tests__corpus__windows_corpus_decisions_are_golden.snap"
+        ),
+        "windows_corpus_decisions_are_golden",
+    );
+}
+
+fn check_corpus(corpus: &str, golden: &str, name: &str) {
     // A fixed scope has a fixed home, which the golden writes as `~`: the same on every OS,
     // whatever HOME is.
     let home = home_dir(Some(&Scope::fixed("/"))).unwrap();
@@ -22,7 +43,7 @@ fn corpus_decisions_are_golden() {
         powershell: cfg!(feature = "powershell"),
     };
     let (mut cases, mut skipped) = (Vec::new(), 0);
-    for (i, text) in include_str!("corpus.jsonl").lines().enumerate() {
+    for (i, text) in corpus.lines().enumerate() {
         let v: Value = serde_json::from_str(text).unwrap();
         let dialect = v["dialect"].as_str().unwrap_or("bash");
         let built = match dialect {
@@ -60,12 +81,10 @@ fn corpus_decisions_are_golden() {
         for line in &cases {
             writeln!(out, "{line}").unwrap();
         }
-        insta::assert_snapshot!(out);
+        insta::assert_snapshot!(name, out);
         return;
     }
     // A partial build: every case it ran must have the golden decision.
-    let golden =
-        include_str!("snapshots/acus_guard__tests__corpus__corpus_decisions_are_golden.snap");
     let golden: Vec<&str> = golden.lines().collect();
     for line in &cases {
         assert!(golden.contains(&line.as_str()), "not in the golden: {line}");

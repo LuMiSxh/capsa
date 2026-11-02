@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Output helpers shared by the commands: numbered lines, the head budget and clipping.
 
-use anstyle::{AnsiColor, Style};
-use capsa_core::format::Format;
-use std::io::IsTerminal;
+use capsa_core::format::{Format, Stream, color};
+use capsa_core::render::{Doc, Profile, Tone, bold, paint};
+use std::io;
 
-/// Printing helpers. Colour is applied only when stdout is a terminal, so piped output is plain
-/// text.
+/// Printing helpers. Colour follows `capsa_core::format::color`: human output on a terminal
+/// without `NO_COLOR`, so piped and agent output is plain text.
 pub struct Out {
     pub format: Format,
     color: bool,
@@ -16,27 +16,31 @@ impl Out {
     pub fn new(format: Format) -> Self {
         Out {
             format,
-            color: format == Format::Human && std::io::stdout().is_terminal(),
+            color: color(format, Stream::Stdout),
         }
     }
 
-    fn paint(&self, style: Style, s: &str) -> String {
-        if self.color {
-            format!("{style}{s}{style:#}")
-        } else {
-            s.to_owned()
-        }
+    fn tint(&self, tone: Tone, s: &str) -> String {
+        paint(s, tone, self.color).into_owned()
     }
 
     pub fn header(&self, s: &str) -> String {
-        self.paint(
-            Style::new().bold().fg_color(Some(AnsiColor::Cyan.into())),
-            s,
-        )
+        bold(s, self.color).into_owned()
     }
 
     pub fn dim(&self, s: &str) -> String {
-        self.paint(Style::new().dimmed(), s)
+        self.tint(Tone::Dim, s)
+    }
+
+    /// Writes a human-view `Doc` to stdout in the rich layout, coloured when colour is on.
+    pub fn doc(&self, doc: &Doc) -> io::Result<()> {
+        doc.write(
+            &mut io::stdout().lock(),
+            Profile {
+                color: self.color,
+                rich: true,
+            },
+        )
     }
 
     /// `n\tline`, or `n>\tline` for matching lines — the shape agents know from `cat -n`.
@@ -140,6 +144,22 @@ mod tests {
             more_lines("a.rs", 401, 900, 500),
             "… 500 more lines (acus show a.rs:401-900)"
         );
+    }
+
+    #[test]
+    fn colour_is_applied_only_when_enabled() {
+        let on = Out {
+            format: Format::Human,
+            color: true,
+        };
+        assert_eq!(on.header("x"), "\x1b[1mx\x1b[0m");
+        assert_eq!(on.dim("y"), "\x1b[2my\x1b[0m");
+        let off = Out {
+            format: Format::Human,
+            color: false,
+        };
+        assert_eq!(off.header("x"), "x");
+        assert_eq!(off.dim("y"), "y");
     }
 
     #[test]

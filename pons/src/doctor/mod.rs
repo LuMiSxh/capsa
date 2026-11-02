@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
-//! `pons self doctor`: a plain-text report on the install, the Zed setup and the
-//! wire log. It only reads; it never fails because something is missing.
+//! `pons self doctor`: checks the install, the Zed setup, the running proxies and the wire
+//! log. It only reads; a missing piece is a failed check, not an error.
 
 use std::collections::VecDeque;
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use capsa_core::format::{Format, color_stdout};
+use capsa_core::exit::Outcome;
+use capsa_core::format::Format;
+use capsa_core::log::Entry;
 use serde_json::{Value, json};
 
 use crate::launcher::{self, LAUNCHERS, PACKAGE};
+use crate::log::WireFields;
 use capsa_core::pkg;
 use capsa_core::which::{self, Env, Fs, Platform, RealFs};
 
@@ -18,11 +20,13 @@ mod process;
 mod render;
 #[cfg(test)]
 mod tests;
+mod view;
 mod zed;
 
 use adapter::*;
 use process::*;
 use render::*;
+use view::View;
 use zed::*;
 
 /// How many of pons' own log notes the report shows.
@@ -32,6 +36,8 @@ const LAST_NOTES: usize = 5;
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct LogSummary {
     pub lines: usize,
+    /// The file is in the text format of older versions, so no line was counted.
+    pub legacy_text: bool,
     pub cancels_seen: usize,
     pub cancels_dropped: usize,
     pub stop_escapes: usize,
@@ -53,18 +59,18 @@ impl LogSummary {
     }
 }
 
-/// Reads the log format `<secs.millis> <direction> <text>`.
+/// Summarizes a wire log with one JSON object per line, as `capsa_core::log` writes it.
 pub fn summarize_log(text: &str) -> LogSummary {
     let mut s = LogSummary::default();
     let mut notes: VecDeque<String> = VecDeque::new();
-    for line in text.lines() {
-        let mut parts = line.splitn(3, ' ');
-        let (Some(_), Some(dir), rest) = (parts.next(), parts.next(), parts.next()) else {
-            continue;
-        };
-        let rest = rest.unwrap_or("");
+    for entry in text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Entry<WireFields>>(line).ok())
+    {
+        let WireFields { dir, text: rest } = entry.fields;
+        let rest = rest.as_str();
         s.lines += 1;
-        match dir {
+        match dir.as_str() {
             "client->agent" => {
                 if rest.contains("\"method\":\"session/cancel\"") || rest == "method=session/cancel"
                 {
@@ -100,12 +106,13 @@ pub fn summarize_log(text: &str) -> LogSummary {
                 if notes.len() == LAST_NOTES {
                     notes.pop_front();
                 }
-                notes.push_back(line.to_owned());
+                notes.push_back(rest.to_owned());
             }
             _ => {}
         }
     }
     s.last_notes = notes.into();
+    s.legacy_text = s.lines == 0 && !text.trim().is_empty();
     s
 }
 
@@ -232,7 +239,7 @@ pub fn gather(
     let registry_adapter =
         adapter_dir(env).map(|dir| (adapter_version(&dir, read), dir.display().to_string()));
     let log = inputs.log.as_ref().map(|path| {
-        let rotated = PathBuf::from(format!("{}.1", path.display()));
+        let rotated = capsa_core::log::rotated(path);
         LogReport {
             path: path.display().to_string(),
             summary: read(path).map(|t| summarize_log(&t)),
@@ -259,93 +266,6 @@ pub fn gather(
     }
 }
 
-fn wire_log_section(out: &mut String, r: &Report) {
-    let _ = writeln!(out, "\nWire log");
-    match &r.log {
-        None => {
-            let _ = writeln!(
-                out,
-                "  none (no pons-*.log in the log directory; pass --log FILE, or set PONS_LOG)"
-            );
-        }
-        Some(log) => match &log.summary {
-            None => {
-                let _ = writeln!(out, "  {}: not found or unreadable", log.path);
-            }
-            Some(s) => {
-                let _ = writeln!(out, "  file: {} ({} lines)", log.path, s.lines);
-                if let Some(size) = log.size {
-                    let _ = write!(out, "  size: {}", human_bytes(size));
-                    match log.rotated_size {
-                        Some(old) => {
-                            let _ = writeln!(
-                                out,
-                                "; rotated copy {}.1: {}",
-                                log.path,
-                                human_bytes(old)
-                            );
-                        }
-                        None => {
-                            let _ = writeln!(
-                                out,
-                                "; not rotated yet (rotates once at --log-max-bytes, default 5 MiB)"
-                            );
-                        }
-                    }
-                }
-                let _ = writeln!(
-                    out,
-                    "  cancels: {} seen, {} dropped, {} forwarded, {} stop escapes",
-                    s.cancels_seen,
-                    s.cancels_dropped,
-                    s.cancels_forwarded(),
-                    s.stop_escapes
-                );
-                let _ = writeln!(
-                    out,
-                    "  subagents: {} tracked, {} finished ({} of them provisional, by silence)",
-                    s.subagents_tracked, s.subagents_finished, s.subagents_provisional
-                );
-                let _ = writeln!(out, "  fail-safe events: {}", s.fail_safe_events);
-                let _ = writeln!(
-                    out,
-                    "  task notifications dropped: {}",
-                    s.notifications_dropped
-                );
-                let _ = writeln!(
-                    out,
-                    "  client renders subagents natively (pons stepped aside): {}",
-                    if s.stepped_aside { "yes" } else { "no" }
-                );
-                let _ = writeln!(
-                    out,
-                    "  last exit: {}",
-                    s.last_exit.as_deref().unwrap_or("none logged")
-                );
-                if s.last_notes.is_empty() {
-                    let _ = writeln!(out, "  last notes: none");
-                } else {
-                    let _ = writeln!(out, "  last {} note(s):", s.last_notes.len());
-                    for n in &s.last_notes {
-                        let _ = writeln!(out, "    {n}");
-                    }
-                }
-            }
-        },
-    }
-}
-
-/// Builds the text report.
-#[cfg(test)]
-pub fn report(
-    inputs: &Inputs,
-    fs: &dyn Fs,
-    read: &dyn Fn(&Path) -> Option<String>,
-    sys: &dyn Sys,
-) -> String {
-    render_text(&gather(inputs, fs, read, sys), false)
-}
-
 /// Picks the log to summarize: `--log`/`PONS_LOG`, else the newest per-start log in
 /// the log directory, else `pons.log` in the temp dir if it exists.
 pub fn pick_log(given: Option<PathBuf>, log_dir: Option<&Path>) -> Option<PathBuf> {
@@ -354,15 +274,14 @@ pub fn pick_log(given: Option<PathBuf>, log_dir: Option<&Path>) -> Option<PathBu
         .or_else(|| Some(std::env::temp_dir().join("pons.log")).filter(|p| p.is_file()))
 }
 
-/// Gathers the real environment and returns the report: JSON for
-/// [`Format::Json`], coloured text for [`Format::Human`] on a terminal, plain
-/// text otherwise.
+/// Gathers the real environment and returns the report, written in `format`. The outcome
+/// is [`Outcome::Empty`] (exit 1) when a check fails.
 pub fn run(
     agent_cmd: Vec<String>,
     log: Option<PathBuf>,
     log_dir: Option<&Path>,
     format: Format,
-) -> String {
+) -> anyhow::Result<Outcome> {
     let inputs = Inputs {
         env: Env::from_process(),
         agent_cmd,
@@ -373,10 +292,6 @@ pub fn run(
             .ok()
             .map(|b| String::from_utf8_lossy(&b).into_owned())
     };
-    let r = gather(&inputs, &RealFs, &read, &RealSys);
-    match format {
-        Format::Json => render_json(&r),
-        Format::Human => render_text(&r, color_stdout(format)),
-        Format::Agent => render_text(&r, false),
-    }
+    let report = gather(&inputs, &RealFs, &read, &RealSys);
+    capsa_core::render::emit(&View::new(report), format)
 }

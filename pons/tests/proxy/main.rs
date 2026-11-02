@@ -8,6 +8,7 @@
 )]
 
 mod background;
+mod bench;
 mod cancel;
 mod census;
 mod cli;

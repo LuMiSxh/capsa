@@ -5,8 +5,9 @@ use crate::out::Out;
 use crate::usage_views::k;
 use anyhow::Result;
 use capsa_core::exit::Outcome;
-use capsa_core::format::Format;
+
 use capsa_core::hint::ResultExt;
+use capsa_core::render::{Doc, Render, emit};
 use census::context::{self, ContextUse};
 use census::session::{self, Picked};
 use serde::Serialize;
@@ -26,6 +27,29 @@ struct ContextOut<'a> {
     context: &'a ContextUse,
 }
 
+impl Render for ContextOut<'_> {
+    fn doc(&self, doc: &mut Doc) {
+        let c = self.context;
+        doc.title("census context");
+        doc.row("context").bar(c.percent / 100.0).text(format!(
+            "{} of {} ({:.0}%), {} left",
+            k(c.tokens as f64),
+            k(c.threshold.tokens as f64),
+            c.percent,
+            k(c.left as f64)
+        ));
+        doc.row("threshold").text(format!(
+            "{} from {}",
+            k(c.threshold.tokens as f64),
+            c.threshold.source
+        ));
+        doc.row("model")
+            .text(c.model.as_deref().unwrap_or("unknown").to_owned());
+        doc.row("session")
+            .text(format!("{} ({})", self.session, self.picked.label()));
+    }
+}
+
 pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     let resolved = session::resolve_here(a.session.as_deref()).hinted()?;
     let Some((model, tokens)) = context::last_context(&resolved.transcript) else {
@@ -33,31 +57,10 @@ pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
         return Ok(Outcome::Empty);
     };
     let c = context::measure(tokens, Some(&model));
-    if out.format == Format::Json {
-        let body = ContextOut {
-            session: &resolved.id,
-            picked: resolved.picked,
-            context: &c,
-        };
-        println!("{}", serde_json::to_string(&body)?);
-        return Ok(Outcome::Found);
-    }
-    let context = format!(
-        "{} of {} ({:.0}%), {} left",
-        k(c.tokens as f64),
-        k(c.threshold.tokens as f64),
-        c.percent,
-        k(c.left as f64)
-    );
-    println!("{}", out.field("context", &context));
-    let threshold = format!(
-        "{} from {}",
-        k(c.threshold.tokens as f64),
-        c.threshold.source
-    );
-    println!("{}", out.field("threshold", &threshold));
-    println!("{}", out.field("model", &model));
-    let session = format!("{} ({})", resolved.id, resolved.picked.label());
-    println!("{}", out.field("session", &session));
-    Ok(Outcome::Found)
+    let body = ContextOut {
+        session: &resolved.id,
+        picked: resolved.picked,
+        context: &c,
+    };
+    emit(&body, out.format)
 }

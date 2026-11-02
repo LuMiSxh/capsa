@@ -10,6 +10,12 @@ fn tool_done(id: &str) -> Value {
     json!({"sessionUpdate": "tool_call_update", "toolCallId": id, "status": "completed"})
 }
 
+/// A `Monitor` call of subagent `P`'s child `id` with the given raw input.
+fn monitor_call(id: &str, input: &Value) -> Value {
+    json!({"sessionUpdate": "tool_call", "toolCallId": id, "title": "Monitor logs",
+        "_meta": {"claudeCode": {"toolName": "Monitor"}}, "status": "pending", "rawInput": input})
+}
+
 fn text_chunk(text: &str) -> Value {
     json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}})
 }
@@ -356,6 +362,73 @@ fn silence_finishes_provisionally_after_final_text_with_nothing_open() {
     assert!(matches!(done[0].entry, Some(EntryOut::Append(_))));
     assert!(folds.is_finished("P"));
     assert!(folds.poll(t0 + secs(100)).is_empty(), "finished once");
+}
+
+#[test]
+fn a_monitor_holds_the_card_until_its_timeout_and_grace() {
+    let t0 = Instant::now();
+    let mut folds = watched(t0);
+    let monitor = monitor_call("m1", &json!({"timeout_ms": 300_000}));
+    folds.child_update("s", "P", &monitor, t0 + secs(1));
+    folds.child_update("s", "P", &tool_done("m1"), t0 + secs(2));
+    assert!(
+        folds.poll(t0 + secs(330)).is_empty(),
+        "monitor runs until 331s"
+    );
+    assert_eq!(reasons(&folds.poll(t0 + secs(331))), vec![("idle", false)]);
+}
+
+#[test]
+fn a_monitor_holds_a_silent_card_past_the_quiet_cap() {
+    let t0 = Instant::now();
+    let mut folds = watched(t0);
+    folds.set_text_visible(false);
+    let monitor = monitor_call("m1", &json!({"timeout_ms": 1_000_000}));
+    folds.child_update("s", "P", &monitor, t0 + secs(1));
+    folds.child_update("s", "P", &tool_done("m1"), t0 + secs(2));
+    assert!(
+        folds.poll(t0 + secs(1_030)).is_empty(),
+        "monitor runs until 1031s"
+    );
+    assert_eq!(
+        reasons(&folds.poll(t0 + secs(1_031))),
+        vec![("quiet-cap", false)]
+    );
+}
+
+#[test]
+fn a_monitor_without_a_timeout_holds_the_card_for_thirty_minutes() {
+    let t0 = Instant::now();
+    let mut folds = watched(t0);
+    let monitor = monitor_call("m1", &json!({"description": "watch the log"}));
+    folds.child_update("s", "P", &monitor, t0 + secs(1));
+    folds.child_update("s", "P", &tool_done("m1"), t0 + secs(2));
+    assert!(
+        folds.poll(t0 + secs(1_830)).is_empty(),
+        "monitor runs until 1831s"
+    );
+    assert_eq!(
+        reasons(&folds.poll(t0 + secs(1_831))),
+        vec![("idle", false)]
+    );
+}
+
+#[test]
+fn a_timeout_in_a_later_monitor_update_sets_the_deadline() {
+    let t0 = Instant::now();
+    let mut folds = watched(t0);
+    let monitor = monitor_call("m1", &json!({}));
+    folds.child_update("s", "P", &monitor, t0 + secs(1));
+    let later = json!({"sessionUpdate": "tool_call_update", "toolCallId": "m1",
+        "rawInput": {"timeout_ms": 60_000}});
+    folds.child_update("s", "P", &later, t0 + secs(2));
+    folds.child_update("s", "P", &tool_done("m1"), t0 + secs(3));
+    // Start 1s, plus the 60s timeout and the 30s grace: not the 30 min fallback.
+    assert!(
+        folds.poll(t0 + secs(90)).is_empty(),
+        "monitor runs until 91s"
+    );
+    assert_eq!(reasons(&folds.poll(t0 + secs(91))), vec![("idle", false)]);
 }
 
 #[test]

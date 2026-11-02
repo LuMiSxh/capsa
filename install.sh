@@ -1,11 +1,11 @@
 #!/bin/sh
 # Installs capsa tools from the newest release of each tool.
-# Usage: install.sh [acus|pons|census|velum|all ...]   (default: all; velum is macOS-only)
-#        install.sh --uninstall <acus|pons|census|velum|all>
+# Usage: install.sh [acus|pons|census|all ...]   (default: all)
+#        install.sh --uninstall <acus|pons|census|all>
 # Env: CAPSA_INSTALL_DIR (default ~/.local/bin), CAPSA_INSTALL_SCOPE=user|system,
 #      CAPSA_NO_SKILL=1 skips `acus self skill --install` (ACUS_NO_SKILL works too) and
 #      keeps the acus skill on --uninstall,
-#      GITHUB_TOKEN (else `gh auth token`) while the repository is private.
+#      GITHUB_TOKEN (else `gh auth token`), sent when available to lift the API rate limit.
 set -eu
 
 REPO="LuMiSxh/capsa"
@@ -28,17 +28,14 @@ main() {
     for arg in "$@"; do
         case "$arg" in
             --uninstall) ;;
-            all)       selected="$selected acus pons census velum" ;;
+            all)       selected="$selected acus pons census" ;;
             acus|pons|census) selected="$selected $arg" ;;
-            velum)
-                [ -n "$uninstall" ] || [ "$(uname -s)" = "Darwin" ] || err "velum is macOS-only for now"
-                selected="$selected velum" ;;
-            *) err "unknown tool: $arg (use acus, pons, census, velum or all)" ;;
+            *) err "unknown tool: $arg (use acus, pons, census or all)" ;;
         esac
     done
 
     if [ -n "$uninstall" ]; then
-        [ -n "$selected" ] || err "usage: install.sh --uninstall <acus|pons|census|velum|all>"
+        [ -n "$selected" ] || err "usage: install.sh --uninstall <acus|pons|census|all>"
         for tool in $selected; do
             uninstall_tool "$tool"
         done
@@ -54,10 +51,6 @@ main() {
 
     installed=""
     for tool in $selected; do
-        if [ "$tool" = "velum" ] && [ "$os" != "apple-darwin" ]; then
-            say "skipping velum (macOS only)"
-            continue
-        fi
         install_tool "$tool" "$target"
         installed=1
     done
@@ -74,7 +67,7 @@ install_tool() {
 
     tag="$(latest_tag "$tool")" || tag=""
     if [ -z "$tag" ]; then
-        err "no ${tool} release found in ${REPO}, or GitHub denied access (the repository is private: set GITHUB_TOKEN or run gh auth login)"
+        err "no ${tool} release found in ${REPO}, or GitHub denied the request (rate limit: set GITHUB_TOKEN or run gh auth login)"
     fi
 
     release_json="$(api_get "${API}/releases/tags/${tag}")" || err "could not read release ${tag} of ${REPO}"
@@ -100,7 +93,7 @@ install_tool() {
 
     # Installs the agent skill for Claude Code and Codex.
     if [ "$tool" = "acus" ] && [ -z "$NO_SKILL" ]; then
-        "$INSTALL_DIR/acus" self skill --install
+        "$INSTALL_DIR/acus" self skill --install --target all
     fi
 }
 
@@ -114,9 +107,6 @@ uninstall_tool() {
         err "refusing to remove ${path}: not a regular file"
     fi
     if [ -f "$path" ]; then
-        if [ "$tool" = "velum" ]; then
-            "$path" shim uninstall || err "velum shim uninstall failed, ${path} is kept"
-        fi
         rm -f "$path"
         say "removed ${path}"
     else

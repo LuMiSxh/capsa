@@ -45,7 +45,7 @@ impl FoldEntry {
         cap: Duration,
         text_visible: bool,
     ) -> Option<&'static str> {
-        if !self.is_running_background() || !self.open_tools.is_empty() {
+        if !self.is_running_background() || !self.open_tools.is_empty() || self.monitoring(now) {
             return None;
         }
         let silent = self.silence(now);
@@ -59,6 +59,31 @@ impl FoldEntry {
         } else {
             (!cap.is_zero() && silent >= cap).then_some("quiet-cap")
         }
+    }
+
+    /// Tracks the subagent's `Monitor` calls, which keep streaming after the call itself
+    /// completed. A later update of the call may carry the timeout its input lacked.
+    pub(super) fn note_monitor(&mut self, update: &Value, now: Instant) {
+        let Some(id) = str_field(update, "toolCallId") else {
+            return;
+        };
+        if str_field(update, "sessionUpdate") == Some("tool_call") && is_monitor(update) {
+            self.monitors.retain(|_, m| m.deadline() > now);
+            self.monitors.entry(id.to_owned()).or_insert(Monitor {
+                started: now,
+                timeout: None,
+            });
+        }
+        if let Some(timeout) = monitor_timeout(update)
+            && let Some(monitor) = self.monitors.get_mut(id)
+        {
+            monitor.timeout = Some(timeout);
+        }
+    }
+
+    /// Tells whether a `Monitor` call of the subagent may still be streaming events.
+    pub(super) fn monitoring(&self, now: Instant) -> bool {
+        self.monitors.values().any(|m| now < m.deadline())
     }
 
     /// Tells whether the card is finished by silence only, and not yet confirmed or hidden.
@@ -123,44 +148,6 @@ impl FoldEntry {
             && self
                 .last_emit
                 .is_none_or(|t| now.saturating_duration_since(t) >= throttle)
-    }
-
-    /// Returns valid ACP tool call content: the parent's own content, then the log.
-    pub(super) fn content(&self) -> Vec<Value> {
-        let mut content = self.base.clone();
-        content.push(json!({
-            "type": "content",
-            "content": { "type": "text", "text": self.render() },
-        }));
-        content
-    }
-
-    /// Renders a compact text log: the last tool lines plus the tail of the agent text.
-    pub fn render(&self) -> String {
-        // A finished card shows the final message; a running one its tail.
-        let finished = self.done.is_some().then(|| self.result());
-        let text = match finished.filter(|r| !r.is_empty()) {
-            Some(result) => result,
-            None => clip_tail(one_line(&self.text).trim(), MAX_TEXT_CHARS),
-        };
-        let reserve = usize::from(!text.is_empty()) + usize::from(self.footer.is_some());
-        let keep = MAX_LINES - reserve;
-        let skip = self.lines.len().saturating_sub(keep);
-        let mut out: Vec<String> = self
-            .lines
-            .iter()
-            .skip(skip)
-            .map(|l| format!("{}: {}", l.state.word(), l.title))
-            .collect();
-        if !text.is_empty() {
-            out.push(format!("agent: {text}"));
-        }
-        if let Some(footer) = &self.footer {
-            out.push(footer.clone());
-        } else if out.is_empty() && self.background {
-            out.push("running in the background".to_owned());
-        }
-        out.join("\n")
     }
 
     /// Updates `open_tools` and `last_kind`. A tool call starts open
@@ -323,100 +310,6 @@ impl FoldEntry {
         }
     }
 
-    pub(super) fn entry_id(&self) -> String {
-        format!("{ENTRY_PREFIX}{}", self.parent)
-    }
-
-    /// Returns the subagent's final agent message: the last contiguous agent text,
-    /// blank runs squeezed, at most [`MAX_RESULT_CHARS`] characters of its
-    /// head. Empty when the subagent said nothing since its last tool call.
-    pub(super) fn result(&self) -> String {
-        let mut out: Vec<&str> = Vec::new();
-        for line in self.head.lines().map(str::trim_end) {
-            if line.is_empty() && out.last().is_none_or(|l| l.is_empty()) {
-                continue;
-            }
-            out.push(line);
-        }
-        clip_head(out.join("\n").trim(), MAX_RESULT_CHARS)
-    }
-
-    pub(super) fn roster_item(&self, now: Instant) -> RosterItem {
-        let name = self.roster_name();
-        match self.done {
-            None => {
-                let action = self.last_action();
-                let mut stats = format!("{}, {}", self.calls(), self.elapsed(now));
-                if let Some(quiet) = self.quiet_label(now) {
-                    stats.push_str(&format!(", {quiet}"));
-                }
-                RosterItem {
-                    content: format!(
-                        "{name}: {} ({stats})",
-                        action.as_deref().unwrap_or("starting")
-                    ),
-                    status: if action.is_some() {
-                        "in_progress"
-                    } else {
-                        "pending"
-                    },
-                }
-            }
-            Some(done) => RosterItem {
-                content: format!(
-                    "{name}: {} ({}, {})",
-                    if done.failed { "stopped" } else { "done" },
-                    self.calls(),
-                    self.elapsed(now)
-                ),
-                status: "completed",
-            },
-        }
-    }
-
-    /// Returns the live title of a background card; `None` for any other card, whose
-    /// lifecycle belongs to the adapter.
-    pub(super) fn card_title(&self, now: Instant) -> Option<String> {
-        if !self.background {
-            return None;
-        }
-        let name = self.name();
-        Some(match self.done {
-            None => {
-                let mut title = format!("{name}: running {}", self.elapsed(now));
-                if self.tool_calls > 0 {
-                    title.push_str(&format!(", {}", self.calls()));
-                    if let Some(action) = self.last_action() {
-                        title.push_str(&format!(", last: {action}"));
-                    }
-                }
-                if let Some(quiet) = self.quiet_label(now) {
-                    title.push_str(&format!(", {quiet}"));
-                }
-                title
-            }
-            Some(done) => format!(
-                "{name}: {}, {}, {}",
-                if done.failed { "stopped" } else { "done" },
-                self.calls(),
-                self.elapsed(now)
-            ),
-        })
-    }
-
-    pub(super) fn last_action(&self) -> Option<String> {
-        self.lines
-            .back()
-            .map(|l| clip_head(&l.title, MAX_ACTION_CHARS))
-    }
-
-    /// Returns `quiet 35s` once the running subagent has been silent a while, in
-    /// steps of [`ELAPSED_STEP`].
-    pub(super) fn quiet_label(&self, now: Instant) -> Option<String> {
-        let secs = self.silence(now).as_secs();
-        (secs >= QUIET_SHOWN).then(|| format!("quiet {}", fmt_elapsed(secs - secs % ELAPSED_STEP)))
-    }
-
     /// Returns the time since the subagent last did anything pons could see.
     pub(super) fn silence(&self, now: Instant) -> Duration {
         self.last_activity()
@@ -458,6 +351,7 @@ impl FoldEntry {
         if let Some(input) = update
             .get("rawInput")
             .filter(|v| v.as_object().is_some_and(|o| !o.is_empty()))
+            && self.input.as_ref() != Some(input)
         {
             self.input = Some(input.clone());
         }
@@ -500,6 +394,7 @@ impl FoldEntry {
             provisional: false,
             hidden: false,
             input: None,
+            monitors: HashMap::new(),
         }
     }
 }

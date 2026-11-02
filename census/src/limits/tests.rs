@@ -11,7 +11,7 @@ use super::pattern::{Expect, cycle_index};
 use super::when;
 use super::window::{Span, current};
 use super::{Forecast, Full, History, Kind, LimitStatus, Reading, compute};
-use crate::ledger::{Hourly, Row, Tokens as LedgerTokens};
+use crate::ledger::{Hourly, Priced, Row, Tokens as LedgerTokens};
 use capsa_core::census_snapshot::{Snapshot, Source, Window};
 
 const BASE: u64 = 1_800_000_000;
@@ -80,8 +80,7 @@ fn five_snapshots(used: [f64; 5]) -> Vec<Snapshot> {
 fn status_at(rows: &[Row], snapshots: &[Snapshot], now: u64) -> LimitStatus {
     compute(
         &History {
-            rows,
-            hourly: &[],
+            priced: &Priced::of(rows, &[]),
             snapshots,
         },
         now,

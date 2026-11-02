@@ -9,6 +9,7 @@ use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::ResultExt;
 use similar::{Algorithm, DiffOp, TextDiff, capture_diff_slices};
+use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -327,13 +328,14 @@ fn format_written(
     texts: &mut [FileText],
 ) -> Vec<String> {
     let mut notes = Vec::new();
+    let tools = Tools::default();
     for c in changes {
         let path = match c {
             Change::Added { path, .. } | Change::Modified { path, .. } => path,
             Change::Moved { to, .. } => to,
             Change::Deleted { .. } => continue,
         };
-        let Some(argv) = formatter(Path::new(path)) else {
+        let Some(argv) = formatter(Path::new(path), &tools) else {
             continue;
         };
         let Ok(old) = std::fs::read_to_string(path) else {
@@ -400,19 +402,38 @@ fn map(ops: &[DiffOp], i: usize, end: bool) -> usize {
     ops.last().map_or(0, |op| op.new_range().end)
 }
 
+/// The formatter binaries already looked up on PATH in this patch run, so each is searched once.
+#[derive(Default)]
+struct Tools {
+    found: RefCell<Vec<(&'static str, bool)>>,
+}
+
+impl Tools {
+    /// Reports whether name is on PATH, searching only the first time it is asked.
+    fn on_path(&self, name: &'static str) -> bool {
+        if let Some(&(_, hit)) = self.found.borrow().iter().find(|(n, _)| *n == name) {
+            return hit;
+        }
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let hit = capsa_core::which::find_on_path(name, &path, None).is_some();
+        self.found.borrow_mut().push((name, hit));
+        hit
+    }
+}
+
 /// Formatter command reading the file on stdin and printing it formatted, if one is installed.
-fn formatter(path: &Path) -> Option<Vec<String>> {
+fn formatter(path: &Path, tools: &Tools) -> Option<Vec<String>> {
     let p = path.to_string_lossy().into_owned();
     let v = |a: &[&str]| Some(a.iter().map(|s| s.to_string()).collect());
     match path.extension()?.to_str()? {
-        "rs" if on_path("rustfmt") => v(&["rustfmt", "--edition", &rust_edition(path)]),
-        "py" if on_path("ruff") => v(&["ruff", "format", "--stdin-filename", &p, "-"]),
-        "py" if on_path("black") => v(&["black", "-q", "--stdin-filename", &p, "-"]),
-        "go" if on_path("gofmt") => v(&["gofmt"]),
-        "swift" if on_path("swift-format") => {
+        "rs" if tools.on_path("rustfmt") => v(&["rustfmt", "--edition", &rust_edition(path)]),
+        "py" if tools.on_path("ruff") => v(&["ruff", "format", "--stdin-filename", &p, "-"]),
+        "py" if tools.on_path("black") => v(&["black", "-q", "--stdin-filename", &p, "-"]),
+        "go" if tools.on_path("gofmt") => v(&["gofmt"]),
+        "swift" if tools.on_path("swift-format") => {
             v(&["swift-format", "format", "--assume-filename", &p])
         }
-        "swift" if cfg!(target_os = "macos") && on_path("xcrun") => {
+        "swift" if cfg!(target_os = "macos") && tools.on_path("xcrun") => {
             v(&["xcrun", "swift-format", "format", "--assume-filename", &p])
         }
         "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts" | "svelte" | "vue" | "css"
@@ -424,23 +445,11 @@ fn formatter(path: &Path) -> Option<Vec<String>> {
                 .map(|d| d.join("node_modules/.bin/prettier"))
                 .find(|b| b.is_file())
                 .map(|b| b.to_string_lossy().into_owned())
-                .or_else(|| on_path("prettier").then(|| "prettier".into()))?;
+                .or_else(|| tools.on_path("prettier").then(|| "prettier".into()))?;
             Some(vec![bin, "--stdin-filepath".into(), p])
         }
         _ => None,
     }
-}
-
-fn on_path(name: &str) -> bool {
-    let exts: &[&str] = if cfg!(windows) {
-        &[".exe", ".cmd"]
-    } else {
-        &[""]
-    };
-    std::env::var_os("PATH").is_some_and(|ps| {
-        std::env::split_paths(&ps)
-            .any(|d| exts.iter().any(|e| d.join(format!("{name}{e}")).is_file()))
-    })
 }
 
 /// `edition` from the nearest Cargo.toml that sets one (following `edition.workspace`).

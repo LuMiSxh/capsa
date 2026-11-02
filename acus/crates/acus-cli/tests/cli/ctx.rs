@@ -5,7 +5,6 @@ use crate::common::*;
 #[cfg(unix)]
 const GREP_LINES: &str = "echo l1; echo l2; echo m3; echo l4; echo l5; echo l6; echo l7; echo m8; echo l9; echo l10; echo l11; echo l12; echo l13; echo m14";
 
-#[cfg(feature = "cmd-decide")]
 #[test]
 fn ctx_log_is_readable_with_show() {
     // The acus binary itself prints enough lines and exists on every platform.

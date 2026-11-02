@@ -77,6 +77,12 @@ async fn the_deprecated_quiet_ms_flag_is_accepted_and_ignored() {
     // refresh) may arrive before it, so skip to the response.
     let seen = h.recv_until(|m| m.get("result").is_some()).await;
     assert_eq!(seen.last().unwrap()["result"]["stopReason"], "cancelled");
+    // Info lines are buffered: pons writes them out when it exits.
+    drop(h.stdin);
+    tokio::time::timeout(std::time::Duration::from_secs(10), h.child.wait())
+        .await
+        .expect("pons exits")
+        .unwrap();
     let text = std::fs::read_to_string(&log).unwrap();
     let _ = std::fs::remove_file(&log);
     assert!(text.contains("--quiet-ms is deprecated"), "{text}");

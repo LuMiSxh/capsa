@@ -33,14 +33,19 @@ impl Scratch {
     }
 
     /// Writes `text` to `rel` under the directory, creating parents, and returns the path.
+    pub fn write(&self, rel: &str, text: &str) -> PathBuf {
+        self.write_bytes(rel, text.as_bytes())
+    }
+
+    /// Writes `bytes` to `rel` under the directory, creating parents, and returns the path.
     #[expect(
         clippy::expect_used,
         reason = "a fixture that cannot be written must fail the test"
     )]
-    pub fn write(&self, rel: &str, text: &str) -> PathBuf {
+    pub fn write_bytes(&self, rel: &str, bytes: &[u8]) -> PathBuf {
         let path = self.0.join(rel);
         std::fs::create_dir_all(path.parent().unwrap_or(&self.0)).expect("create parents");
-        std::fs::write(&path, text).expect("write the fixture");
+        std::fs::write(&path, bytes).expect("write the fixture");
         path
     }
 }

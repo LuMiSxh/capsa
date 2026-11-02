@@ -6,6 +6,7 @@
 mod calibrate;
 mod clock;
 mod cost;
+mod daily;
 mod error;
 mod forecast;
 mod month;
@@ -18,12 +19,13 @@ mod tests;
 
 pub use calibrate::Calibration;
 pub use clock::when;
+pub use daily::{DailySource, DailyStatus};
 pub use error::LimitsError;
 pub use forecast::{FiveHourDay, Forecast, PeakSource};
-pub use month::{MonthStatus, compute_month, month, month_stored};
+pub use month::{MonthStatus, Today, compute_month, month, month_stored};
 pub use pattern::{Bucket, Kind, Pattern};
 
-use crate::ledger::{Hourly, Ledger, Opts, Row};
+use crate::ledger::{Ledger, Opts, Priced};
 use capsa_core::census_snapshot::{self, Snapshot, Window};
 use clock::HOUR_S;
 use cost::Costed;
@@ -39,8 +41,7 @@ const QUARTER_HOUR_S: u64 = 900;
 
 /// The ledger and snapshot data that the limit state is computed from.
 pub struct History<'a> {
-    pub rows: &'a [Row],
-    pub hourly: &'a [Hourly],
+    pub priced: &'a Priced,
     pub snapshots: &'a [Snapshot],
 }
 
@@ -146,9 +147,9 @@ pub fn status(now: u64) -> Result<LimitStatus, LimitsError> {
 /// Fails when the ledger or the snapshot file cannot be read or written.
 pub fn status_by(now: u64, deadline: Option<Instant>) -> Result<LimitStatus, LimitsError> {
     let (ledger, snapshots) = load(now, deadline)?;
+    let priced = ledger.priced()?;
     let history = History {
-        rows: ledger.rows()?,
-        hourly: ledger.hourly()?,
+        priced: &priced,
         snapshots: &snapshots,
     };
     Ok(compute(&history, now))
@@ -160,7 +161,7 @@ pub fn status_by(now: u64, deadline: Option<Instant>) -> Result<LimitStatus, Lim
 /// Fails when the ledger or the snapshot file cannot be read or written.
 pub fn usage_by(now: u64, kind: Kind) -> Result<Table, LimitsError> {
     let (ledger, snapshots) = load(now, None)?;
-    let costs = Costed::new(ledger.rows()?, ledger.hourly()?);
+    let costs = Costed::from_priced(&ledger.priced()?);
     let expect = Expect::build(&costs, weekly_spans(&snapshots), now);
     Ok(Table {
         kind,
@@ -181,7 +182,7 @@ fn load(now: u64, deadline: Option<Instant>) -> Result<(Ledger, Vec<Snapshot>), 
 /// Returns the limit state at `now` computed from `history`. Reads nothing, so tests can feed it
 /// rows and snapshots.
 pub fn compute(history: &History, now: u64) -> LimitStatus {
-    let costs = Costed::new(history.rows, history.hourly);
+    let costs = Costed::from_priced(history.priced);
     let burn = Burn {
         usd_per_hour_15: costs.between(now.saturating_sub(QUARTER_HOUR_S), now) * 4.0,
         usd_per_hour_60: costs.between(now.saturating_sub(HOUR_S), now),
@@ -220,9 +221,7 @@ pub fn compute(history: &History, now: u64) -> LimitStatus {
     );
     LimitStatus {
         now,
-        data: !(history.rows.is_empty()
-            && history.hourly.is_empty()
-            && history.snapshots.is_empty()),
+        data: !(history.priced.is_empty() && history.snapshots.is_empty()),
         windows: vec![five.status, seven.status],
         burn,
         forecast,

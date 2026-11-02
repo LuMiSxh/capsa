@@ -22,6 +22,12 @@ async fn initialize_asks_the_adapter_for_subagent_text() {
         caps,
         json!({"fs": {"readTextFile": true}, "_meta": {"subagent-transcript": true}})
     );
+    // Info lines are buffered: pons writes them out when it exits.
+    drop(h.stdin);
+    tokio::time::timeout(std::time::Duration::from_secs(10), h.child.wait())
+        .await
+        .expect("pons exits")
+        .unwrap();
     let text = std::fs::read_to_string(&log).unwrap();
     let _ = std::fs::remove_file(&log);
     assert_eq!(

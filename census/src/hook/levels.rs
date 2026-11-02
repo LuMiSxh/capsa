@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Decides which context and limit levels the hook has newly crossed and words them.
 
+use super::Budget;
 use crate::context::ContextUse;
-use crate::limits::{Forecast, Full, LimitStatus, MonthStatus, Reading, WindowStatus, when};
+use crate::limits::{
+    DailyStatus, Forecast, Full, LimitStatus, MonthStatus, Reading, WindowStatus, when,
+};
 use capsa_core::census_snapshot::Window;
 use std::collections::BTreeSet;
 
@@ -28,6 +31,9 @@ const WEEKLY_BASIS_WEEKS: f64 = 2.0;
 /// The budget warns at this share of the budget of the month, then again when it is used up.
 const BUDGET_WARN_PCT: f64 = 80.0;
 const BUDGET_FULL_PCT: f64 = 100.0;
+/// The daily rungs above 100 % continue at each full multiple, up to this many of them.
+const DAILY_MULTIPLE_CAP: u32 = 1000;
+const DAILY_PREFIX: &str = "day:";
 /// A projection is said only after this much of the month, since the first days are noise.
 const PROJECTION_MIN_ELAPSED_S: u64 = 3 * 86_400;
 /// The status line comes back after this long without a prompt: the main agent's cache TTL.
@@ -40,7 +46,7 @@ const PROMPT_KEY: &str = "prompt:";
 pub(super) fn decide(
     context: Option<&ContextUse>,
     limits: Option<&LimitStatus>,
-    month: Option<&MonthStatus>,
+    budget: Option<&Budget>,
     compacted: Option<(u64, u64)>,
     now: u64,
     shown: &mut Shown,
@@ -55,7 +61,13 @@ pub(super) fn decide(
             out.extend(weekly_left_message(w, now, shown));
         }
     }
-    out.extend(month.and_then(|m| budget_message(m, shown)));
+    let daily = budget.and_then(|b| {
+        let d = b.daily.as_ref()?;
+        daily_message(d, b.month, b.thresholds, shown)
+    });
+    let daily_said = daily.is_some();
+    out.extend(daily);
+    out.extend(budget.and_then(|b| budget_message(b.month, shown, daily_said)));
     out
 }
 
@@ -108,15 +120,67 @@ fn usd(v: f64) -> String {
     format!("${v:.0}")
 }
 
-/// The budget rungs and the projection, once per month (its start time).
-fn budget_message(m: &MonthStatus, shown: &mut Shown) -> Option<String> {
+/// The daily rungs reached today: each configured threshold, then each full multiple of 100 % the
+/// spend has reached. Each is said once per local day; a call that crosses several says only the
+/// highest, and the days before today are forgotten.
+fn daily_message(
+    d: &DailyStatus,
+    m: &MonthStatus,
+    thresholds: &[u32],
+    shown: &mut Shown,
+) -> Option<String> {
+    let day = format!("{DAILY_PREFIX}{}:", m.today.start);
+    shown.retain(|k| !k.starts_with(DAILY_PREFIX) || k.starts_with(&day));
+    let multiples = (d.percent / BUDGET_FULL_PCT)
+        .floor()
+        .min(f64::from(DAILY_MULTIPLE_CAP)) as u32;
+    let mut rungs: Vec<u32> = thresholds.iter().copied().filter(|t| *t > 0).collect();
+    rungs.extend((1..=multiples).map(|k| k * 100));
+    let fresh: Vec<u32> = rungs
+        .into_iter()
+        .filter(|r| f64::from(*r) <= d.percent && !shown.contains(&format!("{day}{r}")))
+        .collect();
+    let top = *fresh.iter().max()?;
+    shown.extend(fresh.iter().map(|r| format!("{day}{r}")));
+    let today = format!("{} of {} today", usd2(d.usd), usd2(d.limit));
+    let projected = usd(m.projected_usd);
+    if top >= 100 {
+        let of_budget = m
+            .budget_usd
+            .map(|b| format!(" of {}", usd(b)))
+            .unwrap_or_default();
+        return Some(format!(
+            "census: daily budget reached: {today}; at this pace the month ends near \
+             {projected}{of_budget}. Wrap up the current task and tell the user before starting \
+             new work."
+        ));
+    }
+    let month = match m.budget_usd {
+        Some(budget) => format!("month {} of {}", usd(m.spent_usd), usd(budget)),
+        None => format!("month {}", usd(m.spent_usd)),
+    };
+    Some(format!(
+        "census: daily budget {top}%: {today}; {month}, at this pace the month ends near {projected}."
+    ))
+}
+
+fn usd2(v: f64) -> String {
+    format!("${v:.2}")
+}
+
+/// The budget rungs and the projection, once per month (its start time). A projection that the
+/// daily line of the same call already states is marked as said, not repeated.
+fn budget_message(m: &MonthStatus, shown: &mut Shown, daily_said: bool) -> Option<String> {
     let (budget, percent) = (m.budget_usd?, m.percent?);
     let key = |what: &str| format!("bud:{what}:{}", m.start);
     let mut hit = Vec::new();
     let projected =
         percent < BUDGET_FULL_PCT && m.projected_over && m.elapsed_s >= PROJECTION_MIN_ELAPSED_S;
-    if projected {
+    let said = projected && !daily_said;
+    if said {
         hit.push(key("proj"));
+    } else if projected {
+        shown.insert(key("proj"));
     }
     if percent >= BUDGET_WARN_PCT {
         hit.push(key("80"));
@@ -133,7 +197,7 @@ fn budget_message(m: &MonthStatus, shown: &mut Shown) -> Option<String> {
     } else {
         format!("{percent:.0}% used")
     };
-    let projection = if projected {
+    let projection = if said {
         format!(", on course for {} by month end", usd(m.projected_usd))
     } else {
         String::new()
@@ -295,6 +359,8 @@ mod tests {
         }
     }
 
+    use crate::limits::{DailySource, Today};
+
     fn month(spent: f64, elapsed_days: u64) -> MonthStatus {
         let start = 1_000_000;
         MonthStatus::new(
@@ -304,36 +370,140 @@ mod tests {
             start + elapsed_days * 86_400,
             Some(200.0),
             true,
+            Today::default(),
         )
+    }
+
+    const RUNGS: [u32; 3] = [50, 80, 100];
+
+    fn daily_status(usd: f64, limit: f64) -> DailyStatus {
+        DailyStatus {
+            usd,
+            limit,
+            source: DailySource::Derived,
+            percent: 100.0 * usd / limit,
+        }
+    }
+
+    /// The month of the test, with today starting at `day`.
+    fn on_day(mut m: MonthStatus, day: u64) -> MonthStatus {
+        m.today.start = day;
+        m
+    }
+
+    #[test]
+    fn the_daily_budget_warns_at_each_threshold_once_then_at_each_full_multiple() {
+        let m = on_day(month(100.0, 20), 1_000_000);
+        let mut shown = Shown::new();
+        let mut said = |usd: f64| daily_message(&daily_status(usd, 8.0), &m, &RUNGS, &mut shown);
+        assert_eq!(
+            said(4.0).as_deref(),
+            Some(
+                "census: daily budget 50%: $4.00 of $8.00 today; month $100 of $200, at this pace the month ends near $150."
+            )
+        );
+        assert_eq!(said(4.0), None);
+        assert!(
+            said(6.4)
+                .is_some_and(|s| s.starts_with("census: daily budget 80%: $6.40 of $8.00 today;"))
+        );
+        assert_eq!(
+            said(8.4).as_deref(),
+            Some(
+                "census: daily budget reached: $8.40 of $8.00 today; at this pace the month ends near $150 of $200. Wrap up the current task and tell the user before starting new work."
+            )
+        );
+        assert_eq!(said(9.0), None);
+        assert!(
+            said(16.0)
+                .is_some_and(|s| s.starts_with("census: daily budget reached: $16.00 of $8.00"))
+        );
+        assert_eq!(said(16.5), None);
+        assert!(said(24.0).is_some_and(|s| s.contains("$24.00 of $8.00")));
+    }
+
+    #[test]
+    fn a_call_that_crosses_several_rungs_says_only_the_highest() {
+        let m = on_day(month(100.0, 20), 1_000_000);
+        let mut shown = Shown::new();
+        let jump = daily_message(&daily_status(12.0, 8.0), &m, &RUNGS, &mut shown);
+        assert!(jump.is_some_and(|s| s.starts_with("census: daily budget reached: ")));
+        assert_eq!(
+            daily_message(&daily_status(4.0, 8.0), &m, &RUNGS, &mut shown),
+            None
+        );
+    }
+
+    #[test]
+    fn a_new_day_shows_the_rungs_again_and_forgets_the_old_day() {
+        let mut shown = Shown::new();
+        let first = on_day(month(100.0, 20), 1_000_000);
+        assert!(daily_message(&daily_status(4.0, 8.0), &first, &RUNGS, &mut shown).is_some());
+        let next = on_day(month(100.0, 20), 1_086_400);
+        assert!(daily_message(&daily_status(4.0, 8.0), &next, &RUNGS, &mut shown).is_some());
+        assert!(!shown.iter().any(|k| k.contains("1000000")));
+    }
+
+    #[test]
+    fn without_a_monthly_budget_the_daily_line_names_only_the_month() {
+        let m = MonthStatus::new(
+            100.0,
+            1_000_000,
+            1_000_000 + 30 * 86_400,
+            1_000_000 + 20 * 86_400,
+            None,
+            true,
+            Today {
+                start: 1_000_000 + 19 * 86_400,
+                usd: 4.0,
+                days_left: 10,
+            },
+        );
+        let text = daily_message(&daily_status(4.0, 8.0), &m, &RUNGS, &mut Shown::new());
+        assert_eq!(
+            text.as_deref(),
+            Some(
+                "census: daily budget 50%: $4.00 of $8.00 today; month $100, at this pace the month ends near $150."
+            )
+        );
+    }
+
+    #[test]
+    fn a_projection_the_daily_line_states_is_not_repeated_in_the_monthly_line() {
+        let m = month(90.0, 10);
+        let mut stated = Shown::new();
+        assert_eq!(budget_message(&m, &mut stated, true), None);
+        let mut alone = Shown::new();
+        assert!(budget_message(&m, &mut alone, false).is_some_and(|s| s.contains("on course for")));
     }
 
     #[test]
     fn the_budget_warns_at_eighty_percent_once_and_again_when_used_up() {
         let mut shown = Shown::new();
-        assert_eq!(budget_message(&month(100.0, 20), &mut shown), None);
-        let warn = budget_message(&month(170.0, 20), &mut shown).unwrap();
+        assert_eq!(budget_message(&month(100.0, 20), &mut shown, false), None);
+        let warn = budget_message(&month(170.0, 20), &mut shown, false).unwrap();
         assert!(warn.starts_with("census: monthly budget 85% used ($170 of $200, 10 days left"));
-        assert_eq!(budget_message(&month(175.0, 20), &mut shown), None);
-        let full = budget_message(&month(205.0, 21), &mut shown).unwrap();
+        assert_eq!(budget_message(&month(175.0, 20), &mut shown, false), None);
+        let full = budget_message(&month(205.0, 21), &mut shown, false).unwrap();
         assert!(full.contains("monthly budget used up ($205 of $200"));
     }
 
     #[test]
     fn a_projection_over_the_budget_is_said_once_after_three_days() {
         let mut shown = Shown::new();
-        assert_eq!(budget_message(&month(60.0, 2), &mut shown), None);
-        let said = budget_message(&month(60.0, 6), &mut shown).unwrap();
+        assert_eq!(budget_message(&month(60.0, 2), &mut shown, false), None);
+        let said = budget_message(&month(60.0, 6), &mut shown, false).unwrap();
         assert!(said.contains("on course for $300 by month end"));
-        assert_eq!(budget_message(&month(61.0, 6), &mut shown), None);
+        assert_eq!(budget_message(&month(61.0, 6), &mut shown, false), None);
     }
 
     #[test]
     fn a_new_month_shows_the_budget_levels_again() {
         let mut shown = Shown::new();
-        assert!(budget_message(&month(170.0, 20), &mut shown).is_some());
+        assert!(budget_message(&month(170.0, 20), &mut shown, false).is_some());
         let mut next = month(170.0, 20);
         next.start += 31 * 86_400;
-        assert!(budget_message(&next, &mut shown).is_some());
+        assert!(budget_message(&next, &mut shown, false).is_some());
     }
 
     fn five_hour(used: f64, elapsed: u64) -> Option<String> {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Owns updating and removing the running tool binary from the capsa GitHub releases.
-//! [`update`] and [`uninstall`] return values for the tool to print; nothing here prints.
+//! [`update`] and [`uninstall`] return values; `run` and `uninstall_run` print them through
+//! `render::emit` in the output format the tool was given.
 
 mod archive;
 #[cfg(feature = "clap")]
@@ -12,9 +13,15 @@ mod release;
 mod tests;
 
 use std::fmt;
+use std::io;
 use std::path::PathBuf;
 
+use serde::Serialize;
+
 use crate::exit::Outcome;
+use crate::format::Format;
+use crate::hint::ResultExt;
+use crate::render::{Doc, Mark, Render, Status, emit};
 
 #[cfg(feature = "clap")]
 pub use args::{UninstallArgs, UpdateArgs};
@@ -43,7 +50,8 @@ pub enum Mode {
 }
 
 /// Records what an update found or did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum State {
     /// [`Mode::Check`] found a newer release.
     Available,
@@ -53,8 +61,8 @@ pub enum State {
     Updated,
 }
 
-/// Holds the result of [`update`]; its `Display` is the line the tool prints.
-#[derive(Debug, Clone)]
+/// Holds the result of [`update`]; its agent view is the `Display` line.
+#[derive(Debug, Clone, Serialize)]
 pub struct Report {
     pub tool: &'static str,
     pub current: String,
@@ -97,17 +105,50 @@ impl fmt::Display for Report {
     }
 }
 
+impl Render for Report {
+    fn doc(&self, doc: &mut Doc) {
+        let (status, word) = match self.state {
+            State::Available => (Status::Warn, "update available"),
+            State::Current => (Status::Ok, "current"),
+            State::Updated => (Status::Ok, "updated"),
+        };
+        doc.title(format!("{} self update", self.tool));
+        doc.marks([Mark {
+            status,
+            text: word.to_owned(),
+        }]);
+        if self.state == State::Updated {
+            doc.row("from").text(self.current.as_str());
+            doc.row("to").text(self.latest.as_str());
+        } else {
+            doc.row("installed").text(self.current.as_str());
+            doc.row("latest").text(self.latest.as_str());
+        }
+        doc.row("binary").text(self.exe.display().to_string());
+        if self.state == State::Available {
+            doc.hint(format!("run {} self update", self.tool));
+        }
+    }
+
+    fn agent(&self, out: &mut dyn io::Write) -> io::Result<()> {
+        writeln!(out, "{self}")
+    }
+}
+
 /// Replaces the running binary with the newest release of `tool` according to `mode`.
+///
+/// A GitHub token from `GITHUB_TOKEN` or `gh auth token` is sent when there is one; it only lifts
+/// the GitHub rate limit for anonymous requests.
 ///
 /// # Errors
 ///
-/// Fails without a GitHub token, on a network or release problem, when the checksum does not
-/// match (nothing is written then), and when the binary cannot be replaced.
+/// Fails on a network or release problem, when the checksum does not match (nothing is written
+/// then), and when the binary cannot be replaced.
 pub fn update(tool: &Tool, mode: Mode) -> Result<Report, UpdateError> {
     let exe = binary::resolve()?;
     binary::forget_old(&exe);
-    let token = release::token()?;
-    let newest = release::newest(tool, &token)?;
+    let token = release::token();
+    let newest = release::newest(tool, token.as_deref())?;
     let latest = newest.version(tool).to_owned();
     let newer = release::version(&latest) > release::version(tool.version);
     let install = match mode {
@@ -119,8 +160,8 @@ pub fn update(tool: &Tool, mode: Mode) -> Result<Report, UpdateError> {
         let target = release::target()?;
         let (ext, bin) = archive::kind(tool);
         let name = release::archive_name(tool.name, target, ext);
-        let data = newest.download(&name, &token)?;
-        let sum = newest.download(&format!("{name}.sha256"), &token)?;
+        let data = newest.download(&name, token.as_deref())?;
+        let sum = newest.download(&format!("{name}.sha256"), token.as_deref())?;
         archive::verify(&data, &String::from_utf8_lossy(&sum))?;
         binary::replace(&exe, tool.name, &archive::extract(&data, ext, &bin)?)?;
     }
@@ -139,7 +180,7 @@ pub fn update(tool: &Tool, mode: Mode) -> Result<Report, UpdateError> {
 }
 
 /// Records the binary [`uninstall`] removed, or would remove.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Removal {
     pub path: PathBuf,
     pub removed: bool,
@@ -153,6 +194,22 @@ impl fmt::Display for Removal {
             "would remove"
         };
         write!(f, "{verb} {}", self.path.display())
+    }
+}
+
+impl Render for Removal {
+    fn doc(&self, doc: &mut Doc) {
+        doc.title("self uninstall");
+        let label = if self.removed {
+            "removed"
+        } else {
+            "would remove"
+        };
+        doc.row(label).text(self.path.display().to_string());
+    }
+
+    fn agent(&self, out: &mut dyn io::Write) -> io::Result<()> {
+        writeln!(out, "{self}")
     }
 }
 
@@ -174,4 +231,46 @@ pub fn uninstall(tool: &Tool, dry_run: bool) -> Result<Removal, UpdateError> {
         path,
         removed: !dry_run,
     })
+}
+
+/// Runs `<tool> self update`: updates by `args`, prints the report in `format` and, unless it
+/// only checked, calls `after` so the tool can reinstall its skill.
+///
+/// # Errors
+///
+/// Fails as [`update`] does, and when `after` fails. The report is printed before `after` runs.
+#[cfg(feature = "clap")]
+pub fn run(
+    tool: &Tool,
+    args: UpdateArgs,
+    format: Format,
+    after: impl FnOnce(&Report) -> anyhow::Result<()>,
+) -> anyhow::Result<Outcome> {
+    let report = update(tool, args.mode()).hinted()?;
+    emit(&report, format)?;
+    if !args.check {
+        after(&report)?;
+    }
+    Ok(report.outcome(args.check))
+}
+
+/// Runs `<tool> self uninstall`: removes the binary, then runs `remove_extras` (the tool's own
+/// files) and prints the removal.
+///
+/// The binary goes first because its removal is the step that can fail late (a locked exe on
+/// Windows passes the check and then refuses the delete); a leftover skill file is harmless.
+///
+/// # Errors
+///
+/// Fails as [`uninstall`] does, and when `remove_extras` fails. A refused binary leaves the
+/// extra files in place.
+pub fn uninstall_run(
+    tool: &Tool,
+    dry_run: bool,
+    format: Format,
+    remove_extras: impl FnOnce(bool) -> anyhow::Result<()>,
+) -> anyhow::Result<Outcome> {
+    let removal = uninstall(tool, dry_run).hinted()?;
+    remove_extras(dry_run)?;
+    emit(&removal, format)
 }

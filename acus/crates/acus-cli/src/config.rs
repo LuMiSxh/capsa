@@ -2,16 +2,15 @@
 //! Runtime configuration: `config.toml` in the platform config dir (or `$ACUS_CONFIG`),
 //! overridden by `ACUS_*` environment variables.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Deserialize;
 use std::env::var;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub commands: Commands,
-    pub decide: Decide,
     pub ctx: Ctx,
     pub patch: Patch,
     pub guard: Guard,
@@ -56,29 +55,72 @@ impl Default for Guard {
     }
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-pub struct Decide {
-    pub enabled: Option<bool>,
-    /// Full endpoint, e.g. `https://api.typesafe.ai/v1/systemone`.
-    pub url: Option<String>,
-    pub model: Option<String>,
-    /// Name of the environment variable holding the bearer token.
-    pub api_key_env: Option<String>,
+/// Returns the config file: ACUS_CONFIG when set, else config.toml in the platform config directory.
+pub fn config_path() -> PathBuf {
+    var("ACUS_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| capsa_core::paths::config_dir("acus").join("config.toml"))
 }
 
+/// Loads the configuration; the ACUS_* variables override the file.
 pub fn load() -> Result<Config> {
-    let path = var("ACUS_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| capsa_core::paths::config_dir("acus").join("config.toml"));
-    let mut c: Config = match std::fs::read_to_string(&path) {
-        Ok(s) => {
-            toml::from_str(&s).with_context(|| format!("invalid config {}", path.display()))?
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
-        Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+    let mut c = read(&config_path())?;
+    overrides(&mut c);
+    Ok(c)
+}
+
+/// Loads the configuration like load, but a file that does not load gives the defaults at its
+/// path and the problem as text, so guard can still answer.
+pub fn load_or_default() -> (Config, Option<String>) {
+    let path = config_path();
+    let (mut c, problem) = match read(&path) {
+        Ok(c) => (c, None),
+        Err(e) => (
+            Config {
+                path,
+                ..Config::default()
+            },
+            Some(e.to_string()),
+        ),
     };
-    c.path = path;
+    overrides(&mut c);
+    (c, problem)
+}
+
+/// Reads the config file at path; a missing file counts as the defaults.
+fn read(path: &Path) -> Result<Config> {
+    let mut c: Config = match std::fs::read_to_string(path) {
+        Ok(s) => toml::from_str(&s).map_err(|e| invalid(path, &e))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
+        Err(e) => {
+            return Err(capsa_core::hint::Hinted::new(
+                format!("cannot read {}: {e}", path.display()),
+                format!(
+                    "make {} readable, or point ACUS_CONFIG at another file",
+                    path.display()
+                ),
+            )
+            .into());
+        }
+    };
+    c.path = path.to_path_buf();
+    Ok(c)
+}
+
+/// The error of a config file that does not parse, with the file as its fix.
+fn invalid(path: &Path, e: &toml::de::Error) -> anyhow::Error {
+    capsa_core::hint::Hinted::new(
+        format!("invalid config {}: {e}", path.display()),
+        format!(
+            "fix {} (the message gives the line) or delete it",
+            path.display()
+        ),
+    )
+    .into()
+}
+
+/// Applies ACUS_DISABLE, a comma-separated list of commands to refuse.
+fn overrides(c: &mut Config) {
     if let Ok(v) = var("ACUS_DISABLE") {
         c.commands.disabled.extend(
             v.split(',')
@@ -87,17 +129,4 @@ pub fn load() -> Result<Config> {
                 .map(Into::into),
         );
     }
-    if let Ok(v) = var("ACUS_DECIDE_ENABLED") {
-        c.decide.enabled = Some(!matches!(v.as_str(), "0" | "false" | "no" | "off"));
-    }
-    for (key, slot) in [
-        ("ACUS_DECIDE_URL", &mut c.decide.url),
-        ("ACUS_DECIDE_MODEL", &mut c.decide.model),
-        ("ACUS_DECIDE_API_KEY_ENV", &mut c.decide.api_key_env),
-    ] {
-        if let Ok(v) = var(key) {
-            *slot = Some(v);
-        }
-    }
-    Ok(c)
 }

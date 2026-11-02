@@ -1,5 +1,43 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.20.0]
+
+### Added
+
+- `acus self setup [--target claude|codex|all] [--dry-run]` installs the skill and registers the SessionStart and PreToolUse hooks in Claude Code's `settings.json` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`). A rerun changes nothing; `--dry-run` writes nothing.
+- `acus self doctor` checks the install, config file, skill, hooks and guard files, grouped as in the other capsa tools. `--json` is one value; exit 1 when a check fails.
+- `--agent` is a global flag, so `acus self update` and the other commands accept it like `--json` and `--human`.
+- Guard corpus for Windows: `scripts/guard-corpus.sh --windows` builds `crates/acus-guard/src/tests/corpus-windows.jsonl` from the Windows guard log, with PowerShell and Git Bash calls, cwds and project roots normalised to `C:\repo`. The golden test `windows_corpus_decisions_are_golden` replays it. Names listed in the private redact file are replaced before the privacy filter.
+
+### Changed
+
+- `self update` works without a GitHub token; a token only lifts the rate limit.
+- Dependencies updated (similar 2 → 3, zip 8 → 9, and the other crates to their latest releases).
+- `acus self skill --install --agent NAME` is now `--target claude|codex|all` (hard rename, no alias). An older acus running `self update` launches the new binary with `--agent claude`, which fails once with the hint `run acus self skill --install`; run it once by hand, or install the new binary with the installer.
+- `acus self update` and `acus self uninstall` print one JSON value under `--json`; the skill lines of uninstall are left out in that mode.
+- Setup honours `CLAUDE_CONFIG_DIR` for the settings file; the skill still goes to `~/.claude/skills/acus/`.
+- Guard: rewrites check the folded command from a single parse instead of parsing it again; decisions are unchanged. Median of 200 `acus guard` runs per payload, ms before → after: pass 72 → 71 and 69; rewrite 68 → 71 and 79 (two runs each, on a busy machine).
+- Guard: hint pruning runs at most once a day, tracked by a `.pruned` marker file in the state directory.
+- Guard: the scope's working directory and repository root are resolved on first use, not when the scope is built.
+- `acus patch`: formatter binaries are found with the shared PATH lookup (PATHEXT aware) and looked up once per patch run.
+- Guard: `guard.jsonl` lines are written by `capsa_core::log`: `ts`, then `level` (`info`) and `event` (`decision`), then the same fields. Lines from before still parse, census reads both, and rotation is unchanged (4 MB to `guard.jsonl.old`). Median of 200 `acus guard` runs per payload, ms before → after: pass 70.5 → 68; rewrite 71.5 → 70.
+- Human output (`--human` on a terminal) of `files`, `log` and `diff` is aligned: `files` shows a table of paths and line counts with a total, `log` a titled table of commits, and `diff` lines up the file headers' paths and counts. Agent and `--json` output are unchanged.
+- Colour comes from the shared palette (`capsa_core::render`): section headers are bold without colour, and dim notes use the same dim style as before.
+
+### Removed
+
+- `acus decide` and the `acus-decide` crate.
+- `acus self skill --install --hooks`; use `acus self setup`.
+- `acus self skill --agent NAME`; use `--target` (see Changed).
+
+### Fixed
+
+- Guard: a broken config no longer blocks the hook. Guard runs with the defaults and reports the error once per session as added context; other commands exit 2 with a hint naming the config file.
+- `path not found` now carries a hint in `show`, `outline`, `find`, `follow` and `blame`.
+- Colour in human output is off when `NO_COLOR` is set and non-empty, as in the other capsa tools; before, only the terminal check applied.
+
 ## [0.19.0]
 
 ### Changed

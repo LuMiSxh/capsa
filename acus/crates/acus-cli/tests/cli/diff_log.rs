@@ -123,6 +123,81 @@ fn untracked_files_are_marked_question_and_staged_new_files_a() {
 }
 
 #[test]
+fn diff_human_view_aligns_file_counts() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        d.path().join("a.rs"),
+        "fn f() {\n    one()\n}\n\nfn gone() {}\n",
+    )
+    .unwrap();
+    git(d.path(), &["init", "-q"]);
+    git(d.path(), &["add", "."]);
+    git(d.path(), &["commit", "-qm", "x"]);
+    std::fs::write(d.path().join("a.rs"), "fn f() {\n    two()\n}\n").unwrap();
+    std::fs::write(d.path().join("new.md"), "# Hi\n").unwrap();
+    assert_eq!(
+        acus_in(d.path(), &["diff", "--human"], ""),
+        (
+            0,
+            "M a.rs    +1 -3\n  fn f 1-3 +1 -1\n  (top level) -1\n  fn gone (removed) -1\n? new.md     +1\n== 2 files +2 -3\n".into(),
+            String::new()
+        )
+    );
+}
+
+#[test]
+fn log_human_view_aligns_commits_in_a_table() {
+    let d = tempfile::tempdir().unwrap();
+    git(d.path(), &["init", "-q"]);
+    std::fs::write(d.path().join("a.rs"), "fn f() {\n    1\n}\n").unwrap();
+    git_at(d.path(), "2026-01-01T10:00:00+0000", &["add", "."]);
+    git_at(
+        d.path(),
+        "2026-01-01T10:00:00+0000",
+        &["commit", "-qm", "first"],
+    );
+    std::fs::write(d.path().join("a.rs"), "fn f() {\n    2\n}\n").unwrap();
+    git_at(d.path(), "2026-01-02T10:00:00+0000", &["add", "."]);
+    git_at(
+        d.path(),
+        "2026-01-02T10:00:00+0000",
+        &["commit", "-qm", "second: two"],
+    );
+    let h2 = git(d.path(), &["rev-parse", "--short=7", "HEAD"])
+        .trim()
+        .to_owned();
+    let h1 = git(d.path(), &["rev-parse", "--short=7", "HEAD~1"])
+        .trim()
+        .to_owned();
+    let (code, out, err) = acus_in(d.path(), &["log", "--human", "-n", "2"], "");
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert_eq!(
+        out,
+        format!(
+            "2 commits\n\n  commit   date        author   changes  subject\n  {h2}  2026-01-02  t       +1 -1 1f  second: two\n  {h1}  2026-01-01  t       +3 -0 1f  first\n  more: -n N; one commit's changes: acus diff REV^..REV\n"
+        )
+    );
+}
+
+#[test]
+fn human_views_print_no_ansi_under_no_color() {
+    let d = tempfile::tempdir().unwrap();
+    git(d.path(), &["init", "-q"]);
+    std::fs::write(d.path().join("a.rs"), "fn f() {}\n").unwrap();
+    git(d.path(), &["add", "."]);
+    git(d.path(), &["commit", "-qm", "x"]);
+    std::fs::write(d.path().join("a.rs"), "fn f() {\n}\n").unwrap();
+    let check = |args: &[&str]| {
+        let (code, out, err) = acus_in_env(d.path(), args, "", &[("NO_COLOR", "1")]);
+        assert_eq!((code, err.as_str()), (0, ""), "{args:?}");
+        assert!(!out.contains('\x1b'), "{args:?}: {out:?}");
+    };
+    check(&["diff", "--human", "-p"]);
+    check(&["log", "--human"]);
+    check(&["files", "--human", "--lines"]);
+}
+
+#[test]
 fn oneline_and_stat_are_accepted_as_no_ops() {
     let d = tempfile::tempdir().unwrap();
     git(d.path(), &["init", "-q"]);

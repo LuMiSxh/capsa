@@ -35,6 +35,7 @@ impl Engine {
 
     /// Handles a line from the agent; same guarantee as [`Engine::on_client`].
     pub fn on_agent(&mut self, raw: &[u8], now: Instant) -> Vec<Action> {
+        self.summary = None;
         let forward = |raw: &[u8]| Action::ToClient {
             line: raw.to_vec(),
             synthesized: false,
@@ -187,7 +188,9 @@ impl Engine {
                     s.turn_started = Some(now);
                     self.roster.on_prompt(sid);
                     if let Some(held) = held {
-                        return self.on_message_send(sid, &msg, raw, &held, now);
+                        let mut out = self.on_message_send(sid, &msg, raw, &held, now);
+                        out.extend(self.reassert_cards(sid, now));
+                        return out;
                     }
                 }
                 forward()
@@ -272,6 +275,9 @@ impl Engine {
                 forward(),
             ];
         };
+        if self.want_summary {
+            self.summary = crate::log::summarize_message(&msg);
+        }
         let mut out = match self.agent_request(&msg, now) {
             Ok(notes) => notes,
             Err(done) => return done,

@@ -6,6 +6,8 @@ use crate::git::git;
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::render::{Align, Doc, Table};
+use std::io;
 use std::path::Path;
 
 #[derive(clap::Args)]
@@ -77,6 +79,10 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         println!("{}", serde_json::to_string(&rows)?);
         return Ok(Outcome::Found);
     }
+    if out.format == Format::Human {
+        print_human(&commits, out)?;
+        return Ok(Outcome::Found);
+    }
     for c in &commits {
         let stat = match c.files {
             0 => String::new(),
@@ -100,6 +106,47 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         ))
     );
     Ok(Outcome::Found)
+}
+
+/// The human view: a titled table of commits with aligned columns, then the follow-up commands.
+fn print_human(commits: &[Commit], out: &Out) -> io::Result<()> {
+    let mut doc = Doc::default();
+    doc.title(format!(
+        "{} commit{}",
+        commits.len(),
+        if commits.len() == 1 { "" } else { "s" }
+    ));
+    let rows: Vec<Vec<String>> = commits
+        .iter()
+        .map(|c| {
+            let stat = match c.files {
+                0 => String::new(),
+                n => format!("{} {n}f", changed(c.add, c.del)),
+            };
+            vec![
+                c.hash.clone(),
+                c.date.clone(),
+                c.author.clone(),
+                stat,
+                c.subject.clone(),
+            ]
+        })
+        .collect();
+    doc.table(Table {
+        head: ["commit", "date", "author", "changes", "subject"]
+            .map(str::to_owned)
+            .into(),
+        align: vec![
+            Align::Left,
+            Align::Left,
+            Align::Left,
+            Align::Right,
+            Align::Left,
+        ],
+        rows,
+    });
+    doc.line("more: -n N; one commit's changes: acus diff REV^..REV");
+    out.doc(&doc)
 }
 
 fn changed(add: usize, del: usize) -> String {

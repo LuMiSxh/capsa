@@ -27,7 +27,7 @@ impl Release {
     }
 
     /// Downloads the asset `name`.
-    pub(super) fn download(&self, name: &str, token: &str) -> Result<Vec<u8>, UpdateError> {
+    pub(super) fn download(&self, name: &str, token: Option<&str>) -> Result<Vec<u8>, UpdateError> {
         let url = asset_url(&self.json, name).ok_or_else(|| UpdateError::MissingAsset {
             tag: self.tag.clone(),
             name: name.to_owned(),
@@ -54,16 +54,24 @@ fn http(url: &str, source: ureq::Error) -> UpdateError {
 }
 
 /// Returns the token from `GITHUB_TOKEN`, else from `gh auth token`, as the installers
-/// resolve it.
+/// resolve it, or `None` when neither gives one.
 ///
 /// `gh auth token` is the only program this module starts.
-pub(super) fn token() -> Result<String, UpdateError> {
-    std::env::var("GITHUB_TOKEN")
-        .ok()
-        .map(|t| t.trim().to_owned())
+pub(super) fn token() -> Option<String> {
+    resolve_token(std::env::var("GITHUB_TOKEN").ok(), gh_token)
+}
+
+pub(super) fn resolve_token(
+    env: Option<String>,
+    gh: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    env.map(|t| t.trim().to_owned())
         .filter(|t| !t.is_empty())
-        .or_else(gh_token)
-        .ok_or(UpdateError::NoToken)
+        .or_else(gh)
+}
+
+pub(super) fn authorization(token: Option<&str>) -> Option<String> {
+    token.map(|t| format!("Bearer {t}"))
 }
 
 fn gh_token() -> Option<String> {
@@ -74,10 +82,11 @@ fn gh_token() -> Option<String> {
 }
 
 /// Returns the newest release of `tool` that is neither a draft nor a prerelease.
-pub(super) fn newest(tool: &Tool, token: &str) -> Result<Release, UpdateError> {
+pub(super) fn newest(tool: &Tool, token: Option<&str>) -> Result<Release, UpdateError> {
     for page in 1..=MAX_PAGES {
         let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=100&page={page}");
-        let releases: Vec<Value> = send(&url, token, "application/vnd.github+json")?
+        let releases: Vec<Value> = send(&url, token, "application/vnd.github+json")
+            .map_err(|err| listing_error(err, tool))?
             .body_mut()
             .read_json()
             .map_err(|source| http(&url, source))?;
@@ -89,6 +98,15 @@ pub(super) fn newest(tool: &Tool, token: &str) -> Result<Release, UpdateError> {
         }
     }
     Err(UpdateError::NoRelease { tool: tool.name })
+}
+
+/// Reports a 404 on the release list as a missing release; GitHub answers 404 for a repository
+/// or list it does not show to the caller.
+pub(super) fn listing_error(err: UpdateError, tool: &Tool) -> UpdateError {
+    match err.status() {
+        Some(404) => UpdateError::NoRelease { tool: tool.name },
+        _ => err,
+    }
 }
 
 /// Picks the published release of `tool` with the highest version, whatever order GitHub lists
@@ -131,22 +149,23 @@ pub(super) fn asset_url(release: &Value, name: &str) -> Option<String> {
     asset["url"].as_str().map(String::from)
 }
 
-/// Sends an authenticated GET; the repository is private, so every request needs the token.
+/// Sends a GET, with the token as `Authorization` when there is one.
 fn send(
     url: &str,
-    token: &str,
+    token: Option<&str>,
     accept: &str,
 ) -> Result<ureq::http::Response<ureq::Body>, UpdateError> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .user_agent(format!("capsa/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .into();
-    agent
-        .get(url)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Accept", accept)
-        .call()
-        .map_err(|source| http(url, source))
+    let mut request = agent.get(url).header("Accept", accept);
+    // The ureq default RedirectAuthHeaders::Never keeps the token off redirect targets, such as
+    // the asset storage host.
+    if let Some(value) = authorization(token) {
+        request = request.header("Authorization", value);
+    }
+    request.call().map_err(|source| http(url, source))
 }
 
 /// Parses `v` into numbers that order `0.10.1` above `0.9.3`; non-numeric suffixes are ignored.

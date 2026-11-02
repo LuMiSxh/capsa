@@ -155,16 +155,16 @@ pub fn show_blob(rev: &str, file: &str, path: &str) -> Result<String> {
     String::from_utf8(o.stdout).map_err(|_| anyhow!("{path}: binary file, not shown"))
 }
 
-/// `path not found`, with a hint when the path reads like `REV:path` but `REV` is no revision.
+/// `path not found`, with a hint: a `REV:path` whose REV is no revision names that revision, and
+/// any other path is looked up from the working directory.
 pub fn not_found(path: &str) -> anyhow::Error {
-    match path.split_once(':') {
-        Some((rev, _)) if !Path::new(rev).is_file() => capsa_core::hint::Hinted::new(
-            format!("path not found: {path}"),
-            format!("`{rev}` is not a revision (a commit, branch or tag)"),
-        )
-        .into(),
-        _ => anyhow!("path not found: {path}"),
-    }
+    let hint = match path.split_once(':') {
+        Some((rev, _)) if !Path::new(rev).is_file() => {
+            format!("`{rev}` is not a revision (a commit, branch or tag)")
+        }
+        _ => "paths are relative to the working directory; `acus files` lists them".to_owned(),
+    };
+    capsa_core::hint::Hinted::new(format!("path not found: {path}"), hint).into()
 }
 
 #[cfg(test)]

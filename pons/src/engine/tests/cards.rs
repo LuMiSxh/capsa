@@ -327,3 +327,110 @@ fn without_subagent_text_only_the_long_cap_finishes() {
     // The notice is for confirmed finishes only.
     assert!(notices_in(&out).is_empty());
 }
+
+#[test]
+fn a_monitor_as_the_last_call_keeps_the_card_open_until_its_timeout() {
+    let t0 = Instant::now();
+    let mut e = engine();
+    e.on_client(&prompt(1), t0);
+    e.on_agent(&real_parent("A"), t0);
+    e.on_agent(&real_launch_result("A"), t0);
+    e.on_agent(&child_text("A", "Watching the log."), t0 + secs(1));
+    e.on_agent(
+        &monitor("A", "m1", json!({"timeout_ms": 300_000})),
+        t0 + secs(2),
+    );
+    e.on_agent(&kid_end("A", "m1"), t0 + secs(3));
+    // Past the 60 s idle wait after a tool result, and the card still runs.
+    for at in [60, 100, 331] {
+        let out = e.tick(t0 + secs(at));
+        assert!(!updates_for(&out, "A").iter().any(is_card_done), "at {at}");
+    }
+    assert!(e.folds.running_background("s").contains(&"A".to_owned()));
+    let out = e.tick(t0 + secs(332));
+    assert!(updates_for(&out, "A").iter().any(is_card_done));
+}
+
+#[test]
+fn a_monitor_keeps_a_silent_subagent_open_past_the_quiet_cap() {
+    let t0 = Instant::now();
+    let mut e = Engine::new(Config {
+        subagent_text: false,
+        subagent_max_quiet: secs(600),
+        ..test_config()
+    });
+    e.on_client(&initialize(false), t0);
+    e.on_client(&prompt(1), t0);
+    e.on_agent(&real_parent("A"), t0);
+    e.on_agent(&real_launch_result("A"), t0);
+    e.on_agent(
+        &monitor("A", "m1", json!({"timeout_ms": 1_000_000})),
+        t0 + secs(2),
+    );
+    e.on_agent(&kid_end("A", "m1"), t0 + secs(3));
+    assert!(!e.tick(t0 + secs(1_031)).iter().any(is_finish_note));
+    let out = e.tick(t0 + secs(1_032));
+    assert!(
+        out.iter().any(
+            |x| matches!(x, Action::Note(n) if n.contains("finished (quiet-cap, provisional)"))
+        )
+    );
+}
+
+#[test]
+fn a_monitor_without_a_timeout_keeps_the_card_open_for_thirty_minutes() {
+    let t0 = Instant::now();
+    let mut e = engine();
+    e.on_client(&prompt(1), t0);
+    e.on_agent(&real_parent("A"), t0);
+    e.on_agent(&real_launch_result("A"), t0);
+    e.on_agent(&monitor("A", "m1", json!({})), t0 + secs(2));
+    e.on_agent(&kid_end("A", "m1"), t0 + secs(3));
+    assert!(
+        !updates_for(&e.tick(t0 + secs(1_831)), "A")
+            .iter()
+            .any(is_card_done)
+    );
+    assert!(
+        updates_for(&e.tick(t0 + secs(1_832)), "A")
+            .iter()
+            .any(is_card_done)
+    );
+}
+
+#[test]
+fn a_marker_ends_a_card_with_a_running_monitor_only_when_no_other_qualifies() {
+    let t0 = Instant::now();
+    let mut e = two_background(t0);
+    e.on_agent(
+        &monitor("A", "m1", json!({"timeout_ms": 300_000})),
+        t0 + secs(2),
+    );
+    e.on_agent(&kid_end("A", "m1"), t0 + secs(2));
+    // B qualifies, so the first notification ends B and A keeps its monitor.
+    e.on_agent(&task_notification(), t0 + secs(3));
+    assert!(e.folds.is_finished("B"));
+    assert!(!e.folds.is_finished("A"));
+    // Only A is left: the next notification ends it.
+    e.on_agent(&task_notification(), t0 + secs(4));
+    assert!(e.folds.is_finished("A"));
+}
+
+#[test]
+fn a_stop_ends_a_card_whose_monitor_is_still_running() {
+    let t0 = Instant::now();
+    let mut e = two_background(t0);
+    e.on_agent(
+        &monitor("A", "m1", json!({"timeout_ms": 300_000})),
+        t0 + secs(2),
+    );
+    e.on_agent(&kid_end("A", "m1"), t0 + secs(2));
+    e.on_client(&cancel(), t0 + secs(5));
+    let out = e.on_client(&cancel(), t0 + secs(6));
+    assert!(
+        updates_for(&out, "A")
+            .iter()
+            .any(|m| m["params"]["update"]["status"] == "failed")
+    );
+    assert!(e.folds.running_background("s").is_empty());
+}

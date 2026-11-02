@@ -120,6 +120,38 @@ impl Engine {
         ]
     }
 
+    /// Asserts the running background cards of `sid` to the client again after a
+    /// message dropped the held cancel. Zed had answered that cancel's turn as
+    /// `cancelled` and marked its open tool calls, the cards included, finished,
+    /// while the subagents kept running.
+    pub(super) fn reassert_cards(&mut self, sid: &str, now: Instant) -> Vec<Action> {
+        // ponytail: unverified in Zed. This assumes Zed accepts a tool_call_update
+        // that sets in_progress again for a toolCallId of a turn it already ended as
+        // cancelled. The plan is sent again in full after the cards, which assumes Zed
+        // replaces its entries with a plan sent after a cancelled turn. To check: run Zed
+        // with two background subagents, send a message during the run, and confirm
+        // both cards and the plan stay in progress. If Zed ignores the update, the
+        // cards must be re-asserted with the next prompt's response instead.
+        let cards = self.folds.reassert_running(sid, now);
+        if cards.is_empty() {
+            return Vec::new();
+        }
+        let mut out = vec![Action::Note(format!(
+            "message sent while subagents run: asserted {} running background subagent(s) of {sid} again, the cancelled response had marked them stopped",
+            cards.len()
+        ))];
+        out.extend(cards.iter().map(synthesized));
+        if self.cfg.roster && self.cfg.fold {
+            out.extend(
+                self.roster
+                    .resend(sid, &self.folds, now)
+                    .as_ref()
+                    .map(synthesized),
+            );
+        }
+        out
+    }
+
     /// Handles a prompt that arrived while a cancel was held: the user sent a message, so
     /// the cancel is dropped and the subagents live on. The prompt is steered
     /// into the running turn, or forwarded to queue behind it.

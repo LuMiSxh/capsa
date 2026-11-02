@@ -31,6 +31,12 @@ async fn native_subagent_support_makes_pons_step_aside() {
     // Child updates arrive flat and the parent is untouched.
     assert_eq!(seen.iter().filter(|m| has_flat_child_update(m)).count(), 3);
     assert!(seen.iter().all(|m| folded_text(m).is_none()), "{seen:?}");
+    // Info lines are buffered: pons writes them out when it exits.
+    drop(h.stdin);
+    tokio::time::timeout(std::time::Duration::from_secs(10), h.child.wait())
+        .await
+        .expect("pons exits")
+        .unwrap();
     let text = std::fs::read_to_string(&log).unwrap();
     let _ = std::fs::remove_file(&log);
     assert_eq!(text.matches("stepping aside").count(), 1, "{text}");

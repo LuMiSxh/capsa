@@ -75,27 +75,3 @@ pub fn parse_ps(text: &str, own: u32) -> Vec<Proc> {
 pub fn is_stale(p: &Proc, exe_age: Option<u64>) -> bool {
     exe_age.is_some_and(|age| p.age_secs > age.saturating_add(5))
 }
-
-pub(super) fn processes_section(out: &mut String, r: &Report) {
-    let _ = writeln!(out, "\nRunning pons");
-    if r.processes.is_empty() {
-        let _ = writeln!(out, "  no running pons proxy found");
-    }
-    for p in &r.processes {
-        let old = is_stale(p, r.exe_age_secs);
-        let _ = writeln!(
-            out,
-            "  pid {}: running for {}{}",
-            p.pid,
-            human_secs(p.age_secs),
-            if old {
-                " - STALE: started before the installed binary changed, restart the agent in Zed"
-            } else {
-                ""
-            }
-        );
-    }
-    if let Some(age) = r.exe_age_secs {
-        let _ = writeln!(out, "  installed binary changed {} ago", human_secs(age));
-    }
-}

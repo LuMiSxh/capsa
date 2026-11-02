@@ -1,137 +1,75 @@
 <div align="center">
+<img src="../.github/assets/acus.svg" width="112" height="112" alt="Acus logo" />
 
 # Acus
 
-**Code search, outline and editing for coding agents.** Acus answers a search, read and edit chain in one call. Output is grouped by symbol, and every truncation names the command that shows the rest.
+**Code search, outline and editing for coding agents.** Hits are grouped by the function or type they sit in, `--block` prints those bodies, symbols are addressed by name instead of guessed line numbers, and every truncation names the command that shows the rest.
 
-*rem acu tetigisti*: you hit it with the needle.
+[![Rust 1.99+](https://img.shields.io/badge/Rust-1.99%2B-41c4ad?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-41c4ad?style=flat-square&labelColor=23252a)
+[![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-41c4ad?style=flat-square&labelColor=23252a)](../LICENSE)
+[![Version](https://img.shields.io/badge/version-0.19.0-41c4ad?style=flat-square&labelColor=23252a)](CHANGELOG.md)
 
-[![Rust 1.99+](https://img.shields.io/badge/Rust-1.99%2B-477acc?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-477acc?style=flat-square&labelColor=23252a)
-[![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-477acc?style=flat-square&labelColor=23252a)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.17.0-477acc?style=flat-square&labelColor=23252a)](CHANGELOG.md)
-
-**[Install](#install)** · [Commands](#commands) · [Agent setup](#agent-setup) · [Changelog](CHANGELOG.md)
+**[capsa](../README.md)** · [Changelog](CHANGELOG.md)
 
 </div>
 
-## Why
-
-Coding agents spend a surprising share of their turns finding code: a search, then a read of the file, then a second read because the first window was too small. Each step costs a round trip and puts lines into the context that nobody needed.
-
-Acus answers that chain in one call. Search hits come grouped by the function or type they sit in, `--block` prints those bodies, and symbols are addressed by name instead of guessed line numbers:
-
-```console
-$ acus find 'fn spawn_blocking' --block
-$ acus show src/runtime/handle.rs#Handle::spawn_blocking src/lib.rs:40-80
-```
-
-When output is cut short, the last line names the command that shows the rest.
+Acus is one of the [tools in capsa](../README.md#tools). It answers a coding agent's search, read and edit chain in one call.
 
 ## Install
 
-Acus is distributed from the private repository [LuMiSxh/capsa](https://github.com/LuMiSxh/capsa), which replaces the former repository LuMiSxh/Acus. Its root `install.sh` and `install.ps1` need a GitHub token with read access: set `GITHUB_TOKEN`, for example `export GITHUB_TOKEN=$(gh auth token)` after `gh auth login`.
+Acus is distributed from [LuMiSxh/capsa](https://github.com/LuMiSxh/capsa), which replaces the former LuMiSxh/Acus repository. See [Install](../README.md#install) in the capsa README for the installer options.
 
 macOS and Linux, acus only:
 
 ```sh
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/LuMiSxh/capsa/main/install.sh | sh -s -- acus
+curl -fsSL https://raw.githubusercontent.com/LuMiSxh/capsa/main/install.sh | sh -s -- acus
 ```
 
-Windows (PowerShell), which installs every tool; to get only acus, save the script and run `.\install.ps1 acus`:
+Windows (PowerShell) installs every tool; to get only acus, save the script and run `.\install.ps1 acus`:
 
 ```powershell
-$h = @{ Authorization = "Bearer $env:GITHUB_TOKEN" }
-irm -Headers $h https://raw.githubusercontent.com/LuMiSxh/capsa/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/LuMiSxh/capsa/main/install.ps1 | iex
 ```
 
-Both installers download the newest `acus-v*` release to `~/.local/bin` (`CAPSA_INSTALL_DIR` changes that), add it to `PATH` and run `acus self skill --install`, which writes the agent skill to `~/.claude/skills/acus/` and `~/.agents/skills/acus/`. Set `CAPSA_NO_SKILL=1` (or `ACUS_NO_SKILL=1`) to skip the skill. Release binaries include `acus decide`.
+Both installers put the newest `acus-v*` release in `~/.local/bin` (`CAPSA_INSTALL_DIR` changes that), add it to `PATH` and install the agent skill to `~/.claude/skills/acus/` and `~/.agents/skills/acus/`. `CAPSA_NO_SKILL=1` (or `ACUS_NO_SKILL=1`) skips the skill. Then run `acus self setup` to register the hooks; see [Guard and agent setup](#guard-and-agent-setup).
 
-From source, with Rust 1.88 or newer:
+Build from source, with the toolchain pinned in `rust-toolchain.toml` (see [Build from source](../README.md#build-from-source)):
 
 ```sh
-cargo install --path crates/acus-cli --features cmd-decide
-acus self skill --install
-```
-
-Commands about acus itself are `acus self <action>`; everything else is top-level.
-
-`acus self update` replaces the binary where it is installed with the latest release when that is newer (checked against the release's SHA-256), then reinstalls the skill so it matches the binary; `--check` only reports, `--force` reinstalls the latest release. It needs the same token as the installers. The new binary is written beside the old one, synced and renamed over it; a symbolic link is resolved and the real binary is replaced. After a source build, run `acus self skill --install` yourself.
-
-`acus self uninstall` removes the installed skill and then the binary; `--dry-run` prints what would go. Hooks registered in `~/.claude/settings.json` stay: remove the acus entries by hand (they end in `|| true`, so they are harmless meanwhile).
-
-## Agent setup
-
-An installed skill is only listed by its description, so agents often fall back to grep and cat. Loading the skill at session start and letting a hook steer the remaining habits fixes most of that.
-
-**Claude Code.** One command registers both hooks in `~/.claude/settings.json`. It keeps a `.bak` of the old file and everything else in it, and a rerun replaces the acus entries instead of duplicating them:
-
-```sh
-acus self skill --install --hooks
-```
-
-- `SessionStart` prints the skill at every start, `/clear` and compaction. It has no project map, because [overviews in context files did not help agents find the relevant files and raised cost](https://arxiv.org/abs/2602.11988). Agents run `acus map` when they need the layout.
-- `PreToolUse` runs `acus guard` on Bash, PowerShell, Read, Grep and Glob calls. It rewrites a command into an exact acus call when it can, and otherwise refuses it and names the acus command to use. Literal `sed -i` edits of one file become `acus patch`, `acus … | head -N` becomes `--head N`, and `cat`, `tail` and `grep` of a background task's output file become `acus ctx --log FILE`. The rules are in [docs/guard.md](docs/guard.md).
-
-Escape hatches:
-
-- A refused command runs anyway with a `command ` prefix (Bash) or a trailing `# acus-skip` comment (both shells).
-- Every decision, escapes included, is logged to `guard.jsonl` next to the config file. `census usage --guard` counts them per rule and lists the escaped calls.
-- The hook command ends in `|| true`, so calls pass when acus is missing or `guard` is disabled in the configuration.
-
-Hooks apply to subagents too. Subagents do not see SessionStart output, so preload the skill in each custom agent's frontmatter, and give read-only agents `Bash` so they can run it:
-
-```yaml
-tools: Read, Glob, Grep, Bash
-skills:
-  - acus
-```
-
-The built-in Explore agent cannot preload skills; a custom agent with the same role can.
-
-**Codex.** Codex has no session hooks, and its hooks cannot rewrite commands, so they always refuse. Add a line to `~/.codex/AGENTS.md`:
-
-```markdown
-Search and read code with `acus` instead of grep/rg/find/cat/sed -n (`acus find 'PAT' --block`, `acus outline PATH`, `acus show path#Symbol path:A-B`), edit with one `acus patch`, and run builds and tests via `acus ctx` (alone for the project's tests, or `acus ctx 'COMMAND'`).
+cargo install --path acus/crates/acus-cli
+acus self setup
 ```
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `acus find PATTERN [PATH...]` | Regex search, hits grouped by enclosing symbol; `--block` adds the bodies; `-w`, `-l`, `-t`, `-u`, `-i`, `-F` and `-g` work as in rg; `-c`, `-o`, `-v`, `-m`, `-A/-B/-C`, `--include` and `--exclude` work as in grep; `-x` matches whole lines, `-L` follows symlinks and `-U` allows multiline patterns; an address (`path:A-B`, `path:N-`, `path:-N`, `path:LINE` or `path#Symbol`) in place of a path searches only that range, with file-absolute line numbers, and ignores `-g`/`-t`; `--cut N` clips each hit line to N characters (default 200); `--last N` keeps the last N hits per file, after `-m` |
-| `acus files [PATH...]` | Lists files, respecting `.gitignore`: `-g GLOB`, `--hidden`, `-u` (also ignored files), `-t TYPE`, `-L` (follow symlinks), `--lines` (line count per file and a total; `--json` for scripts) |
-| `acus outline PATH...` | Symbols of a file or directory with kinds and line ranges; `-k fn,struct` keeps only the given kinds |
-| `acus show ADDR...` | Symbols, line ranges, whole files, the last N lines (`path:-N`) or the lines from N to the end (`path:N-`), numbered; `REV:path` reads a file as of a git revision (`REV:./path` from the current directory) |
-| `acus blame ADDR` | Who last changed each run of lines of a symbol or range, one line per commit; `--json` for scripts. Reads the working tree, so `REV:path` is not accepted |
-| `acus follow ADDR` | Who calls a symbol, recursively (`-d N`, default 2); `--down` lists what it calls, resolved to definitions in the repo. Syntactic only: calls are matched by name, so dynamic and trait dispatch, function references and implicit calls are missed. A `?` edge is a name match, shown but not followed; `--all` lifts the caps; `--json` for scripts |
-| `acus patch` | Applies a patch from stdin, all or nothing, and prints the written lines; `--check` validates and reports what would change, `--diff` prints a unified diff |
-| `acus ctx ['COMMAND']` | Runs a build or test, drops progress noise, colour codes, passing tests and library stack frames, and shows the code behind every `path:line` in its output. Without a command it runs the project's tests (detected from Cargo.toml, Package.swift, go.mod, package.json or pytest files). `--tail N` keeps the last N lines plus every failure block, `--grep RE` keeps the matching lines, and `-A/-B/-C` add context to `--grep`. `--timeout SECS` kills the command, keeps the output so far and exits 124. When output is cut, the full log is saved to a temp file and its path printed |
-| `acus diff [REV] [PATH...]` | Uncommitted changes per function or type, with untracked files; `-p` adds the lines, `--staged` and `A..B` work as in git; without REV, a footer names the staged changes |
-| `acus log [REV] [PATH...]` | One line per commit with date, author and changed lines; `-n` sets the count (default 15); `REV` can be `A..B` |
-| `acus run` | Several of the above in one process, one command line per stdin line (or a JSON list of argument lists) |
+Everything is top-level except the management commands under `acus self` (see [Self](#self)).
 
-| `acus decide QUESTION` | Yes/no, choice or score answer from a Jev-compatible API; without an API key it warns and exits 2 |
-| `acus map [DIR]` | Directory tree with file and line counts within a token budget (`--budget 400`): the largest directories open first, chains and single-file directories are rolled up, and small directories list their files' top-level symbols; tests and docs open last |
-| `acus self skill` | Prints the bundled agent skill for a SessionStart hook; `--install` writes it for Claude Code and Codex, `--install --hooks` also registers the hooks |
-| `acus self update` | Replaces the binary with the latest GitHub release when newer and reinstalls the skill; `--check` exits 0 when an update exists, 1 when current |
-| `acus self uninstall` | Removes the installed skill and the binary; `--dry-run` only lists them |
-| `acus guard` | PreToolUse hook for Bash, PowerShell, Read, Grep and Glob. Rewrites the calls it can convert exactly into acus calls and refuses the rest, naming the acus command to use. See [docs/guard.md](docs/guard.md) |
+| Command                       | What it does                                                                                                                                                                                                                                                                                 |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `acus find PATTERN [PATH...]` | Regex search, hits grouped by enclosing symbol; `--block` adds the bodies. `-w -l -t -u -i -F -g` work as in rg; `-c -o -v -m -A/-B/-C --include --exclude` as in grep; `-x` whole lines, `-L` follows symlinks, `-U` multiline. An address (`path:A-B`, `path:N-`, `path:-N`, `path:LINE`, `path#Symbol`) in place of a path searches only that range, with file-absolute line numbers (`-g`/`-t` are ignored). `--cut N` clips hit lines (default 200); `--last N` keeps the last N hits per file |
+| `acus files [PATH...]`        | Lists files, respecting `.gitignore`: `-g GLOB`, `--hidden`, `-u` (also ignored files), `-t TYPE`, `-L`, `--lines` (line count per file and a total; `--json`)                                                                                                                          |
+| `acus outline PATH...`        | Symbols of a file or directory with kinds and line ranges; `-k fn,struct` keeps only those kinds                                                                                                                                                                                             |
+| `acus show ADDR...`           | Symbols, line ranges, whole files, `path:-N` (last N lines) or `path:N-` (line N to the end), numbered; `REV:path` reads a file as of a git revision (`REV:./path` from the current directory)                                                                                                  |
+| `acus blame ADDR`             | Who last changed each run of lines, one line per commit; `--json`. Reads the working tree, so `REV:path` is not accepted                                                                                                                                                                    |
+| `acus follow ADDR`            | Recursive callers (`-d N`, default 2); `--down` lists callees resolved to repo definitions; `--all` lifts the caps; `--json`. Syntactic only: calls are matched by name, so dynamic and trait dispatch, function references and implicit calls are missed. A `?` edge is a name match, shown but not followed |
+| `acus patch`                  | Applies a patch from stdin, all or nothing, and prints the written lines; `--check` validates, `--diff` prints a unified diff (see [Patches](#patches))                                                                                                                                      |
+| `acus ctx ['COMMAND']`        | Runs a build or test; drops progress noise, colour codes, passing tests and library frames, and shows the code behind each `path:line`. Without a command it runs the project's tests (detected from Cargo.toml, Package.swift, go.mod, package.json or pytest files). `--tail N` keeps the last N lines and every failure block; `--grep RE` keeps matching lines (`-A/-B/-C` add context); `--timeout SECS` kills the command, keeps the output so far and exits 124. When output is cut, the full log is saved to a temp file and its path printed |
+| `acus diff [REV] [PATH...]`   | Uncommitted changes per function or type, with untracked files; `-p` adds the lines; `--staged` and `A..B` work as in git; without REV a footer names the staged changes                                                                                                                       |
+| `acus log [REV] [PATH...]`    | One line per commit (date, author, changed lines); `-n` sets the count (default 15); `REV` can be `A..B`                                                                                                                                                                                     |
+| `acus run`                    | Several of the above in one process: one command per stdin line, or a JSON list of argument lists                                                                                                                                                                                           |
+| `acus map [DIR]`              | Directory tree with file and line counts within a token budget (`--budget 400`): the largest directories open first, chains roll up, small directories list their top-level symbols; tests and docs open last                                                                                |
+| `acus guard`                  | PreToolUse hook for Bash, PowerShell, Read, Grep and Glob: rewrites calls it can convert exactly into acus calls, refuses the rest and names the acus command to use. See [Guard and agent setup](#guard-and-agent-setup) and [docs/guard.md](docs/guard.md)                                    |
 
-`acus log --oneline` and `acus diff --stat` are accepted as no-ops, for git habits.
+`acus log --oneline` and `acus diff --stat` are accepted as no-ops.
 
-Addresses look like `path#Type::method`, `path:10-40`, `path:10`, `path:-20` (the last 20 lines), `path:150-` (line 150 to the end) or just `path`. A unique suffix such as `#method` is enough, `Type.method` works too, and config keys nest with `::` (`config.yaml#server::port`). A symbol is shown with its doc comments, attributes and decorators.
+Addresses look like `path#Type::method`, `path:10-40`, `path:10`, `path:-20`, `path:150-` or just `path`. A unique suffix such as `#method` is enough, `Type.method` works too, and config keys nest with `::` (`config.yaml#server::port`). Symbols are understood for Rust, Swift, TypeScript (with TSX), JavaScript, Svelte, Python, Shell, C, CSS and SCSS (not on Windows), HTML, XML and plists, Markdown headings, and TOML, JSON and YAML keys; other files work with `find`, `files` and line ranges.
 
-Exit codes are 0 for results or success, 1 for an empty result when that command treats emptiness as no match, and 2 for errors. `find`, `files` and `log` with no matches exit 1, while `diff` with no changes exits 0. Empty `find`, `files`, `log` and `diff` results serialize as `null`. Errors carry a `hint:` line. `ctx` passes on the exit code of the command it ran.
-
-Output defaults to a compact agent format. `--json` and `--human` are there for scripts and people.
-
-Symbols are understood for Rust, Swift, TypeScript (with TSX), JavaScript, Svelte, Python, Shell (`.sh`, `.bash`, `.zsh`), C (`.c`, `.h`), CSS and SCSS (not on Windows), HTML, XML and plists (`.xml`, `.plist`, `.xib`, `.storyboard`; `Info.plist#CFBundleIdentifier` resolves a plist key), Markdown headings, and TOML, JSON and YAML keys. Every other file still works with `find`, `files` and line ranges.
+Output is a compact agent format by default. `--agent`, `--human` and `--json` choose it explicitly, before or after the command; `--human` adds colour on a terminal and `NO_COLOR` turns colour off. Exit codes: 0 for results or success, 1 for nothing found, 2 for errors, which carry a `hint:` line. `find`, `files` and `log` with no matches exit 1, `diff` with no changes exits 0, and empty results serialize as `null` in JSON. `ctx` passes on the exit code of the command it ran.
 
 ## Patches
 
-`acus patch` edits text the way Claude's Edit tool does. Under `*** Update File:`, a SEARCH/REPLACE block replaces one exact substring, part of a line or several lines. `*** Replace Symbol:` swaps out a whole function or type by name:
+`acus patch` edits text the way Claude's Edit tool does. A `SEARCH`/`REPLACE` block under `*** Update File:` replaces one exact substring, part of a line or several lines; `*** Replace Symbol:` swaps out a whole function or type by name:
 
 ```
 *** Begin Patch
@@ -145,71 +83,48 @@ Symbols are understood for Rust, Swift, TypeScript (with TSX), JavaScript, Svelt
 +    fn reset(&mut self) {
 +        self.pos = 0;
 +    }
-*** Add File: notes.md
-+hello
-*** Delete File: old.rs
 *** End Patch
 ```
 
-The old text must occur exactly once in the file. With no match the error shows the nearest lines; with several it lists their line numbers, so add a neighbouring line to the block to narrow the search. Several blocks per file and several files per patch apply all or nothing. If the text is not found as written, acus also accepts it with `acus show` line-number prefixes stripped, ignoring trailing whitespace or ignoring leading indentation (tabs vs spaces, with REPLACE written in the file's indentation), and prints a `note:`. `+` prefixes only the new lines of Replace Symbol, Insert Before/After and Add File; SEARCH/REPLACE text has none.
+- The old text must occur exactly once. With no match the error shows the nearest lines; with several it lists their line numbers, so add a neighbouring line. If the text is not found as written, acus also accepts it with `acus show` line-number prefixes stripped, ignoring trailing whitespace or leading indentation, and prints a `note:`.
+- Blocks and files apply all or nothing, and each file is replaced atomically. Before writing, each file that tree-sitter supports is parsed: a patch that adds syntax errors fails and names the first new error's line (`--allow-broken` writes anyway).
+- `+` prefixes only the new lines of Replace Symbol, Insert Before/After and Add File. A multi-line SEARCH matches a CRLF file as LF and writes CRLF back, with a `note:`.
+- `--check` validates and reports what would change; `--diff` prints a unified diff (with `--check`, a preview). `--fmt` (or `[patch] fmt = true`) runs the file's formatter if one is installed (rustfmt, ruff or black, prettier, swift-format, gofmt) and prints the formatted lines.
+- Further directives (`acus patch --help` has the syntax):
+    - `*** Replace All: PATH...` changes every occurrence, also part of a line, in files, directories and globs (`*.py`); it fails if a block matches nowhere. A `<<<<<<< REGEX` block is a Rust regex per file with `(?m)`, and `${1}` is the replacement's group.
+    - `*** Insert Before:` and `*** Insert After:` take `path#Symbol` or `path:N` and put the `+` lines above the symbol's doc comments and attributes, or below the symbol.
+    - `*** Copy File: SRC` with `*** To: DST` copies a file and fails if DST exists.
+    - `*** Delete Symbol:` and `*** Move Symbol:` carry doc comments and attributes along. A move goes `*** Before:` or `*** After:` another symbol, or `*** To:` the end of a file (created if needed).
+    - `*** Delete Lines: PATH:A-B` and `*** Move Lines: PATH:A-B` cut or move lines by number. The next line is `*** Expect:` with the exact text of line A, so a stale range fails; a move then takes `*** After: PATH:N` (0 for the file start) or `*** After: PATH#Sym`. Line numbers refer to the file before the patch, so these run first.
 
-Before writing, acus parses each file that tree-sitter supports. A patch that gives a file more syntax errors than it had fails as a whole and names the first new error's line. `--allow-broken` writes the file anyway. A multi-line SEARCH matches a CRLF file as LF text, writes the REPLACE with CRLF line endings and prints a `note:`.
+## Guard and agent setup
 
-Agents that would otherwise write a `sed -i` line or a small Python script get a few more directives:
+Agents fall back to grep and cat when a skill is only listed by its description. Loading the skill at session start and letting a hook steer the rest fixes most of that.
 
+**Claude Code.** `acus self setup` installs the skill and registers both hooks in `settings.json` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), keeping a `.bak` of the old file; a rerun changes nothing when they are current. `--target claude|codex|all` picks the skill directories (`codex` is refused, since the hooks are Claude Code's), and `--dry-run` prints what would change.
+
+- `SessionStart` prints the skill at every start, `/clear` and compaction. It has no project map, because [overviews in context files did not help agents find the relevant files and raised cost](https://arxiv.org/abs/2602.11988); agents run `acus map` for the layout.
+- `PreToolUse` runs `acus guard` on Bash, PowerShell, Read, Grep and Glob. It rewrites a command into an exact acus call when it can, and otherwise refuses it and names the acus command. Literal `sed -i` edits of one file become `acus patch`, `acus … | head -N` becomes `--head N`, and `cat`, `tail` and `grep` of a background task's output file become `acus ctx --log FILE`. The rules are in [docs/guard.md](docs/guard.md).
+
+Escape hatches: a refused command runs anyway with a `command ` prefix (Bash) or a trailing `# acus-skip` comment (both shells). Every decision, escapes included, is logged to `guard.jsonl` next to the config file; `census usage --guard` counts them per rule. The hook command ends in `|| true`, so calls pass when acus is missing or when `guard` is listed under `[commands] disabled`.
+
+Hooks apply to subagents too, but subagents do not see SessionStart output. Preload the skill in each custom agent's frontmatter, and give read-only agents `Bash` so they can run it. The built-in Explore agent cannot preload skills; a custom agent with the same role can.
+
+```yaml
+tools: Read, Glob, Grep, Bash
+skills:
+    - acus
 ```
-*** Replace All: src *.py
-<<<<<<< SEARCH
-old_name(
-=======
-new_name(
->>>>>>> REPLACE
-<<<<<<< REGEX
-fn (\w+)_old\(
-=======
-fn ${1}_new(
->>>>>>> REPLACE
-*** Delete Symbol: src/lib.rs#unused
-*** Move Symbol: src/lib.rs#helper
-*** After: src/util.rs#main
-*** Insert Before: src/lib.rs#parse
-+// Parses one expression.
-*** Copy File: src/lib.rs
-*** To: src/lib_copy.rs
+
+**Codex.** Codex has no session hooks, and its hooks cannot rewrite commands, so they always refuse. Add this line to `~/.codex/AGENTS.md`:
+
+```markdown
+Search and read code with `acus` instead of grep/rg/find/cat/sed -n (`acus find 'PAT' --block`, `acus outline PATH`, `acus show path#Symbol path:A-B`), edit with one `acus patch`, and run builds and tests via `acus ctx` (alone for the project's tests, or `acus ctx 'COMMAND'`).
 ```
-
-SEARCH/REPLACE is the format Aider made popular. `*** Replace All: PATH [PATH...]` changes every occurrence, also part of a line, in the space-separated files, directories and globs after it (a glob such as `*.py` matches below the current directory), and fails if a block matches nowhere. A block is `<<<<<<< SEARCH` (literal, whitespace-exact, may span lines) or `<<<<<<< REGEX` (a Rust regex run per file with `(?m)`; `${1}` in the replacement). `acus patch --help` shows the syntax. `*** Insert Before:` and `*** Insert After:` take `path#Symbol` (or `path:N`) and put the `+` lines above the symbol's doc comments and attributes, or below the symbol. `*** Copy File: SRC` with `*** To: DST` copies a file and fails if DST exists. `Delete Symbol` and `Move Symbol` carry doc comments and attributes along; a move goes `*** Before:` or `*** After:` another symbol, or `*** To:` the end of a file, which is created if needed. `*** Delete Lines: PATH:A-B` and `*** Move Lines: PATH:A-B` cut or move lines by number; the next line is `*** Expect:` with the exact text of line A, so a stale range fails instead of cutting other lines, and a move then takes `*** After: PATH:N` (0 for the file start) or `*** After: PATH#Sym`. Line numbers refer to the file before the patch, so these run first and the other directives apply in order to the result.
-
-Nothing is written unless every block applies. Files are replaced atomically. `--check` only validates and reports what would change, and `--diff` prints a unified diff instead of the written lines (with `--check` it is a preview). `--fmt` (or `[patch] fmt = true`) runs each written file through its formatter if one is installed (rustfmt with the crate's edition, ruff or black, the project's prettier, swift-format, gofmt) and prints the formatted lines, so line numbers and context stay true for the next patch.
-
-## Numbers
-
-Measured with [hyperfine](https://github.com/sharkdp/hyperfine) on an Apple M4. The small corpus is tokio (564 files), the large one a full Cargo registry (80,197 files, 1.8 GB).
-
-| Task | acus | Compared with |
-| --- | --- | --- |
-| Literal search without hits, tokio | 9.6 ms | rg 10.1 ms, grep 20.0 ms |
-| Literal search without hits, registry | 2.08 s | rg 2.21 s, grep 6.66 s |
-| Regex search with hits, registry | 1.60 s | rg 1.64 s |
-| Find a definition plus its body, tokio | 9.8 ms | ast-grep 54.5 ms |
-| Outline of every file, tokio | 81 ms | ctags 67 ms |
-| Outline of every Rust file, registry | 15.7 s | ctags 20.0 s |
-
-What the agent has to read matters more than milliseconds. For one function in tokio:
-
-| Approach | Bytes |
-| --- | --- |
-| `acus show handle.rs#Handle::spawn_blocking` | 384 |
-| `acus outline handle.rs` | 974 |
-| `acus find --block` (all hits with bodies) | 5,132 |
-| `cat handle.rs` | 26,550 |
-| `rg -C20` (hits with guessed context) | 58,501 |
-
-Criterion benchmarks for the core paths live in `crates/acus-cli/benches`.
 
 ## Configuration
 
-`config.toml` is read from `$ACUS_CONFIG`, otherwise from `~/Library/Application Support/acus/` on macOS, `%APPDATA%\acus\` on Windows and `$XDG_CONFIG_HOME/acus/` elsewhere.
+`config.toml` is read from `$ACUS_CONFIG`, else from `~/Library/Application Support/acus/` (macOS), `%APPDATA%\acus\` (Windows) or `$XDG_CONFIG_HOME/acus/`.
 
 ```toml
 [commands]
@@ -224,19 +139,40 @@ fmt = true                                          # as if every patch had --fm
 
 [guard]
 hint_every = 10                                     # repeated guard hints: 1st, 11th, 21st… call per session and rule; 1 = every time
-
-[decide]
-enabled = true
-url = "https://openrouter.ai/api/alpha/decisions"   # or https://api.typesafe.ai/v1/systemone
-model = "~typesafe/jev-latest"                      # "jev-latest" when talking to TypeSafe directly
-api_key_env = "OPENROUTER_API_KEY"                  # TYPESAFE_API_KEY when talking to TypeSafe directly
 ```
 
-`acus ctx --drop REGEX` does the same for a single run. The other settings can also come from the environment: `ACUS_DISABLE=usage,decide`, `ACUS_DECIDE_ENABLED`, `ACUS_DECIDE_URL`, `ACUS_DECIDE_MODEL` and `ACUS_DECIDE_API_KEY_ENV`.
+`acus ctx --drop REGEX` does the same for one run. `ACUS_DISABLE` (comma-separated, e.g. `ACUS_DISABLE=usage`) adds to `[commands] disabled`.
 
-Language support is compiled in through the features `lang-rust`, `lang-swift`, `lang-ts`, `lang-python`, `lang-markdown`, `lang-svelte`, `lang-data`, `lang-shell`, `lang-c`, `lang-css`, `lang-scss`, `lang-html` and `lang-xml`, all on by default. Leave some out for a smaller binary.
+Languages are compiled in through the features `lang-rust`, `lang-swift`, `lang-ts`, `lang-python`, `lang-markdown`, `lang-svelte`, `lang-data`, `lang-shell`, `lang-c`, `lang-css`, `lang-scss`, `lang-html` and `lang-xml`; the guard's shell grammars through `guard-bash`, `guard-zsh` and `guard-powershell`. All are on by default. Without a grammar the guard falls back to a simpler splitter that guards less precisely and rewrites nothing for Bash. The zsh grammar adds about 4.8 MB and the PowerShell one about 1 MB. To keep only what you need, pass `--no-default-features` and list the features, for example `cargo install --path crates/acus-cli --no-default-features --features lang-rust,lang-python,lang-shell,guard-bash,cmd-update`.
 
-The guard reads shell commands with tree-sitter grammars, chosen by the features `guard-bash`, `guard-zsh` and `guard-powershell`, also all on by default. Under a zsh login shell (`$SHELL`, which is where Claude Code runs Bash-tool commands on a Mac) the guard uses the zsh grammar, otherwise the Bash one; the PowerShell tool uses the PowerShell grammar. A build without a grammar falls back to a simpler hand-written splitter for that shell, which guards less precisely and rewrites nothing for Bash. The zsh grammar adds about 4.8 MB to the binary and the PowerShell one about 1 MB; for example `cargo install --path crates/acus-cli --no-default-features --features lang-rust,lang-python,lang-shell,guard-bash` keeps only the Bash grammar (list the `lang-*` and `cmd-update` features you want too, because `--no-default-features` drops them all).
+## Self
+
+`acus self <action>` manages acus itself.
+
+| Command               | What it does                                                                                                                                                                                 |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `acus self setup`     | Installs the skill and registers the SessionStart and PreToolUse hooks in Claude Code's settings; `--target claude\|codex\|all`, `--dry-run`                                                 |
+| `acus self doctor`    | Checks the install, config, skill, hooks and guard files, one line per check with a hint for each failure; `--json`. Exit 1 when a check fails, 0 when only warnings remain                    |
+| `acus self skill`     | Prints the bundled agent skill for a SessionStart hook (`--full` prints the whole skill); `--install --target claude\|codex\|all` writes it                                                  |
+| `acus self update`    | Replaces the binary with the latest GitHub release when newer, then reinstalls the skill; `--check` exits 0 when an update exists, 1 when current; `--force` reinstalls the latest release. Sends a token when one is available (`GITHUB_TOKEN`, else `gh auth token`). It only lifts GitHub's rate limit; none is required |
+| `acus self uninstall` | Removes the installed skill and the binary; `--dry-run` only lists them                                                                                                                      |
+
+Hooks registered in `~/.claude/settings.json` stay after an uninstall: remove the acus entries by hand (they end in `|| true`, so they are harmless meanwhile).
+
+## Benchmarks
+
+Measured with [hyperfine](https://github.com/sharkdp/hyperfine) on an Apple M4. The small corpus is tokio (564 files), the large one a full Cargo registry (80,197 files, 1.8 GB). Run locally with `cargo bench -p acus-cli` (Criterion benches in `crates/acus-cli/benches`).
+
+| Task                                   | acus   | Compared with            |
+| -------------------------------------- | ------ | ------------------------ |
+| Literal search without hits, tokio     | 9.6 ms | rg 10.1 ms, grep 20.0 ms |
+| Literal search without hits, registry  | 2.08 s | rg 2.21 s, grep 6.66 s   |
+| Regex search with hits, registry       | 1.60 s | rg 1.64 s                |
+| Find a definition plus its body, tokio | 9.8 ms | ast-grep 54.5 ms         |
+| Outline of every file, tokio           | 81 ms  | ctags 67 ms              |
+| Outline of every Rust file, registry   | 15.7 s | ctags 20.0 s             |
+
+What the agent reads matters more than milliseconds: for one tokio function, `acus show` returns 384 bytes, `acus outline` 974, `acus find --block` 5,132, `cat` 26,550 and `rg -C20` 58,501.
 
 ## Development
 
@@ -247,25 +183,10 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-cargo bench -p acus-cli
 ```
 
-The benchmark runs locally only.
-
-Releases are built by the `Release` workflow: bump the version in `Cargo.toml`, add a `CHANGELOG.md` section, merge, then run the workflow with the tag (`v0.14.0`). It builds macOS (arm64, x86_64), Windows (x86_64) and Linux (x86_64, arm64) archives with checksums.
-
-| Crate | Role |
-| --- | --- |
-| `acus-cli` | The `acus` binary, output formats and the `run` batch mode |
-| `acus-walk` | Parallel file walking that respects `.gitignore`, plus globs |
-| `acus-search` | Search with enclosing-symbol context, built on the ripgrep crates |
-| `acus-syntax` | tree-sitter outlines and symbol lookup |
-| `acus-edit` | Patch parsing and atomic application |
-
-| `acus-decide` | Client for Jev-compatible decision APIs |
+Release notes go in [CHANGELOG.md](CHANGELOG.md); the release process is under [Releases](../README.md#releases) in the capsa README.
 
 ## License
 
-Acus is licensed under the [Mozilla Public License 2.0](LICENSE).
-
-Copyright © 2026 LuMiSxh. Claude Code, Codex and Jev belong to their respective owners.
+Acus is licensed under the [Mozilla Public License 2.0](../LICENSE). Copyright © 2026 LuMiSxh. Claude Code and Codex belong to their respective owners.

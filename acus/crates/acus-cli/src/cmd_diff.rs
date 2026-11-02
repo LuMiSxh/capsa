@@ -261,21 +261,28 @@ fn print_text_files(
     let mut budget = Budget::new(a.head.map(|n| n as usize));
     let cut = a.cut.map(|n| n as usize);
     let mut printed = 0;
+    // The human view lines up the paths and the counts of the file headers.
+    let path_w = rendered
+        .iter()
+        .map(|(f, _)| file_path(f).chars().count())
+        .max()
+        .unwrap_or(0);
+    let count_w = rendered
+        .iter()
+        .map(|(f, _)| counts(total(f, true), total(f, false)).chars().count())
+        .max()
+        .unwrap_or(0);
     for (i, (f, gs)) in rendered.iter().enumerate() {
-        let path = match (&f.old, &f.new) {
-            (Some(o), Some(n)) if o != n => format!("{o} -> {n}"),
-            (o, n) => n.clone().or(o.clone()).unwrap_or_default(),
+        let path = file_path(f);
+        let count = counts(total(f, true), total(f, false));
+        let head = if out.format == Format::Human {
+            let binary = if f.binary { " (binary)" } else { "" };
+            format!("{} {path:<path_w$}  {count:>count_w$}{binary}", status(f))
+        } else {
+            let binary = if f.binary { "(binary)" } else { "" };
+            format!("{} {path} {count}{binary}", status(f))
         };
-        let mut block = vec![
-            out.header(&format!(
-                "{} {path} {}{}",
-                status(f),
-                counts(total(f, true), total(f, false)),
-                if f.binary { "(binary)" } else { "" }
-            ))
-            .trim_end()
-            .to_owned(),
-        ];
+        let mut block = vec![out.header(&head).trim_end().to_owned()];
         for g in gs {
             if !g.label.is_empty() {
                 let range = match g.range {
@@ -353,6 +360,14 @@ fn staged_footer(paths: &[String]) -> Result<Option<String>> {
     }
     line += " (acus diff --staged)";
     Ok(Some(line))
+}
+
+/// The path a file header names: `old -> new` for a rename.
+fn file_path(f: &FileDiff) -> String {
+    match (&f.old, &f.new) {
+        (Some(o), Some(n)) if o != n => format!("{o} -> {n}"),
+        (o, n) => n.clone().or(o.clone()).unwrap_or_default(),
+    }
 }
 
 fn status(f: &FileDiff) -> &'static str {

@@ -249,10 +249,7 @@ fn resolve_target(raw: &str) -> Result<Node> {
         .into());
     };
     let path = addr.path.as_str();
-    let src = std::fs::read_to_string(path).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => anyhow::anyhow!("path not found: {path}"),
-        _ => anyhow::anyhow!("{path}: {e}"),
-    })?;
+    let src = crate::source::read_text(path)?;
     let lang = Lang::from_path(Path::new(path));
     let supported = lang.is_some_and(calls::supports_calls);
     let Some((outline, _)) = lang

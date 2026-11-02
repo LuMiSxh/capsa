@@ -30,7 +30,7 @@ pub fn default_dir(os: &str, env: impl Fn(&str) -> Option<OsString>) -> PathBuf 
 
 /// Returns the wire log for this start, or `None` when logging is off. `--no-log`
 /// wins; an explicit `--log` path is used as given. Otherwise a new
-/// `pons-<local time>-<pid>.log` is created in `dir` (default: `default_dir`)
+/// `pons-<local time>-<pid>.jsonl` is created in `dir` (default: `default_dir`)
 /// and older ones beyond the newest `KEEP_LOGS` are removed.
 pub fn target(explicit: Option<&Path>, no_log: bool, dir: Option<&Path>) -> Option<PathBuf> {
     if no_log {
@@ -48,14 +48,17 @@ pub fn target(explicit: Option<&Path>, no_log: bool, dir: Option<&Path>) -> Opti
         return None;
     }
     let stamp = Local::now().format("%Y-%m-%dT%H-%M-%S");
-    let path = dir.join(format!("pons-{stamp}-{}.log", std::process::id()));
+    let path = dir.join(format!("pons-{stamp}-{}.jsonl", std::process::id()));
     prune(&dir, KEEP_LOGS, &path);
     Some(path)
 }
 
-/// Splits a `pons-<time>-<pid>.log` name into its `(time, pid)` key, `None` for any other name.
+/// Splits a `pons-<time>-<pid>.jsonl` (or older `.log`) name into its `(time, pid)` key.
 pub(super) fn log_key(name: &str) -> Option<(&str, u32)> {
-    let stem = name.strip_prefix("pons-")?.strip_suffix(".log")?;
+    let stem = name.strip_prefix("pons-")?;
+    let stem = stem
+        .strip_suffix(".jsonl")
+        .or_else(|| stem.strip_suffix(".log"))?;
     let (ts, pid) = stem.rsplit_once('-')?;
     let well_formed =
         ts.len() == "2026-10-14T22-06-01".len() && ts.starts_with(|c: char| c.is_ascii_digit());
@@ -70,7 +73,7 @@ pub fn resolve_dir(dir: Option<&Path>) -> PathBuf {
     )
 }
 
-/// Lists the `pons-<time>-<pid>.log` files in `dir`, with their `(time, pid)` keys.
+/// Lists the per-start logs in `dir`, with their `(time, pid)` keys.
 pub(super) fn logs_in(dir: &Path) -> Vec<((String, u32), PathBuf)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -94,7 +97,7 @@ pub fn newest_log(dir: Option<&Path>) -> Option<PathBuf> {
         .map(|(_, path)| path)
 }
 
-/// Removes the oldest `pons-<time>-<pid>.log` files in `dir` so that, with
+/// Removes the oldest per-start logs in `dir` so that, with
 /// `current` counted, at most `keep` remain. Other files are never touched.
 pub(super) fn prune(dir: &Path, keep: usize, current: &Path) {
     let mut logs = logs_in(dir);

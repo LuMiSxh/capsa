@@ -53,7 +53,7 @@ async fn repeated_failures_switch_the_session_to_passthrough() {
     let text = std::fs::read_to_string(&log).unwrap();
     let _ = std::fs::remove_file(&log);
     assert_eq!(
-        text.matches("pons fail-safe: rules failed").count(),
+        text.matches("\"fail-safe: rules failed").count(),
         3,
         "{text}"
     );

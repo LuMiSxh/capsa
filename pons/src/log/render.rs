@@ -30,7 +30,11 @@ pub(super) fn summarize_update(text: &str) -> Option<String> {
     if !text.contains("session/update") {
         return None;
     }
-    let msg: Value = serde_json::from_str(text).ok()?;
+    summarize_message(&serde_json::from_str(text).ok()?)
+}
+
+/// Summarizes an already parsed message like [`summarize_update`].
+pub fn summarize_message(msg: &Value) -> Option<String> {
     if msg.get("method")?.as_str()? != "session/update" {
         return None;
     }

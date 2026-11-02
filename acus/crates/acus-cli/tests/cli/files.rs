@@ -69,6 +69,31 @@ fn files_empty_glob_result_names_what_was_searched() {
 }
 
 #[test]
+fn files_human_view_aligns_line_counts_in_a_table() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.txt"), "x\ny\n").unwrap();
+    std::fs::write(d.path().join("bb.rs"), "fn f() {}\n").unwrap();
+    std::fs::write(d.path().join("c.bin"), b"\0\x01").unwrap();
+    assert_eq!(
+        acus_in(d.path(), &["files", "--human", "--lines"], ""),
+        (
+            0,
+            "  path   lines\n  a.txt      2\n  bb.rs      1\n  c.bin      -\n  total      3\n"
+                .into(),
+            String::new()
+        )
+    );
+    assert_eq!(
+        acus_in(d.path(), &["files", "--human"], ""),
+        (
+            0,
+            "  path\n  a.txt\n  bb.rs\n  c.bin\n".into(),
+            String::new()
+        )
+    );
+}
+
+#[test]
 fn files_skips_hidden_and_ignored_files_unless_asked() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("a.txt"), "").unwrap();

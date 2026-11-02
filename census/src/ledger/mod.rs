@@ -3,8 +3,10 @@
 //! days, hourly aggregates for the rest.
 //!
 //! State lives in one directory: `index.json` (read offsets per transcript), `rows.jsonl`,
-//! `hourly.jsonl` (first line `{"folded_before":T}`, rows before `T` live only here), and `lock`.
+//! `hourly.jsonl` (first line `{"folded_before":T}`, rows before `T` live only here),
+//! `digest.json` (the priced rows and aggregates the limits read, see `digest`), and `lock`.
 
+mod digest;
 mod error;
 mod fold;
 mod model;
@@ -14,6 +16,7 @@ mod scan;
 mod state;
 mod update;
 
+pub use digest::Priced;
 pub use error::LedgerError;
 pub use fold::PruneReport;
 pub use model::{Filter, Hourly, Row, Tokens, family_of};
@@ -112,8 +115,8 @@ impl Ledger {
         })
     }
 
-    /// Returns the ledger as it is in `state_dir`, without reading any transcript or taking the
-    /// writer lock.
+    /// Returns the ledger as it is in `state_dir`, without reading any transcript. The writer lock
+    /// is taken only to save a missing or stale digest.
     pub fn open(state_dir: &std::path::Path) -> Ledger {
         Ledger {
             layout: Layout::new(state_dir),
@@ -160,6 +163,25 @@ impl Ledger {
         Ok(self.hourly.get().map_or(&[], Vec::as_slice))
     }
 
+    /// Returns the list-price USD of the rows and aggregates. The digest is used when it is
+    /// current. Otherwise it is built from the ledger files, and saved when the writer lock is free.
+    ///
+    /// # Errors
+    /// Fails when a ledger file cannot be read.
+    pub fn priced(&self) -> Result<Priced, LedgerError> {
+        if let Some(digest) = digest::read(&self.layout) {
+            return Ok(digest.into_priced());
+        }
+        if let Some(_lock) = state::try_lock(&self.layout.lock, LOCK_WAIT)? {
+            let digest = digest::build(&self.layout, digest::unix_now())?;
+            // A failed save leaves the digest stale, and the next read builds it again.
+            let _ = digest::write(&self.layout, &digest);
+            return Ok(digest.into_priced());
+        }
+        let _guard = state::lock_shared(&self.layout.lock, LOCK_WAIT);
+        Ok(digest::build(&self.layout, digest::unix_now())?.into_priced())
+    }
+
     /// Counts, and unless `dry_run` removes, hourly aggregates and snapshots older than `before`.
     /// Raw rows are never pruned.
     ///
@@ -171,6 +193,10 @@ impl Ledger {
             return Err(LedgerError::Busy);
         };
         let report = fold::prune(&self.layout, before, dry_run)?;
+        if !dry_run {
+            // The digest holds the hourly aggregates too. The next read builds it again.
+            let _ = std::fs::remove_file(&self.layout.digest);
+        }
         self.hourly.take();
         Ok(report)
     }

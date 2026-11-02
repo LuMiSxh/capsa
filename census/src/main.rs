@@ -3,6 +3,7 @@
 
 mod cmd_config;
 mod cmd_context;
+mod cmd_doctor;
 mod cmd_hook;
 mod cmd_limits;
 mod cmd_prune;
@@ -15,28 +16,18 @@ mod setup;
 mod usage_views;
 
 use anyhow::Result;
-use capsa_core::exit::{Outcome, finish, report, reset_sigpipe};
-use capsa_core::format::{Format, resolve};
+use capsa_core::cli::{App, FormatArgs};
+use capsa_core::exit::Outcome;
+use capsa_core::format::Format;
 use clap::{Parser, Subcommand};
-use std::convert::Infallible;
 use std::process::ExitCode;
 
 /// Usage analytics for coding-agent sessions. Exit: 0 results, 1 nothing found, 2 error.
 #[derive(Parser)]
 #[command(name = "census", version)]
 struct Cli {
-    /// Output format: agent, human or json. Agent unless CAPSA_HUMAN=1 selects human.
-    #[arg(long, value_enum, global = true)]
-    format: Option<Format>,
-    /// Shorthand for --format json.
-    #[arg(long, global = true)]
-    json: bool,
-    /// Shorthand for --format human.
-    #[arg(long, global = true)]
-    human: bool,
-    /// Shorthand for --format agent.
-    #[arg(long, global = true)]
-    agent: bool,
+    #[command(flatten)]
+    output: FormatArgs,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -49,8 +40,7 @@ enum Cmd {
     Context(cmd_context::Args),
     /// Subscription limit windows (plan mode) or the spend of the month (budget mode).
     Limits,
-    /// Shows or sets the limit mode (plan or budget) and the monthly budget.
-    Config(cmd_config::Args),
+
     /// Summary of the current session: duration, cost, spawns per role, context and compactions.
     Session(cmd_session::Args),
     /// Records the limit snapshots of the statusLine input; `--line` prints the status line.
@@ -59,19 +49,14 @@ enum Cmd {
     Prune(cmd_prune::Args),
     /// Claude Code hook for UserPromptSubmit and PostToolUse: prints context and limit levels the main agent has not heard yet. Always exits 0.
     Hook,
-    /// Installation of census itself: `self skill`, `self setup`, `self update`, `self uninstall`.
+    /// Installation and health of census: `self skill|setup|config|doctor|update|uninstall`.
     #[command(name = "self")]
     Itself(cmd_self::Args),
 }
 
-impl Cli {
-    /// The output format: an explicit flag wins (json, human, agent), then `CAPSA_HUMAN`.
+impl App for Cli {
     fn format(&self) -> Format {
-        resolve(
-            self.human || self.format == Some(Format::Human),
-            self.json || self.format == Some(Format::Json),
-            self.agent || self.format == Some(Format::Agent),
-        )
+        self.output.resolve()
     }
 }
 
@@ -81,7 +66,7 @@ fn execute(cli: Cli, format: Format) -> Result<Outcome> {
         Cmd::Usage(a) => cmd_usage::run(a, &out),
         Cmd::Context(a) => cmd_context::run(&a, &out),
         Cmd::Limits => cmd_limits::run(&out),
-        Cmd::Config(a) => cmd_config::run(a, &out),
+
         Cmd::Session(a) => cmd_session::run(&a, &out),
         Cmd::Statusline(a) => Ok(cmd_statusline::run(&a)),
         Cmd::Prune(a) => cmd_prune::run(a, &out),
@@ -91,7 +76,8 @@ fn execute(cli: Cli, format: Format) -> Result<Outcome> {
 }
 
 /// Seconds since the Unix epoch, or 0 when the clock is before it. `CENSUS_NOW` replaces the clock
-/// so that the tests can fix it.
+/// so that the tests can fix it. `CENSUS_TZ_OFFSET_SECS` fixes the local offset (see `limits::clock`).
+/// `CENSUS_HOOK_DEADLINE_MS` replaces the hook's limits deadline (see `cmd_hook`).
 fn now_secs() -> u64 {
     std::env::var("CENSUS_NOW")
         .ok()
@@ -103,50 +89,6 @@ fn now_secs() -> u64 {
         })
 }
 
-/// Clap value parser for path arguments: `~` and `~/…` become $HOME, as a shell would expand them.
-fn home<T: From<String>>(arg: &str) -> Result<T, Infallible> {
-    Ok(T::from(capsa_core::paths::expand_home(arg)))
-}
-
-/// The error for a command line clap rejected, as one message.
-fn parse_error(e: &clap::Error) -> anyhow::Error {
-    anyhow::Error::msg(
-        e.to_string()
-            .trim()
-            .trim_start_matches("error: ")
-            .to_owned(),
-    )
-}
-
-/// The format of a command line clap could not parse, read from its raw flags.
-fn raw_format(args: &[String]) -> Format {
-    let has = |flag: &str| args.iter().any(|a| a == flag);
-    let value = args.iter().enumerate().find_map(|(i, a)| {
-        a.strip_prefix("--format=")
-            .or_else(|| (a == "--format").then(|| args.get(i + 1).map_or("", String::as_str)))
-    });
-    resolve(
-        has("--human") || value == Some("human"),
-        has("--json") || value == Some("json"),
-        has("--agent") || value == Some("agent"),
-    )
-}
-
 fn main() -> ExitCode {
-    // `census … | head` should end quietly like other CLI tools, not panic on a closed pipe.
-    reset_sigpipe();
-    let cli = match Cli::try_parse() {
-        Ok(cli) => cli,
-        // Help and version are output, not errors.
-        Err(e) if !e.use_stderr() => {
-            let _ = e.print();
-            return ExitCode::SUCCESS;
-        }
-        Err(e) => {
-            let args: Vec<String> = std::env::args().collect();
-            return report(&parse_error(&e), raw_format(&args));
-        }
-    };
-    let format = cli.format();
-    finish(execute(cli, format), format)
+    capsa_core::cli::main::<Cli>(execute)
 }

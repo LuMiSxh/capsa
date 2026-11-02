@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: MPL-2.0
+//! Keeps `digest.json`, the list-price USD of each raw request and hourly aggregate. The limits
+//! read it instead of the ledger files. The updater keeps it in step with `rows.jsonl` and
+//! `hourly.jsonl`. A digest that records other file sizes, or another census version, is stale.
+
+use super::error::LedgerError;
+use super::model::{Hourly, Row};
+use super::state::{self, Layout};
+use crate::usage::Tokens;
+use crate::usage::prices;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+type Result<T> = std::result::Result<T, LedgerError>;
+
+/// The list-price USD of each raw request and each hourly aggregate, in file order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Priced {
+    /// Request time and USD of each raw row.
+    pub raw: Vec<(u64, f64)>,
+    /// Hour start and USD of each hourly aggregate.
+    pub hourly: Vec<(u64, f64)>,
+}
+
+impl Priced {
+    /// Prices the rows and the aggregates. A model without a price counts as 0 USD.
+    pub fn of(rows: &[Row], hourly: &[Hourly]) -> Self {
+        Priced {
+            raw: rows.iter().map(|r| (r.t, row_usd(r))).collect(),
+            hourly: hourly.iter().map(|h| (h.hour, aggregate_usd(h))).collect(),
+        }
+    }
+
+    /// True when there are no raw rows and no aggregates.
+    pub fn is_empty(&self) -> bool {
+        self.raw.is_empty() && self.hourly.is_empty()
+    }
+}
+
+/// The digest as written. `rows_len` and `hourly_len` are the sizes of the ledger files it was
+/// built from or appended to, and `census` is the version whose prices the USD values use.
+#[derive(Serialize, Deserialize)]
+pub(super) struct Digest {
+    census: String,
+    /// Unix seconds of the last write.
+    updated: u64,
+    rows_len: u64,
+    hourly_len: u64,
+    /// Message id, time and USD of each raw row. The ids let the updater skip requests it has read.
+    raw: Vec<(String, u64, f64)>,
+    hourly: Vec<(u64, f64)>,
+}
+
+impl Digest {
+    /// Returns the message ids of the raw rows.
+    pub(super) fn ids(&self) -> HashSet<String> {
+        self.raw.iter().map(|(id, _, _)| id.clone()).collect()
+    }
+
+    pub(super) fn into_priced(self) -> Priced {
+        Priced {
+            raw: self.raw.into_iter().map(|(_, t, usd)| (t, usd)).collect(),
+            hourly: self.hourly,
+        }
+    }
+
+    /// Adds the rows the updater appended to `rows.jsonl`, which now has `rows_len` bytes.
+    pub(super) fn append(&mut self, rows: &[Row], rows_len: u64, now: u64) {
+        self.raw
+            .extend(rows.iter().map(|r| (r.id.clone(), r.t, row_usd(r))));
+        self.rows_len = rows_len;
+        self.updated = now;
+    }
+}
+
+/// Returns the size of `path`, or 0 when it is missing.
+pub(super) fn file_len(path: &Path) -> u64 {
+    std::fs::metadata(path).map_or(0, |m| m.len())
+}
+
+/// Returns the current unix time in seconds.
+pub(super) fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Returns the digest when this census version wrote it for the ledger files as they are now.
+pub(super) fn read(layout: &Layout) -> Option<Digest> {
+    let digest: Digest = serde_json::from_slice(&std::fs::read(&layout.digest).ok()?).ok()?;
+    let current = digest.census == env!("CARGO_PKG_VERSION")
+        && digest.rows_len == file_len(&layout.rows)
+        && digest.hourly_len == file_len(&layout.hourly);
+    current.then_some(digest)
+}
+
+/// Builds the digest from the ledger files. The sizes are read first, so a file that grows
+/// meanwhile makes the digest stale rather than wrong.
+pub(super) fn build(layout: &Layout, now: u64) -> Result<Digest> {
+    let (rows_len, hourly_len) = (file_len(&layout.rows), file_len(&layout.hourly));
+    let (folded, hourly) = state::load_hourly(&layout.hourly)?;
+    let rows = state::load_rows(&layout.rows, folded)?;
+    let priced = Priced::of(&rows, &hourly);
+    Ok(Digest {
+        census: env!("CARGO_PKG_VERSION").to_owned(),
+        updated: now,
+        rows_len,
+        hourly_len,
+        raw: rows
+            .into_iter()
+            .zip(priced.raw)
+            .map(|(r, (_, usd))| (r.id, r.t, usd))
+            .collect(),
+        hourly: priced.hourly,
+    })
+}
+
+/// Replaces `digest.json` with `digest`.
+pub(super) fn write(layout: &Layout, digest: &Digest) -> Result<()> {
+    state::write_atomic(&layout.digest, &serde_json::to_vec(digest)?)
+}
+
+fn row_usd(r: &Row) -> f64 {
+    let t = Tokens {
+        input: r.input,
+        cache_read: r.cache_read,
+        cache_write_5m: r.cache_write_5m,
+        cache_write_1h: r.cache_write_1h,
+        output: r.output,
+        requests: 1,
+    };
+    prices::request_cost(&r.model, &t).unwrap_or(0.0)
+}
+
+fn aggregate_usd(h: &Hourly) -> f64 {
+    let t = &h.tokens;
+    let t = Tokens {
+        input: t.input,
+        cache_read: t.cache_read,
+        cache_write_5m: t.cache_write_5m,
+        cache_write_1h: t.cache_write_1h,
+        output: t.output,
+        requests: t.requests,
+    };
+    prices::family_cost(&h.family, &t).unwrap_or(0.0)
+}

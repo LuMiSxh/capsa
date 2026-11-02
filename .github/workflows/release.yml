@@ -10,7 +10,6 @@ on:
         options:
           - acus
           - pons
-          - velum
           - census
       version:
         description: "Crate version without v, e.g. 0.16.2. Must match the tool's Cargo.toml and have a CHANGELOG.md section."
@@ -24,6 +23,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   validate:
     runs-on: ubuntu-latest
     outputs:
@@ -39,7 +41,6 @@ jobs:
           case "$TOOL" in
             acus)  manifest="acus/crates/acus-cli/Cargo.toml"; changelog="acus/CHANGELOG.md" ;;
             pons)  manifest="pons/Cargo.toml";                 changelog="pons/CHANGELOG.md" ;;
-            velum) manifest="velum/Cargo.toml";                changelog="velum/CHANGELOG.md" ;;
             census) manifest="census/Cargo.toml";              changelog="census/CHANGELOG.md" ;;
           esac
 
@@ -69,16 +70,11 @@ jobs:
       - name: Select build targets
         id: matrix
         run: |
-          case "$TOOL" in
-            velum)
-              matrix='{"include":[{"target":"x86_64-apple-darwin","os":"macos-latest"},{"target":"aarch64-apple-darwin","os":"macos-latest"}]}' ;;
-            *)
-              matrix='{"include":[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest"},{"target":"aarch64-unknown-linux-gnu","os":"ubuntu-latest"},{"target":"x86_64-apple-darwin","os":"macos-latest"},{"target":"aarch64-apple-darwin","os":"macos-latest"},{"target":"x86_64-pc-windows-msvc","os":"windows-latest"}]}' ;;
-          esac
+          matrix='{"include":[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest"},{"target":"aarch64-unknown-linux-gnu","os":"ubuntu-latest"},{"target":"x86_64-apple-darwin","os":"macos-latest"},{"target":"aarch64-apple-darwin","os":"macos-latest"},{"target":"x86_64-pc-windows-msvc","os":"windows-latest"}]}'
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   build:
-    needs: validate
+    needs: [validate, ci]
     strategy:
       matrix: ${{ fromJSON(needs.validate.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
@@ -94,9 +90,8 @@ jobs:
       - name: Resolve package, binary and profile
         run: |
           case "$TOOL" in
-            acus)  package="acus-cli"; bin="acus";  features="cmd-decide,cmd-update"; profile="release" ;;
-            pons)  package="pons";     bin="pons";  features="";                      profile="release-unwind" ;;
-            velum) package="velum";    bin="velum"; features="";                      profile="release" ;;
+            acus)  package="acus-cli"; bin="acus";  features="cmd-update"; profile="release" ;;
+            pons)  package="pons";     bin="pons";  features="";           profile="release-unwind" ;;
             census) package="census"; bin="census"; features="cmd-update"; profile="release" ;;
           esac
           bin_file="$bin"
@@ -180,7 +175,6 @@ jobs:
           case "$TOOL" in
             acus)  changelog="acus/CHANGELOG.md" ;;
             pons)  changelog="pons/CHANGELOG.md" ;;
-            velum) changelog="velum/CHANGELOG.md" ;;
             census) changelog="census/CHANGELOG.md" ;;
           esac
           awk -v heading="## [$VERSION]" '

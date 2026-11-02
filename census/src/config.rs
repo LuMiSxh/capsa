@@ -38,13 +38,31 @@ pub enum ConfigError {
     Parse(PathBuf, #[source] serde_json::Error),
 }
 
+/// The daily thresholds in percent of the daily limit, as they are when the file does not say.
+pub const DEFAULT_DAILY_THRESHOLDS: [u32; 3] = [50, 80, 100];
+
 /// The settings in `config.json`. Missing keys keep their default.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub mode: Mode,
     /// The budget of one calendar month in USD; `None` until it is set.
     pub monthly_budget_usd: Option<f64>,
+    /// The daily limit in USD that replaces the one derived from the budget; `None` derives it.
+    pub daily_limit_usd: Option<f64>,
+    /// The shares of the daily limit in percent that are announced, once per local day each.
+    pub daily_thresholds: Vec<u32>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            mode: Mode::Plan,
+            monthly_budget_usd: None,
+            daily_limit_usd: None,
+            daily_thresholds: DEFAULT_DAILY_THRESHOLDS.to_vec(),
+        }
+    }
 }
 
 impl Config {
@@ -122,10 +140,21 @@ mod tests {
     }
 
     #[test]
+    fn daily_keys_parse_and_the_thresholds_default_to_fifty_eighty_hundred() {
+        let c = Config::parse(r#"{"mode":"budget","daily_limit_usd":8.0}"#).unwrap();
+        assert_eq!(c.daily_limit_usd, Some(8.0));
+        assert_eq!(c.daily_thresholds, vec![50, 80, 100]);
+        let c = Config::parse(r#"{"daily_thresholds":[25,90]}"#).unwrap();
+        assert_eq!(c.daily_thresholds, vec![25, 90]);
+    }
+
+    #[test]
     fn serializing_round_trips() {
         let c = Config {
             mode: Mode::Budget,
             monthly_budget_usd: Some(150.5),
+            daily_limit_usd: Some(8.0),
+            daily_thresholds: vec![60, 100],
         };
         assert_eq!(Config::parse(&c.to_json()).unwrap(), c);
         assert!(c.to_json().contains(r#""mode": "budget""#));
@@ -139,6 +168,7 @@ mod tests {
         let c = Config {
             mode: Mode::Budget,
             monthly_budget_usd: Some(10.0),
+            ..Config::default()
         };
         c.save_to(&path).unwrap();
         assert_eq!(Config::load_from(&path).unwrap(), c);

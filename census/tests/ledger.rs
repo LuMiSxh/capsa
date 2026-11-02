@@ -5,7 +5,7 @@
 )]
 
 use capsa_core::census_snapshot::{self, Snapshot, Source, Window};
-use census::ledger::{Filter, Ledger, Opts};
+use census::ledger::{Filter, Ledger, Opts, Priced};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -89,6 +89,40 @@ fn append(path: &Path, text: &str) {
 
 fn total(l: &Ledger) -> census::ledger::Tokens {
     l.tokens(&Filter::default()).unwrap()
+}
+
+/// Asserts that the digest prices the same rows and aggregates as the ledger files.
+fn assert_digest_matches(l: &Ledger) {
+    assert_eq!(
+        l.priced().unwrap(),
+        Priced::of(l.rows().unwrap(), l.hourly().unwrap())
+    );
+}
+
+#[test]
+fn digest_matches_the_files_through_appends_folds_and_loss() {
+    let e = env();
+    let recent = BASE + 19 * 86_400;
+    let now = BASE + 20 * 86_400;
+    append(
+        &e.file("a.jsonl"),
+        &(rec("old", BASE, None) + &rec("new", recent, None)),
+    );
+    let l = e.update(now);
+    assert_digest_matches(&l);
+    assert!(e.state.join("digest.json").exists());
+
+    append(&e.file("a.jsonl"), &rec("later", now, None));
+    let again = e.update(now + 60);
+    assert_digest_matches(&again);
+    assert_eq!(again.priced().unwrap().raw.len(), 2);
+
+    std::fs::remove_file(e.state.join("digest.json")).unwrap();
+    assert_digest_matches(&Ledger::open(&e.state));
+    assert!(e.state.join("digest.json").exists());
+
+    std::fs::write(e.state.join("digest.json"), b"{not json").unwrap();
+    assert_digest_matches(&Ledger::open(&e.state));
 }
 
 #[test]

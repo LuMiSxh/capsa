@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use capsa_core::exit::Outcome;
+use capsa_core::format::Format;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -12,7 +13,7 @@ pub struct Args {
 }
 
 #[cfg(not(feature = "cmd-update"))]
-pub fn run(_: &Args) -> Result<Outcome> {
+pub fn run(_: &Args, _format: Format) -> Result<Outcome> {
     Err(capsa_core::hint::Hinted::new(
         "acus was built without `uninstall`",
         "remove the binary by hand, or rebuild with --features cmd-update",
@@ -21,23 +22,32 @@ pub fn run(_: &Args) -> Result<Outcome> {
 }
 
 /// Removes the skill files first, so no skill outlives the binary it describes. The binary is
-/// checked beforehand: a refusal there leaves the skill in place.
+/// checked beforehand: a refusal there leaves the skill in place. The per-file lines and the
+/// hooks note are for people and agents, so they are left out under `--json`.
 #[cfg(feature = "cmd-update")]
-pub fn run(a: &Args) -> Result<Outcome> {
+pub fn run(a: &Args, format: Format) -> Result<Outcome> {
     use anyhow::Context;
     use capsa_core::hint::ResultExt;
-    use capsa_core::update::uninstall;
+    use capsa_core::update::uninstall_run;
 
     let home = std::env::home_dir().context("no home directory")?;
-    uninstall(&crate::TOOL, true).hinted()?;
-    for file in crate::cmd_skill::uninstall(&home, a.dry_run)? {
-        println!("{} {}", verb(a.dry_run), file.display());
+    let outcome = uninstall_run(&crate::TOOL, a.dry_run, format, |dry_run| {
+        let files = capsa_core::skill::uninstall(&home, crate::cmd_skill::SKILL_DEF.tool, dry_run)
+            .hinted()?;
+        if format != Format::Json {
+            for file in files {
+                println!("{} {}", verb(dry_run), file.display());
+            }
+        }
+        Ok(())
+    })?;
+    if !a.dry_run && format != Format::Json {
+        println!(
+            "hooks in {} are left; remove the acus entries by hand",
+            capsa_core::claude_settings::path().display()
+        );
     }
-    println!("{}", uninstall(&crate::TOOL, a.dry_run).hinted()?);
-    if !a.dry_run {
-        println!("hooks in ~/.claude/settings.json are left; remove the acus entries by hand");
-    }
-    Ok(Outcome::Found)
+    Ok(outcome)
 }
 
 #[cfg(feature = "cmd-update")]

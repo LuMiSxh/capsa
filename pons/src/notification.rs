@@ -138,6 +138,10 @@ impl TaskNotifications {
             return Verdict::Pass;
         };
         let held = self.pending.remove(session);
+        if held.is_none() && matches!(shape(chunk, watch), Shape::Other) {
+            // The common case: ordinary user text, which is neither copied nor held.
+            return Verdict::Pass;
+        }
         let mut p = held.unwrap_or_else(|| Pending {
             lines: Vec::new(),
             text: String::new(),

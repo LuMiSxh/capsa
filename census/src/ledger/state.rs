@@ -23,6 +23,7 @@ pub(super) struct Layout {
     pub hourly: PathBuf,
     pub lock: PathBuf,
     pub snapshots: PathBuf,
+    pub digest: PathBuf,
 }
 
 impl Layout {
@@ -34,6 +35,7 @@ impl Layout {
             hourly: dir.join("hourly.jsonl"),
             lock: dir.join("lock"),
             snapshots: dir.join("snapshots"),
+            digest: dir.join("digest.json"),
         }
     }
 }

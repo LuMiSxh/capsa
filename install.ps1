@@ -1,10 +1,10 @@
 # Installs capsa tools from the newest release of each tool.
-# Usage: .\install.ps1 [acus pons census all]   (default: all; velum is macOS-only)
+# Usage: .\install.ps1 [acus pons census all]   (default: all)
 #        .\install.ps1 -Uninstall <acus|pons|census|all>
 # Env: CAPSA_INSTALL_DIR (default %USERPROFILE%\.local\bin), CAPSA_INSTALL_SCOPE=user|system,
 #      CAPSA_NO_SKILL=1 skips `acus self skill --install` (ACUS_NO_SKILL works too) and
 #      keeps the acus skill on -Uninstall,
-#      GITHUB_TOKEN (else `gh auth token`) while the repository is private.
+#      GITHUB_TOKEN (else `gh auth token`), sent when available to lift the API rate limit.
 param([string[]]$Tools, [switch]$Uninstall)
 
 $ErrorActionPreference = "Stop"
@@ -30,7 +30,6 @@ function Main {
             "acus"  { $selected += "acus" }
             "pons"  { $selected += "pons" }
             "census" { $selected += "census" }
-            "velum" { throw "velum is macOS-only for now" }
             default { throw "unknown tool: $t (use acus, pons, census or all)" }
         }
     }
@@ -56,7 +55,7 @@ function Install-Tool([string]$Tool) {
         $tag = $null
     }
     if (-not $tag) {
-        throw "no $Tool release found in $Repo, or GitHub denied access (the repository is private: set GITHUB_TOKEN or run gh auth login)"
+        throw "no $Tool release found in $Repo, or GitHub denied the request (rate limit: set GITHUB_TOKEN or run gh auth login)"
     }
 
     $asset = "$Tool-$Target.zip"
@@ -89,7 +88,7 @@ function Install-Tool([string]$Tool) {
 
         # Installs the agent skill for Claude Code and Codex.
         if ($Tool -eq "acus" -and -not $env:CAPSA_NO_SKILL -and -not $env:ACUS_NO_SKILL) {
-            & (Join-Path $InstallDir "acus.exe") self skill --install
+            & (Join-Path $InstallDir "acus.exe") self skill --install --target all
         }
     } finally {
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
@@ -153,13 +152,17 @@ function Get-LatestTag([string]$Tool) {
 }
 
 # curl.exe ships with Windows 10 1803+ and drops the token when the asset download
-# redirects to storage.
+# redirects to storage. The token goes through curl's config on stdin (-K -), so it
+# stays out of the process list.
 function Invoke-Api([string]$Url, [string]$Accept, [string]$OutFile) {
     $curlArgs = @("-fsSL", "-H", "Accept: $Accept")
-    if ($Token) { $curlArgs += @("-H", "Authorization: Bearer $Token") }
     if ($OutFile) { $curlArgs += @("-L", "-o", $OutFile) }
     $curlArgs += $Url
-    $body = (& curl.exe @curlArgs | Out-String)
+    if ($Token) {
+        $body = ("header = `"Authorization: Bearer $Token`"" | & curl.exe -K - @curlArgs | Out-String)
+    } else {
+        $body = (& curl.exe @curlArgs | Out-String)
+    }
     if ($LASTEXITCODE -ne 0) { throw "GitHub request failed: $Url" }
     return $body
 }

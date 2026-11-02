@@ -6,6 +6,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use capsa_core::hint::Hinted;
 use capsa_core::which::{self, Env, Fs, Platform};
 
 #[cfg(test)]
@@ -47,10 +48,43 @@ pub fn detect(env: &Env, fs: &dyn Fs) -> Option<(usize, PathBuf)> {
 /// Returns the command to run: `command` when given (resolved through the search
 /// dirs if it is a bare name), else the auto-detected launcher.
 pub fn plan(env: &Env, fs: &dyn Fs, command: &[String]) -> Result<Spawn, String> {
+    plan_with(env, fs, command).map_err(|e| match e {
+        Failure::NotFound(message) => format!("{message}; {}", pass_one()),
+        Failure::Refused(message) => message,
+    })
+}
+
+/// Like [`plan`], with the fix of a missing adapter as a hint of the error.
+pub fn plan_hinted(env: &Env, fs: &dyn Fs, command: &[String]) -> anyhow::Result<Spawn> {
+    plan_with(env, fs, command).map_err(|e| match e {
+        Failure::NotFound(message) => anyhow::Error::new(Hinted::new(
+            message,
+            format!(
+                "run `pons self setup` to install the adapter, or {}",
+                pass_one()
+            ),
+        )),
+        Failure::Refused(message) => anyhow::Error::msg(message),
+    })
+}
+
+/// Why no spawn plan could be made.
+enum Failure {
+    /// No agent command was given and no launcher was found.
+    NotFound(String),
+    Refused(String),
+}
+
+/// What to do when no agent command can be found.
+fn pass_one() -> String {
+    format!("pass one after `--`, for example: pons -- npx -y {PACKAGE}")
+}
+
+fn plan_with(env: &Env, fs: &dyn Fs, command: &[String]) -> Result<Spawn, Failure> {
     let spawn = match command.split_first() {
         Some((program, args)) => explicit(env, fs, program, args),
         None => {
-            let (i, path) = detect(env, fs).ok_or_else(|| not_found(env, fs))?;
+            let (i, path) = detect(env, fs).ok_or_else(|| Failure::NotFound(not_found(env, fs)))?;
             let args: Vec<String> = LAUNCHERS[i].1.iter().map(|a| (*a).to_owned()).collect();
             Spawn {
                 how: format!("auto-detected {} at {}", LAUNCHERS[i].0, path.display()),
@@ -61,7 +95,7 @@ pub fn plan(env: &Env, fs: &dyn Fs, command: &[String]) -> Result<Spawn, String>
         }
     };
     if env.platform == Platform::Windows && is_batch(Path::new(&spawn.program)) {
-        check_batch_args(&spawn.args)?;
+        check_batch_args(&spawn.args).map_err(Failure::Refused)?;
     }
     Ok(spawn)
 }
@@ -91,7 +125,7 @@ fn not_found(env: &Env, fs: &dyn Fs) -> String {
     let names: Vec<&str> = LAUNCHERS.iter().map(|(n, _)| *n).collect();
     let dirs = which::search_dirs(env, fs).len();
     format!(
-        "no agent command given and none could be found (looked for {} on PATH and {dirs} directories in total); pass one after `--`, for example: pons -- npx -y {PACKAGE}",
+        "no agent command given and none could be found (looked for {} on PATH and {dirs} directories in total)",
         names.join(", ")
     )
 }

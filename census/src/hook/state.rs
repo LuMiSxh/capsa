@@ -2,8 +2,9 @@
 //! Owns the hook's files: the levels shown per session and the error log.
 
 use super::levels::Shown;
+use capsa_core::log::{self, Level};
 use capsa_core::paths::state_dir;
-use std::io::Write;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// The log is moved aside once it passes this size.
@@ -74,21 +75,25 @@ pub(super) fn store(file: &std::path::Path, shown: &Shown) -> std::io::Result<()
     })
 }
 
-/// Appends one line to `hook.log` in the state directory, moving a log over 256 KB to `hook.log.1`.
-/// Failures are ignored: the hook must stay silent.
-pub fn log_line(now: u64, message: &str) {
-    let dir = dir();
-    let file = dir.join("hook.log");
-    if std::fs::metadata(&file).is_ok_and(|m| m.len() > LOG_LIMIT) {
-        let _ = std::fs::rename(&file, dir.join("hook.log.1"));
+/// The file of the hook's errors: one `hook.error` line each, in the state directory.
+pub fn error_log() -> PathBuf {
+    dir().join("hook.jsonl")
+}
+
+/// The fields of a `hook.error` line.
+#[derive(Serialize, Deserialize)]
+pub struct ErrorLine {
+    pub message: String,
+}
+
+/// Appends a `hook.error` line to `error_log`. Failures are ignored: the hook must stay silent.
+pub fn log_error(message: &str) {
+    let file = error_log();
+    if let Some(parent) = file.parent() {
+        let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::create_dir_all(&dir);
-    let line = format!("{now} {}\n", message.replace('\n', " "));
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&file)
-    {
-        let _ = f.write_all(line.as_bytes());
-    }
+    let fields = ErrorLine {
+        message: message.replace('\n', " "),
+    };
+    let _ = log::append(&file, LOG_LIMIT, Level::Error, "hook.error", &fields);
 }

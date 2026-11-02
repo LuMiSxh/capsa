@@ -20,29 +20,34 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::Result;
-use capsa_core::exit::{self, Outcome};
-use capsa_core::hint::ResultExt;
+use capsa_core::exit::Outcome;
+use capsa_core::format::Format;
 use capsa_core::pkg::Manager;
 use capsa_core::update::{self, Tool};
 use capsa_core::which::{Env, RealFs};
-use clap::Parser;
 
 use crate::cli::{Cli, SelfAction, Sub};
 use crate::engine::{Config, NoticeMode};
 use crate::log::{Dir, Logger};
 
 fn main() -> ExitCode {
-    // Errors are rendered on stderr with `capsa_core::exit`; stdout is the ACP
-    // wire in proxy mode, so nothing is printed there on failure.
-    let result = run_on_runtime();
-    exit::finish(result, capsa_core::format::resolve(false, false, false))
+    capsa_core::cli::main::<Cli>(execute)
 }
 
-fn run_on_runtime() -> Result<Outcome> {
+/// Runs the parsed command line: a `pons self` action, or the proxy.
+fn execute(mut cli: Cli, format: Format) -> Result<Outcome> {
+    if let Some(sub) = cli.sub.take() {
+        return subcommand(sub, format);
+    }
+    run_proxy(cli)
+}
+
+/// Runs the proxy on a runtime. Only the proxy path needs one.
+fn run_proxy(cli: Cli) -> Result<Outcome> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let result = runtime.block_on(run());
+    let result = runtime.block_on(proxy(cli));
     // Dropping the runtime would wait for the blocking read of stdin, which
     // never returns while the client keeps its end open (the agent died, say).
     runtime.shutdown_background();
@@ -56,51 +61,29 @@ const TOOL: Tool = Tool {
 };
 
 /// Runs a `pons self` action.
-fn subcommand(sub: Sub) -> Result<Outcome> {
-    let Sub::SelfCmd { action } = sub;
+fn subcommand(sub: Sub, format: Format) -> Result<Outcome> {
+    let Sub::SelfCmd { action, .. } = sub;
     match action {
         SelfAction::Doctor {
-            json,
-            human,
-            agent,
             log,
             log_dir,
             agent_cmd,
-        } => {
-            let format = capsa_core::format::resolve(human, json, agent);
-            print!(
-                "{}",
-                doctor::run(agent_cmd, log, log_dir.as_deref(), format)
-            );
-        }
+        } => doctor::run(agent_cmd, log, log_dir.as_deref(), format),
         SelfAction::Setup {
-            json,
-            human,
-            agent,
             package_manager,
             dry_run,
         } => {
-            let format = capsa_core::format::resolve(human, json, agent);
             let step = setup::run(package_manager.map(Manager::from), dry_run)?;
-            print!("{}", setup::render(&step, format));
+            capsa_core::render::emit(&step, format)
         }
-        SelfAction::Update(args) => {
-            let report = update::update(&TOOL, args.mode()).hinted()?;
-            println!("{report}");
-            return Ok(report.outcome(args.check));
-        }
+        SelfAction::Update(args) => update::run(&TOOL, args, format, |_| Ok(())),
         SelfAction::Uninstall(args) => {
-            println!("{}", update::uninstall(&TOOL, args.dry_run).hinted()?);
+            update::uninstall_run(&TOOL, args.dry_run, format, |_| Ok(()))
         }
     }
-    Ok(Outcome::Found)
 }
 
-async fn run() -> Result<Outcome> {
-    let cli = Cli::parse();
-    if let Some(sub) = cli.sub {
-        return subcommand(sub);
-    }
+async fn proxy(cli: Cli) -> Result<Outcome> {
     let log_path = log::target(cli.log.as_deref(), cli.no_log, cli.log_dir.as_deref());
     // Only an explicit file rotates; default per-start files are bounded by
     // how many are kept instead.
@@ -147,9 +130,8 @@ async fn run() -> Result<Outcome> {
     };
     let note_error =
         |e: &anyhow::Error| logger.log(Dir::Pons, format!("exiting: error: {e:#}").as_bytes());
-    let spawn = launcher::plan(&Env::from_process(), &RealFs, &cli.agent)
-        .map_err(anyhow::Error::msg)
-        .inspect_err(note_error)?;
+    let spawn =
+        launcher::plan_hinted(&Env::from_process(), &RealFs, &cli.agent).inspect_err(note_error)?;
     logger.log(Dir::Pons, format!("agent: {}", spawn.how).as_bytes());
     if cli.quiet_ms.is_some() {
         logger.log(

@@ -31,23 +31,89 @@ pub(super) fn filtered_build(
     let stages: Vec<&str> = std::iter::once(next.orig.as_str())
         .chain(rest.iter().map(|s| s.orig.as_str()))
         .collect();
-    let (filter, fargs) = head(&next.low).filter(|_| seg.feeds(next))?;
-    if !FILTERS.contains(&filter) {
-        return None;
-    }
-    // `sort` and `uniq` dedupe or reorder whole lines, which no ctx flag does: a chain with one
-    // runs as written.
-    if stages.iter().copied().any(is_sort_or_uniq) {
-        return None;
-    }
-    let fargs: Vec<&str> = fargs.collect();
-    // `grep -q` only sets an exit status: no output to cut. `grep -c` prints a count, not the
-    // lines.
-    if is_quiet(&fargs) || (matches!(filter, "grep" | "egrep" | "rg") && counts(&fargs)) {
-        return None;
-    }
-    // `timeout N BUILD`: the build is what follows; ctx has `--timeout` for the limit.
+    let filter = fold_filter(seg, next, &stages)?;
     let low = seg.low_unescaped().1;
+    let call = call_of(low)?;
+    // `timeout N BUILD` and a `gh` log are folded only where the command can be rewritten. Filters
+    // that do not fold, or a `$` in the build, keep their existing verdict.
+    if call.timed.is_some() || call.build == "gh" {
+        let filters: Vec<&str> = std::iter::once(next.low.as_str())
+            .chain(rest.iter().map(|s| s.low.as_str()))
+            .collect();
+        rewrite_build(low, &cut_last(&filters))?;
+    }
+    let cmd = (seg.orig_unescaped().1.trim())
+        .trim_end_matches("2>&1")
+        .trim_end();
+    if chained {
+        if call.is_ctx {
+            // Stacked greps that no single ctx flag set expresses run as written; a chain that
+            // folds keeps its verdict.
+            if stacked_greps(&stages) && ctx_with_flags(cmd, &stages).is_none() {
+                return None;
+            }
+            return Some(Verdict::Deny(
+                Rule::CtxPipe,
+                chain_ctx_reason(cmd, &stages, filter, open),
+            ));
+        }
+        // Stacked greps that no ctx flag set expresses run as written, as they do after ctx; a
+        // chain that folds keeps its verdict.
+        if stacked_greps(&stages) && rewrite_build(cmd, &stages).is_none() {
+            return None;
+        }
+        return Some(Verdict::Deny(
+            Rule::BuildPipe,
+            chain_build_reason(cmd, &stages, call.build, filter, open),
+        ));
+    }
+    let flag = head(&next.orig)
+        .and_then(|(f, fargs)| ctx_flag(&f.to_lowercase(), &fargs.collect::<Vec<_>>()));
+    if call.is_ctx {
+        return Some(Verdict::Deny(
+            Rule::CtxPipe,
+            ctx_pipe_reason(cmd, next, filter, flag),
+        ));
+    }
+    let bare = strip_timeout(cmd).map_or(cmd, |(_, rest)| rest);
+    let mut example = if bare.contains('$') {
+        ctx_arg(bare).map_or("acus ctx 'COMMAND'".to_owned(), |arg| {
+            format!("acus ctx {arg}")
+        })
+    } else if bare.contains('\'') {
+        "acus ctx 'COMMAND'".to_owned()
+    } else {
+        format!("acus ctx '{bare}'")
+    };
+    if let Some(secs) = call.timed {
+        example += &format!(" --timeout {secs}");
+    }
+    let reason = match flag {
+        Some((flag, what)) => format!(
+            "Use `{example} {flag}` instead of piping {build} into {filter}: acus ctx drops build noise, the flag {what}, and the full log is saved for follow-up reads, so the build need not run again. {ESCAPE}\nSend instead: {example} {flag}",
+            build = call.build,
+        ),
+        None => format!(
+            "Use acus instead of piping {build} into {filter}: `{example}` drops build noise, shows the failures with the code they point at, and saves the full log for follow-up reads, so the build need not run again (`acus ctx` alone runs the project's tests; `--tail N` keeps the last N lines plus the failures, `--grep RE` keeps matching lines plus their code). {ESCAPE}\nSend instead: {example}",
+            build = call.build,
+        ),
+    };
+    Some(Verdict::Deny(Rule::BuildPipe, reason))
+}
+
+/// The build or ctx call a segment runs, with `timeout N` taken off.
+struct Call<'a> {
+    /// The command name: the build's tool, or `acus`.
+    build: &'a str,
+    /// The `timeout` limit in seconds, when the call has one.
+    timed: Option<u64>,
+    /// Whether the call is `acus ctx`.
+    is_ctx: bool,
+}
+
+/// Returns the call when the segment runs a build or `acus ctx` that a filter can fold.
+fn call_of(low: &str) -> Option<Call<'_>> {
+    // `timeout N BUILD`: the build is what follows; ctx has `--timeout` for the limit.
     let timed = strip_timeout(low);
     let (build, args) = head(timed.map_or(low, |(_, rest)| rest))?;
     let args: Vec<&str> = args.collect();
@@ -73,69 +139,31 @@ pub(super) fn filtered_build(
     if timed.is_some() && (is_ctx || !is_build) {
         return None;
     }
-    // `timeout N BUILD` and a `gh` log are folded only where the command can be rewritten. Filters
-    // that do not fold, or a `$` in the build, keep their existing verdict.
-    if timed.is_some() || build == "gh" {
-        let filters: Vec<&str> = std::iter::once(next.low.as_str())
-            .chain(rest.iter().map(|s| s.low.as_str()))
-            .collect();
-        rewrite_build(low, &cut_last(&filters))?;
+    Some(Call {
+        build,
+        timed: timed.map(|(secs, _)| secs),
+        is_ctx,
+    })
+}
+
+/// Returns the filter that a build's output is piped into, when acus folds that pipe.
+fn fold_filter<'a>(seg: &Segment, next: &'a Segment, stages: &[&str]) -> Option<&'a str> {
+    let (filter, fargs) = head(&next.low).filter(|_| seg.feeds(next))?;
+    if !FILTERS.contains(&filter) {
+        return None;
     }
-    let cmd = (seg.orig_unescaped().1.trim())
-        .trim_end_matches("2>&1")
-        .trim_end();
-    let flag = head(&next.orig)
-        .and_then(|(f, fargs)| ctx_flag(&f.to_lowercase(), &fargs.collect::<Vec<_>>()));
-    if is_ctx {
-        if chained {
-            // Stacked greps that no single ctx flag set expresses run as written; a chain that
-            // folds keeps its verdict.
-            if stacked_greps(&stages) && ctx_with_flags(cmd, &stages).is_none() {
-                return None;
-            }
-            return Some(Verdict::Deny(
-                Rule::CtxPipe,
-                chain_ctx_reason(cmd, &stages, filter, open),
-            ));
-        }
-        return Some(Verdict::Deny(
-            Rule::CtxPipe,
-            ctx_pipe_reason(cmd, next, filter, flag),
-        ));
+    // `sort` and `uniq` dedupe or reorder whole lines, which no ctx flag does: a chain with one
+    // runs as written.
+    if stages.iter().copied().any(is_sort_or_uniq) {
+        return None;
     }
-    if chained {
-        // Stacked greps that no ctx flag set expresses run as written, as they do after ctx; a
-        // chain that folds keeps its verdict.
-        if stacked_greps(&stages) && rewrite_build(cmd, &stages).is_none() {
-            return None;
-        }
-        return Some(Verdict::Deny(
-            Rule::BuildPipe,
-            chain_build_reason(cmd, &stages, build, filter, open),
-        ));
+    let fargs: Vec<&str> = fargs.collect();
+    // `grep -q` only sets an exit status: no output to cut. `grep -c` prints a count, not the
+    // lines.
+    if is_quiet(&fargs) || (matches!(filter, "grep" | "egrep" | "rg") && counts(&fargs)) {
+        return None;
     }
-    let bare = strip_timeout(cmd).map_or(cmd, |(_, rest)| rest);
-    let mut example = if bare.contains('$') {
-        ctx_arg(bare).map_or("acus ctx 'COMMAND'".to_owned(), |arg| {
-            format!("acus ctx {arg}")
-        })
-    } else if bare.contains('\'') {
-        "acus ctx 'COMMAND'".to_owned()
-    } else {
-        format!("acus ctx '{bare}'")
-    };
-    if let Some((secs, _)) = timed {
-        example += &format!(" --timeout {secs}");
-    }
-    let reason = match flag {
-        Some((flag, what)) => format!(
-            "Use `{example} {flag}` instead of piping {build} into {filter}: acus ctx drops build noise, the flag {what}, and the full log is saved for follow-up reads, so the build need not run again. {ESCAPE}\nSend instead: {example} {flag}"
-        ),
-        None => format!(
-            "Use acus instead of piping {build} into {filter}: `{example}` drops build noise, shows the failures with the code they point at, and saves the full log for follow-up reads, so the build need not run again (`acus ctx` alone runs the project's tests; `--tail N` keeps the last N lines plus the failures, `--grep RE` keeps matching lines plus their code). {ESCAPE}\nSend instead: {example}"
-        ),
-    };
-    Some(Verdict::Deny(Rule::BuildPipe, reason))
+    Some(filter)
 }
 
 /// Reports whether `build` with subcommand `sub` runs a build, a test or a check, or prints a

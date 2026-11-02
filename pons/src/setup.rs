@@ -2,16 +2,15 @@
 //! `pons self setup`: reports the Claude ACP adapter, or installs it when it is missing.
 //! The install goes through [`capsa_core::pkg`].
 
-use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
-use capsa_core::format::{Format, color_stdout};
-use capsa_core::hint::ResultExt;
+use anyhow::Result;
+use capsa_core::hint::{Hinted, ResultExt};
 use capsa_core::pkg::{self, Manager};
+use capsa_core::render::{Check, Doc, Render, Status};
 use capsa_core::which::{self, Env, Fs, RealFs};
 use clap::ValueEnum;
-use serde_json::json;
+use serde::Serialize;
 
 use crate::launcher::PACKAGE;
 
@@ -36,22 +35,30 @@ impl From<ManagerArg> for Manager {
     }
 }
 
-/// What setup found or did.
-#[derive(Debug, PartialEq, Eq)]
+/// What setup found or did. It serializes as the `--json` object, tagged by `status`.
+///
+/// A step keeps every key of the JSON object: the fields a step never fills are `null`.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum Step {
     /// The adapter is on the PATH or in a user bin directory; nothing ran.
     Present {
         path: PathBuf,
         version: Option<String>,
+        command: Option<Vec<String>>,
     },
     /// A dry run: the adapter is missing and this is the command that would install it.
-    WouldInstall { command: Vec<String> },
+    WouldInstall {
+        path: Option<PathBuf>,
+        version: Option<String>,
+        command: Vec<String>,
+    },
     /// The install exited with 0. `path` is set when the adapter is now found;
     /// `bin_dir` is the global bin directory when it is not on the PATH.
     Installed {
-        command: Vec<String>,
         path: Option<PathBuf>,
         version: Option<String>,
+        command: Vec<String>,
         bin_dir: Option<PathBuf>,
     },
 }
@@ -79,7 +86,11 @@ pub fn run_in(
 ) -> Result<Step> {
     if let Some(path) = which::find_in(env, fs, ADAPTER, None) {
         let version = pkg::package_version(&path, PACKAGE);
-        return Ok(Step::Present { path, version });
+        return Ok(Step::Present {
+            path,
+            version,
+            command: None,
+        });
     }
     let manager = pkg::detect_in(env, fs, preferred)
         .ok_or(pkg::PkgError::NoManager)
@@ -87,11 +98,17 @@ pub fn run_in(
     let report = pkg::install_in(env, fs, manager, PACKAGE, dry_run).hinted()?;
     if dry_run {
         return Ok(Step::WouldInstall {
+            path: None,
+            version: None,
             command: report.command,
         });
     }
     if let Some(status) = report.status.filter(|s| !s.success()) {
-        bail!("{} failed: {status}", report.command.join(" "));
+        return Err(Hinted::new(
+            format!("{} failed: {status}", report.command.join(" ")),
+            "run `pons self setup --dry-run` to see the command, or pick another manager with --package-manager",
+        )
+        .into());
     }
     let (path, bin_dir) = locate_installed(env, fs, global_bin(manager));
     let version = path
@@ -122,99 +139,70 @@ fn locate_installed(
     (path, bin_dir)
 }
 
-/// Renders the step as one document: JSON, coloured text for a person on a terminal,
-/// or plain text.
-pub fn render(step: &Step, format: Format) -> String {
-    match format {
-        Format::Json => render_json(step),
-        Format::Human => render_text(step, color_stdout(format)),
-        Format::Agent => render_text(step, false),
+impl Step {
+    /// The one check row this step shows.
+    fn check(&self) -> Check {
+        match self {
+            Self::Present { path, version, .. } => Check {
+                name: ADAPTER.into(),
+                status: Status::Ok,
+                detail: format!(
+                    "present at {} (version {})",
+                    path.display(),
+                    version.as_deref().unwrap_or("unknown")
+                ),
+                hint: None,
+            },
+            Self::WouldInstall { command, .. } => Check {
+                name: ADAPTER.into(),
+                status: Status::Warn,
+                detail: format!(
+                    "not installed; dry run would run `{}`; nothing was installed",
+                    command.join(" ")
+                ),
+                hint: None,
+            },
+            Self::Installed {
+                path,
+                version,
+                command,
+                bin_dir,
+            } => {
+                let hint = match (bin_dir, path) {
+                    (Some(dir), _) => Some(format!("add {} to PATH", dir.display())),
+                    (None, None) => {
+                        Some("check the global bin directory of the package manager".to_owned())
+                    }
+                    (None, Some(_)) => None,
+                };
+                match path {
+                    Some(path) => Check {
+                        name: ADAPTER.into(),
+                        status: Status::Ok,
+                        detail: format!(
+                            "installed at {} (version {})",
+                            path.display(),
+                            version.as_deref().unwrap_or("unknown")
+                        ),
+                        hint,
+                    },
+                    None => Check {
+                        name: ADAPTER.into(),
+                        status: Status::Warn,
+                        detail: format!("ran `{}`; not on PATH yet", command.join(" ")),
+                        hint,
+                    },
+                }
+            }
+        }
     }
 }
 
-fn render_text(step: &Step, colour: bool) -> String {
-    let bold = |word: &str| {
-        if colour {
-            format!("\x1b[1m{word}\x1b[0m")
-        } else {
-            word.to_owned()
-        }
-    };
-    let mut out = String::new();
-    match step {
-        Step::Present { path, version } => {
-            let version = version.as_deref().unwrap_or("unknown");
-            let _ = writeln!(
-                out,
-                "{}: {ADAPTER} at {} (version {version})",
-                bold("present"),
-                path.display()
-            );
-        }
-        Step::WouldInstall { command } => {
-            let _ = writeln!(
-                out,
-                "{}: {ADAPTER} is not installed; would run: {}",
-                bold("dry run"),
-                command.join(" ")
-            );
-            let _ = writeln!(out, "nothing was installed");
-        }
-        Step::Installed {
-            command,
-            path,
-            version,
-            bin_dir,
-        } => {
-            let _ = writeln!(out, "{}: ran {}", bold("installed"), command.join(" "));
-            match path {
-                Some(path) => {
-                    let version = version.as_deref().unwrap_or("unknown");
-                    let _ = writeln!(out, "{ADAPTER} at {} (version {version})", path.display());
-                }
-                None => {
-                    let _ = writeln!(
-                        out,
-                        "{ADAPTER} is not on PATH yet; check the global bin directory of the package manager"
-                    );
-                }
-            }
-            if let Some(dir) = bin_dir {
-                let _ = writeln!(out, "    hint: add {} to PATH", dir.display());
-            }
-        }
+impl Render for Step {
+    fn doc(&self, doc: &mut Doc) {
+        doc.title("pons self setup".to_owned());
+        doc.check(&self.check());
     }
-    out
-}
-
-fn render_json(step: &Step) -> String {
-    let value = match step {
-        Step::Present { path, version } => json!({
-            "status": "present",
-            "path": path.display().to_string(),
-            "version": version,
-            "command": null,
-        }),
-        Step::WouldInstall { command } => json!({
-            "status": "would_install",
-            "path": null,
-            "version": null,
-            "command": command,
-        }),
-        Step::Installed {
-            command,
-            path,
-            version,
-            bin_dir,
-        } => json!({
-            "status": "installed",
-            "path": path.as_ref().map(|p| p.display().to_string()),
-            "version": version,
-            "command": command,
-            "bin_dir": bin_dir.as_ref().map(|p| p.display().to_string()),
-        }),
-    };
-    format!("{value}\n")
 }
 
 #[cfg(test)]
@@ -222,7 +210,9 @@ mod tests {
     use std::collections::HashSet;
     use std::path::Path;
 
+    use capsa_core::format::Format;
     use capsa_core::hint::find_hint;
+    use capsa_core::render::emit_to;
     use capsa_core::which::Platform;
 
     use super::*;
@@ -266,6 +256,13 @@ mod tests {
         None
     }
 
+    /// The `--json` line of a step, as `pons self setup --json` prints it.
+    fn json(step: &Step) -> String {
+        let mut out = Vec::new();
+        emit_to(step, Format::Json, false, &mut out).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
     #[test]
     fn an_installed_adapter_in_the_global_bin_dir_is_found_and_that_dir_is_hinted() {
         let fs = Files::with(&["/g/bin/claude-agent-acp"]);
@@ -283,6 +280,7 @@ mod tests {
             Step::Present {
                 path: PathBuf::from("/bin/claude-agent-acp"),
                 version: None,
+                command: None,
             }
         );
     }
@@ -294,6 +292,8 @@ mod tests {
         assert_eq!(
             step,
             Step::WouldInstall {
+                path: None,
+                version: None,
                 command: ["bun", "add", "-g", PACKAGE].map(str::to_owned).to_vec(),
             }
         );
@@ -306,6 +306,8 @@ mod tests {
         assert_eq!(
             step,
             Step::WouldInstall {
+                path: None,
+                version: None,
                 command: ["npm", "install", "-g", PACKAGE]
                     .map(str::to_owned)
                     .to_vec(),
@@ -320,12 +322,59 @@ mod tests {
     }
 
     #[test]
-    fn the_renderers_show_the_status_in_each_format() {
+    fn the_views_show_the_step_in_each_format() {
         let step = Step::WouldInstall {
+            path: None,
+            version: None,
             command: vec!["pnpm".to_owned()],
         };
-        assert!(render(&step, Format::Json).contains("\"status\":\"would_install\""));
-        assert!(render(&step, Format::Agent).starts_with("dry run: claude-agent-acp"));
-        assert!(!render(&step, Format::Agent).contains('\x1b'));
+        assert!(json(&step).contains("\"status\":\"would_install\""));
+        let mut agent = Vec::new();
+        emit_to(&step, Format::Agent, false, &mut agent).unwrap();
+        let agent = String::from_utf8(agent).unwrap();
+        assert!(agent.contains("pons self setup"));
+        assert!(agent.contains("nothing was installed"));
+        assert!(!agent.contains('\x1b'));
+    }
+
+    #[test]
+    fn json_keeps_the_keys_and_their_order_of_each_step() {
+        let present = Step::Present {
+            path: PathBuf::from("/bin/claude-agent-acp"),
+            version: Some("0.85.1".to_owned()),
+            command: None,
+        };
+        assert_eq!(
+            json(&present),
+            "{\"status\":\"present\",\"path\":\"/bin/claude-agent-acp\",\"version\":\"0.85.1\",\"command\":null}\n"
+        );
+        let would_install = Step::WouldInstall {
+            path: None,
+            version: None,
+            command: ["bun", "add", "-g", "@agentclientprotocol/claude-agent-acp"]
+                .map(str::to_owned)
+                .to_vec(),
+        };
+        assert_eq!(
+            json(&would_install),
+            "{\"status\":\"would_install\",\"path\":null,\"version\":null,\"command\":[\"bun\",\"add\",\"-g\",\"@agentclientprotocol/claude-agent-acp\"]}\n"
+        );
+        let installed = Step::Installed {
+            command: [
+                "npm",
+                "install",
+                "-g",
+                "@agentclientprotocol/claude-agent-acp",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            path: Some(PathBuf::from("/g/bin/claude-agent-acp")),
+            version: None,
+            bin_dir: Some(PathBuf::from("/g/bin")),
+        };
+        assert_eq!(
+            json(&installed),
+            "{\"status\":\"installed\",\"path\":\"/g/bin/claude-agent-acp\",\"version\":null,\"command\":[\"npm\",\"install\",\"-g\",\"@agentclientprotocol/claude-agent-acp\"],\"bin_dir\":\"/g/bin\"}\n"
+        );
     }
 }

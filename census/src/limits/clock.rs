@@ -2,6 +2,8 @@
 //! Owns the calendar of the limits: weekdays, hours and day starts of unix seconds in the local
 //! zone.
 
+use std::sync::OnceLock;
+
 /// Seconds in a day.
 pub const DAY_S: u64 = 86_400;
 /// Seconds in an hour.
@@ -41,6 +43,18 @@ pub(super) fn next_day_start(day: u64) -> u64 {
     day_start(day + DAY_S + HOUR_S)
 }
 
+/// Returns the number of local days from the day starting at `day` up to `end`, the day of `day`
+/// included.
+pub(super) fn days_until(day: u64, end: u64) -> u64 {
+    let mut days = 0;
+    let mut start = day;
+    while start < end && days < 62 {
+        days += 1;
+        start = next_day_start(start);
+    }
+    days
+}
+
 /// Returns the local weekday and clock time of `t`, such as `Sat 21:00`.
 pub fn when(t: u64) -> String {
     let local = local_secs(t);
@@ -73,9 +87,22 @@ fn hour_of(local: i64) -> usize {
     (local.rem_euclid(DAY_I) / HOUR_I) as usize
 }
 
+/// Returns the offset of the local zone from UTC at `t`, in seconds east. `CENSUS_TZ_OFFSET_SECS`,
+/// when it parses as a whole number of seconds, is the offset at every instant, and it wins over the
+/// zone the system has. The goldens pin it. Otherwise the system zone is read.
+fn offset_at(t: i64) -> i64 {
+    static OVERRIDE: OnceLock<Option<i64>> = OnceLock::new();
+    let fixed = OVERRIDE.get_or_init(|| {
+        std::env::var("CENSUS_TZ_OFFSET_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+    });
+    fixed.unwrap_or_else(|| system_offset_at(t))
+}
+
 /// Returns the offset of the local zone from UTC at `t`, in seconds east, as the system reads TZ.
 #[cfg(unix)]
-fn offset_at(t: i64) -> i64 {
+fn system_offset_at(t: i64) -> i64 {
     let Some(secs) = fits::<i64, libc::time_t>(t) else {
         return 0;
     };
@@ -101,7 +128,7 @@ fn fits<A, B: TryFrom<A>>(a: A) -> Option<B> {
 /// Returns the offset of the local zone from UTC at `t`, in seconds east, from the zone rules
 /// Windows has for the year of `t`.
 #[cfg(windows)]
-fn offset_at(t: i64) -> i64 {
+fn system_offset_at(t: i64) -> i64 {
     use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
     use windows_sys::Win32::System::Time::{
         FileTimeToSystemTime, GetTimeZoneInformationForYear, SystemTimeToFileTime,
@@ -155,13 +182,13 @@ fn zeroed<T>() -> T {
 
 /// Returns zero where the platform has no zone rules to ask, so the times are UTC.
 #[cfg(not(any(unix, windows)))]
-fn offset_at(_t: i64) -> i64 {
+fn system_offset_at(_t: i64) -> i64 {
     0
 }
 
 #[cfg(all(test, windows))]
 mod windows_tests {
-    use super::{offset_at, zeroed};
+    use super::{system_offset_at, zeroed};
     use std::time::{SystemTime, UNIX_EPOCH};
     use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
 
@@ -180,7 +207,7 @@ mod windows_tests {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
-        assert_eq!(offset_at(now), -i64::from(bias_min) * 60);
+        assert_eq!(system_offset_at(now), -i64::from(bias_min) * 60);
     }
 }
 
