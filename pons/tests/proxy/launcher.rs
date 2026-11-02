@@ -26,6 +26,17 @@ async fn without_an_agent_command_pons_finds_claude_agent_acp_on_path() {
     assert_eq!(reply["result"]["echoed"], json!({"x": 1}));
 }
 
+#[tokio::test]
+async fn an_agent_that_cannot_start_is_reported_with_the_doctor_hint() {
+    let mut command = super::harness::pons_command(&[]);
+    command.arg("--").arg(temp_path("no-such-agent"));
+    let out = command.output().await.unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("failed to spawn agent"), "{err}");
+    assert!(err.contains("pons self doctor"), "{err}");
+}
+
 /// Returns the default log directory under `home`, as `log::default_dir` picks it.
 fn default_log_dir(home: &Path) -> PathBuf {
     match std::env::consts::OS {

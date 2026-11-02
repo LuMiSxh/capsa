@@ -15,6 +15,7 @@ mod interrupt;
 mod mcp;
 mod notification;
 mod permission;
+mod reassert;
 mod replay;
 mod resume;
 mod roster;
@@ -134,6 +135,15 @@ fn kid_end(parent: &str, id: &str) -> Vec<u8> {
     )
 }
 
+/// Builds a `Monitor` call of subagent `parent` with the given raw input.
+fn monitor(parent: &str, id: &str, input: Value) -> Vec<u8> {
+    update(
+        json!({"_meta": {"claudeCode": {"toolName": "Monitor", "parentToolUseId": parent}},
+        "toolCallId": id, "sessionUpdate": "tool_call", "status": "pending",
+        "title": "Monitor logs", "kind": "other", "rawInput": input}),
+    )
+}
+
 fn task_notification() -> Vec<u8> {
     update(
         json!({"sessionUpdate": "usage_update", "used": 32489, "size": 1000000,
@@ -212,6 +222,16 @@ fn initialize(notices: bool) -> Vec<u8> {
     } else {
         json!({"configOptions": {}})
     };
+    line(json!({"jsonrpc": "2.0", "id": 0, "method": "initialize",
+        "params": {"protocolVersion": 1, "clientCapabilities": {"session": session}}}))
+}
+
+/// An `initialize` whose `session.notices` capability is `notices`, or absent.
+fn initialize_notices(notices: Option<Value>) -> Vec<u8> {
+    let mut session = json!({"configOptions": {}});
+    if let Some(n) = notices {
+        session["notices"] = n;
+    }
     line(json!({"jsonrpc": "2.0", "id": 0, "method": "initialize",
         "params": {"protocolVersion": 1, "clientCapabilities": {"session": session}}}))
 }

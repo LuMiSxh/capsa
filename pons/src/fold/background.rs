@@ -36,6 +36,8 @@ impl Folds {
             ));
             return None;
         };
+        // A finished card's monitors end with it: later activity must not hold it open.
+        entry.monitors.clear();
         if entry.done.is_some() {
             // Already shown as done by silence: only confirm it.
             entry.provisional = !confirmed;
@@ -124,7 +126,8 @@ impl Folds {
 
     /// Finish background cards by their signals. A matured `task-notification`
     /// ends the best candidate (agent text last, no tool open, quiet longest;
-    /// a subagent with a tool open is never picked, and none qualifying ends
+    /// a subagent with a tool open is never picked, one whose `Monitor` runs is
+    /// picked only when no other qualifies, and none qualifying ends
     /// nothing). Silence ends a card only by the rule in the module docs.
     pub fn poll(&mut self, now: Instant) -> Vec<Finished> {
         let mut out = Vec::new();
@@ -138,18 +141,24 @@ impl Folds {
             !ripe
         });
         for (session, at) in due {
-            let pick = self
-                .entries
-                .values()
-                .filter(|e| e.session == session && e.marker_candidate(at))
-                .min_by_key(|e| {
-                    (
-                        u8::from(e.last_kind != Kind::Text),
-                        e.last_activity(),
-                        e.parent.clone(),
-                    )
-                })
-                .map(|e| e.parent.clone());
+            // A card whose `Monitor` runs is picked only when no other card qualifies.
+            let pick = [false, true].into_iter().find_map(|monitored| {
+                self.entries
+                    .values()
+                    .filter(|e| {
+                        e.session == session
+                            && e.marker_candidate(at)
+                            && e.monitoring(now) == monitored
+                    })
+                    .min_by_key(|e| {
+                        (
+                            u8::from(e.last_kind != Kind::Text),
+                            e.last_activity(),
+                            e.parent.clone(),
+                        )
+                    })
+                    .map(|e| e.parent.clone())
+            });
             match pick {
                 Some(parent) => {
                     out.extend(self.finish_background(
@@ -201,6 +210,22 @@ impl Folds {
             .values()
             .filter(|e| e.session == session && e.is_running_background())
             .map(|e| e.parent.clone())
+            .collect()
+    }
+
+    /// Returns the full update of every running background subagent of `session`,
+    /// status and title included. Used after a cancel was dropped: the client was
+    /// told the turn was cancelled and has finished those cards, so they are
+    /// asserted again.
+    pub fn reassert_running(&mut self, session: &str, now: Instant) -> Vec<Value> {
+        let mut ids = self.running_background(session);
+        ids.sort();
+        ids.iter()
+            .filter_map(|id| {
+                let e = self.entries.get_mut(id)?;
+                e.dirty = true;
+                e.take_emit(now)
+            })
             .collect()
     }
 

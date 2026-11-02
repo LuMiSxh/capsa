@@ -267,6 +267,10 @@ pub struct Engine {
     tick_failures: u32,
     /// Last subscription limit per window, so the census records changes only.
     limits: Limits,
+    /// Whether to keep the wire-log summary of each agent `session/update`.
+    want_summary: bool,
+    /// The summary of the agent line handled last, when it was parsed.
+    summary: Option<String>,
 }
 
 impl Engine {
@@ -305,6 +309,19 @@ impl Engine {
             closed: HashSet::new(),
             tick_failures: 0,
             limits: Limits::default(),
+            want_summary: false,
+            summary: None,
         }
+    }
+
+    /// Makes the engine keep the one-line log summary of each agent `session/update` it
+    /// parses anyway, so the wire log need not parse the line again.
+    pub fn want_summaries(&mut self, on: bool) {
+        self.want_summary = on;
+    }
+
+    /// Takes the summary of the agent line handled last (see [`Engine::want_summaries`]).
+    pub fn take_summary(&mut self) -> Option<String> {
+        self.summary.take()
     }
 }

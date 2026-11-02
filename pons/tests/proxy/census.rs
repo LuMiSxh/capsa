@@ -15,8 +15,18 @@ fn census_command(state: &Path, args: &[&str]) -> Command {
     command
         .arg("--")
         .arg(mock_agent())
-        .env("XDG_STATE_HOME", state);
+        .env("XDG_STATE_HOME", state)
+        .env("LOCALAPPDATA", state);
     command
+}
+
+/// Mirrors `capsa_core::paths::state_dir("census")` under the test's state root.
+fn census_state(state: &Path) -> std::path::PathBuf {
+    if cfg!(windows) {
+        state.join("census").join("state")
+    } else {
+        state.join("census")
+    }
 }
 
 #[tokio::test]
@@ -32,7 +42,7 @@ async fn a_rate_limit_line_is_forwarded_unchanged_and_each_window_is_recorded_on
     h.recv_until(|m| m["id"] == 3).await;
 
     // The proxy writes snapshots off the forwarding path, so give the writes a moment to land.
-    let file = state.join("census").join("snapshots");
+    let file = census_state(&state).join("snapshots");
     let mut text = String::new();
     for _ in 0..200 {
         text = std::fs::read_to_string(&file).unwrap_or_default();

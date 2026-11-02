@@ -39,6 +39,10 @@
 //!   pending main-agent tool call `m1` whose input "completes" 500 ms later
 //!   (an `in_progress` update from a thread)
 //! - `session/prompt` with text `die`: the agent exits with code 3, unanswered
+//! - `session/prompt` with text `burst:N`: N small text updates, then the
+//!   prompt's response (the proxy timing harness)
+//! - `session/prompt` with text `reply-exit`: 192 text updates of 16 KiB, the
+//!   prompt's response, then an immediate exit with code 0
 //! - `session/prompt` with text `permission-read` or `permission-bash`: asks
 //!   the client for permission (id "perm-2", a `Read` or `Bash` tool call
 //!   with allow_once, allow_always and reject_once options) and reports the
@@ -264,6 +268,20 @@ fn prompt_turn(sid: &str, text: &str, prompts: &mut Vec<Value>) {
         ),
         "rate-limit" => println!("{RATE_LIMIT_LINE}"),
         "die" => std::process::exit(3),
+        t if t.starts_with("burst:") => {
+            for i in 0..t["burst:".len()..].parse::<u32>().unwrap_or(0) {
+                update(
+                    sid,
+                    json!({"sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": format!("line {i}: reading the file now")}}),
+                );
+            }
+            answer_all(prompts, "end_turn");
+        }
+        "reply-exit" => {
+            flood(sid, "", prompts);
+            std::process::exit(0);
+        }
         t if t.starts_with("flood:") => flood(sid, &t["flood:".len()..], prompts),
         "permission-read" | "permission-bash" => permission_turn(sid, text),
         "background" | "background-notify" | "background-result" | "background-text"
@@ -350,7 +368,9 @@ fn flood(sid: &str, path: &str, prompts: &mut Vec<Value>) {
                 "content": {"type": "text", "text": filler}}),
         );
     }
-    let _ = std::fs::write(path, "done");
+    if !path.is_empty() {
+        let _ = std::fs::write(path, "done");
+    }
     answer_all(prompts, "end_turn");
 }
 

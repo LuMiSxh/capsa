@@ -38,6 +38,25 @@ async fn a_dead_agent_answers_the_waiting_prompt_with_an_error_and_pons_exits() 
     assert_eq!(status.code(), Some(3));
 }
 
+#[tokio::test]
+async fn responses_in_the_pipe_when_the_agent_exits_are_delivered_not_replaced_by_an_error() {
+    let mut h = Harness::start(&[]);
+    h.prompt(1, "reply-exit").await;
+    let seen = h.recv_until(|m| m["id"] == 1).await;
+    assert_eq!(seen.len(), 193, "every update and the response arrived");
+    let last = seen.last().unwrap();
+    assert!(
+        last["error"].is_null(),
+        "the real response, not an error: {last}"
+    );
+    assert_eq!(last["result"]["stopReason"], "end_turn");
+    let status = timeout(Duration::from_secs(10), h.child.wait())
+        .await
+        .expect("pons exits")
+        .unwrap();
+    assert_eq!(status.code(), Some(0));
+}
+
 #[cfg(unix)]
 fn alive(pid: i64) -> bool {
     // SAFETY: signal 0 only checks that the process exists.

@@ -118,6 +118,7 @@ impl Folds {
             entry.last_emit = None;
             reopened = true;
         }
+        entry.note_monitor(update, now);
         entry.apply_child(update);
         let mut out = Vec::new();
         if entry.is_due(now, self.throttle)

@@ -10,9 +10,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use capsa_core::census_snapshot::append_to;
+use capsa_core::hint::Hinted;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, Interval, MissedTickBehavior, Sleep, interval, sleep, timeout};
 
@@ -23,6 +24,8 @@ use crate::log::{Dir, Logger};
 mod io;
 mod session;
 mod teardown;
+#[cfg(test)]
+mod tests;
 
 use session::{Event, Session, finish, pump};
 
@@ -30,8 +33,9 @@ use io::*;
 use teardown::*;
 
 const TICK: Duration = Duration::from_millis(100);
-/// How long to wait for buffered agent output after the child exited.
-const DRAIN_GRACE: Duration = Duration::from_secs(1);
+/// How long to wait for the agent's stdout to reach its end after the child exited. The
+/// end comes at once unless a descendant of the agent keeps the pipe open.
+const DRAIN_GRACE: Duration = Duration::from_secs(5);
 /// How long a child gets to honour a forwarded signal before SIGKILL.
 const SIGNAL_GRACE: Duration = Duration::from_secs(5);
 /// How long the agent gets after SIGTERM at teardown before SIGKILL.
@@ -79,6 +83,8 @@ pub async fn run(cfg: Config, spawn: Spawn, logger: Logger) -> Result<i32> {
     let grace = cfg.shutdown_grace;
     let (child, pgid, agent_in, agent_out) = spawn_agent(spawn)?;
     let io = wire(agent_in, agent_out, &logger);
+    let mut engine = Engine::new(cfg);
+    engine.want_summaries(logger.wants_summaries());
     let far = Duration::from_secs(3600 * 24 * 365);
     let mut ticker = interval(TICK);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -90,14 +96,18 @@ pub async fn run(cfg: Config, spawn: Spawn, logger: Logger) -> Result<i32> {
         drain: Box::pin(sleep(far)),
         kill_at: Box::pin(sleep(far)),
         kill_armed: false,
-        engine: Engine::new(cfg),
+        engine,
         signals: Signals::new()?,
         ticker,
         logger,
         io,
     };
     let exit = pump(&mut session).await?;
-    finish(exit, session, grace).await
+    let logger = session.logger.clone();
+    let code = finish(exit, session, grace).await;
+    // Tasks still holding a clone would keep the buffer from being written by Drop.
+    logger.flush();
+    code
 }
 
 /// Starts the agent in its own process group and takes its stdio.
@@ -119,7 +129,12 @@ fn spawn_agent(spawn: Spawn) -> Result<(Child, Option<u32>, ChildStdin, ChildStd
         .stderr(Stdio::inherit())
         .kill_on_drop(true)
         .spawn()
-        .with_context(|| format!("failed to spawn agent `{program}`"))?;
+        .map_err(|err| {
+            anyhow::Error::new(Hinted::new(
+                format!("failed to spawn agent `{program}`: {err}"),
+                "run `pons self doctor` to check how the agent command resolves and whether it can start",
+            ))
+        })?;
     let pgid = child.id();
     let agent_in = child.stdin.take().context("child stdin")?;
     let agent_out = child.stdout.take().context("child stdout")?;
@@ -132,7 +147,7 @@ struct Wiring {
     out: Out,
     c2a: Arc<Gate>,
     a2c: Arc<Gate>,
-    client_writer: JoinHandle<()>,
+    client_writer: oneshot::Receiver<()>,
     agent_writer: JoinHandle<()>,
 }
 
@@ -143,23 +158,30 @@ fn wire(agent_in: ChildStdin, agent_out: ChildStdout, logger: &Logger) -> Wiring
     let c2a = Arc::new(Gate::default());
     let (agent_tx, agent_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (client_tx, client_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-    let agent_writer = tokio::spawn(write_lines(agent_in, agent_rx, c2a.clone(), None));
-    let client_writer = tokio::spawn(write_lines(
-        tokio::io::stdout(),
-        client_rx,
-        a2c.clone(),
-        Some(tx.clone()),
-    ));
+    let agent_writer = tokio::spawn(write_lines(agent_in, agent_rx, c2a.clone(), logger.clone()));
+    let client_writer = spawn_client_writer(client_rx, a2c.clone(), tx.clone(), logger.clone());
     tokio::spawn(read_lines(
         tokio::io::stdin(),
         tx.clone(),
         c2a.clone(),
-        Event::Client,
-        || Event::ClientClosed,
+        Lane {
+            line: Event::Client,
+            oversized: Event::ClientOversized,
+            closed: || Event::ClientClosed,
+        },
+        MAX_LINE,
     ));
-    tokio::spawn(read_lines(agent_out, tx, a2c.clone(), Event::Agent, || {
-        Event::AgentClosed
-    }));
+    tokio::spawn(read_lines(
+        agent_out,
+        tx,
+        a2c.clone(),
+        Lane {
+            line: Event::Agent,
+            oversized: Event::AgentOversized,
+            closed: || Event::AgentClosed,
+        },
+        MAX_LINE,
+    ));
     let out = Out {
         agent: Some(agent_tx),
         client: Some(client_tx),
@@ -190,18 +212,11 @@ impl Out {
     fn send(&self, actions: Vec<Action>) {
         for action in actions {
             match action {
-                Action::ToAgent(mut line) => {
-                    line.push(b'\n');
-                    Self::queue(&self.agent, &self.c2a, line);
-                }
-                Action::ToClient {
-                    mut line,
-                    synthesized,
-                } => {
+                Action::ToAgent(line) => Self::queue(&self.agent, &self.c2a, line),
+                Action::ToClient { line, synthesized } => {
                     if synthesized {
                         self.logger.log(Dir::PonsToClient, &line);
                     }
-                    line.push(b'\n');
                     Self::queue(&self.client, &self.a2c, line);
                 }
                 Action::Census { file, snapshot } => {
@@ -218,7 +233,7 @@ impl Out {
     }
 
     fn queue(tx: &Option<mpsc::UnboundedSender<Vec<u8>>>, gate: &Gate, line: Vec<u8>) {
-        let len = line.len();
+        let len = line.len() + 1; // the writer adds the newline
         gate.add(len);
         let sent = tx.as_ref().is_some_and(|tx| tx.send(line).is_ok());
         if !sent {

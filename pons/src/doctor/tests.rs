@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use capsa_core::exit::Outcome;
+use capsa_core::format::Format;
+use capsa_core::render::{Render, emit_to};
+
 use super::*;
 
 #[test]
@@ -94,23 +98,34 @@ fn adapter_version_comes_from_the_manifest() {
     assert_eq!(adapter_version(Path::new("/d"), &|_| None), None);
 }
 
+/// One line of the JSON-lines wire log, as `capsa_core::log` writes it.
+fn wire_line(dir: &str, text: &str) -> String {
+    json!({"ts": 1, "level": "info", "event": "wire", "ms": 0, "dir": dir, "text": text})
+        .to_string()
+}
+
 #[test]
 fn summarizes_the_log() {
-    let log = "\
-1.000 client->agent {\"jsonrpc\":\"2.0\",\"method\":\"session/cancel\",\"params\":{}}
-1.001 pons message sent while subagents run: dropped the held session/cancel for s1 (108ms before prompt 2); steered
-2.000 client->agent {\"jsonrpc\":\"2.0\",\"method\":\"session/cancel\",\"params\":{}}
-2.001 pons stop escape: forwarding repeated session/cancel for s1 (1 subagent(s) in flight)
-3.000 client->agent {\"jsonrpc\":\"2.0\",\"method\":\"session/cancel\",\"params\":{}}
-4.000 pons background subagent A launched, card kept open
-4.001 pons background subagent B launched, card kept open
-5.000 pons background subagent A finished (task-notification)
-5.001 pons dropped a task-notification user message (10 chars)
-5.002 pons fail-safe: rules failed (x), forwarded the line unchanged (1 in a row for s1)
-5.003 agent->client session/update session=s1 kind=agent_message_chunk textLen=1
-not a log line
-";
-    let s = summarize_log(log);
+    let cancel = r#"{"jsonrpc":"2.0","method":"session/cancel","params":{}}"#;
+    let log = [
+        wire_line("client->agent", cancel),
+        wire_line("pons", "message sent while subagents run: dropped the held session/cancel for s1 (108ms before prompt 2); steered"),
+        wire_line("client->agent", cancel),
+        wire_line("pons", "stop escape: forwarding repeated session/cancel for s1 (1 subagent(s) in flight)"),
+        wire_line("client->agent", cancel),
+        wire_line("pons", "background subagent A launched, card kept open"),
+        wire_line("pons", "background subagent B launched, card kept open"),
+        wire_line("pons", "background subagent A finished (task-notification)"),
+        wire_line("pons", "dropped a task-notification user message (10 chars)"),
+        wire_line("pons", "fail-safe: rules failed (x), forwarded the line unchanged (1 in a row for s1)"),
+        wire_line("agent->client", "session/update session=s1 kind=agent_message_chunk textLen=1"),
+        wire_line("pons", "exiting: error: agent exited (boom)"),
+        "not a log line".to_owned(),
+    ]
+    .join("\n");
+    let s = summarize_log(&log);
+    assert_eq!(s.lines, 12);
+    assert!(!s.legacy_text);
     assert_eq!(s.cancels_seen, 3);
     assert_eq!(s.cancels_dropped, 2);
     assert_eq!(s.cancels_forwarded(), 1);
@@ -120,16 +135,28 @@ not a log line
     assert_eq!(s.fail_safe_events, 1);
     assert_eq!(s.notifications_dropped, 1);
     assert!(!s.stepped_aside);
-    // Seven notes in the log, the last five kept in order.
+    assert_eq!(
+        s.last_exit.as_deref(),
+        Some("exiting: error: agent exited (boom)")
+    );
+    // Eight notes in the log, the last five kept in order.
     assert_eq!(s.last_notes.len(), 5);
-    assert!(s.last_notes[0].contains("subagent A launched"));
-    assert!(s.last_notes[4].contains("fail-safe"));
+    assert!(s.last_notes[0].contains("subagent B launched"));
+    assert!(s.last_notes[4].starts_with("exiting: error"));
 }
 
 #[test]
 fn meta_level_logs_count_cancels_too() {
-    let s = summarize_log("1.0 client->agent method=session/cancel\n");
+    let s = summarize_log(&wire_line("client->agent", "method=session/cancel"));
     assert_eq!(s.cancels_seen, 1);
+}
+
+#[test]
+fn an_old_text_log_is_flagged_and_not_summarized() {
+    let s = summarize_log("1.000 pons fail-safe: rules failed\n");
+    assert!(s.legacy_text);
+    assert_eq!(s.lines, 0);
+    assert!(!summarize_log("").legacy_text);
 }
 
 /// Executables the launcher can find, nothing else.
@@ -244,21 +271,22 @@ fn explicit_commands_skip_the_check_and_text_and_json_show_it() {
     let explicit = adapter_check(true, None, None, String::new);
     assert_eq!(explicit.status, "ok");
     assert_eq!(explicit.hint, None);
-    let report = detect_report(&[], &["/bin"]);
-    let text = render_text(&report, false);
+    let view = View::new(detect_report(&[], &["/bin"]));
+    let plain = text(&view, false);
+    assert!(plain.contains("claude-agent-acp adapter"), "{plain}");
     assert!(
-        text.contains("claude-agent-acp adapter: fail, not found"),
-        "{text}"
-    );
-    assert!(
-        text.contains(&format!(
-            "hint: install Node.js, then run: npm install -g {PACKAGE}"
+        plain.contains(&format!(
+            "install Node.js, then run: npm install -g {PACKAGE}"
         )),
-        "{text}"
+        "{plain}"
     );
-    assert!(render_text(&report, true).contains("\x1b[31mfail\x1b[0m"));
-    assert!(!text.contains('\x1b'));
-    let v: Value = serde_json::from_str(&render_json(&report)).unwrap();
+    assert!(!plain.contains('\x1b'));
+    assert!(text(&view, true).contains('\x1b'));
+    assert!(matches!(view.outcome(), Outcome::Empty));
+    let v: Value = serde_json::from_str(&json_of(&view)).unwrap();
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["groups"][0]["name"], "launcher");
+    assert_eq!(v["groups"][0]["checks"][1]["status"], "fail");
     assert_eq!(v["launcher"]["adapter"]["status"], "fail");
     assert!(
         v["launcher"]["adapter"]["detail"]
@@ -290,13 +318,14 @@ fn the_report_is_ascii_and_survives_missing_everything() {
         agent_cmd: Vec::new(),
         log: Some(PathBuf::from("/nope.log")),
     };
-    let text = report(&inputs, &NoFs, &|_| None, &NoSys);
-    assert!(text.is_ascii(), "{text}");
-    assert!(text.contains("would run: nothing"));
-    assert!(text.contains("not found or unreadable"));
-    assert!(text.contains(concat!("pons ", env!("CARGO_PKG_VERSION"))));
-    assert!(text.contains("no running pons proxy found"));
-    let json = render_json(&gather(&inputs, &NoFs, &|_| None, &NoSys));
+    let view = View::new(gather(&inputs, &NoFs, &|_| None, &NoSys));
+    let plain = text(&view, false);
+    assert!(plain.is_ascii(), "{plain}");
+    assert!(plain.contains("nothing would run"));
+    assert!(plain.contains("not found or unreadable"));
+    assert!(plain.contains(concat!("pons ", env!("CARGO_PKG_VERSION"))));
+    assert!(plain.contains("no running pons proxy found"));
+    let json = json_of(&view);
     assert!(json.is_ascii());
     let v: Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["pons"]["version"], env!("CARGO_PKG_VERSION"));
@@ -357,10 +386,131 @@ fn the_configured_adapter_version_is_read_next_to_the_real_binary() {
 #[test]
 fn exits_and_provisional_finishes_are_summarized() {
     let s = summarize_log(
-        "1.0 pons background subagent A finished (idle, provisional)\n\
-             2.0 pons background subagent A finished (prompt response)\n\
-             3.0 pons exiting: client closed stdin\n",
+        &[
+            wire_line("pons", "background subagent A finished (idle, provisional)"),
+            wire_line("pons", "background subagent A finished (prompt response)"),
+            wire_line("pons", "exiting: client closed stdin"),
+        ]
+        .join("\n"),
     );
     assert_eq!((s.subagents_finished, s.subagents_provisional), (2, 1));
     assert_eq!(s.last_exit.as_deref(), Some("exiting: client closed stdin"));
+}
+
+/// The agent view of `view`, or the human view with `colour`.
+fn text(view: &View, colour: bool) -> String {
+    let format = if colour { Format::Human } else { Format::Agent };
+    let mut out = Vec::new();
+    emit_to(view, format, colour, &mut out).unwrap();
+    String::from_utf8(out).unwrap()
+}
+
+/// The `--json` line of `view`.
+fn json_of(view: &View) -> String {
+    let mut out = Vec::new();
+    emit_to(view, Format::Json, false, &mut out).unwrap();
+    String::from_utf8(out).unwrap()
+}
+
+/// A machine with a launcher-found adapter, a Zed entry, a registry adapter, a wire log and
+/// one running proxy.
+fn fixture() -> Report {
+    Report {
+        version: env!("CARGO_PKG_VERSION"),
+        platform: "linux",
+        arch: "x86_64",
+        explicit_command: false,
+        would_run: Ok((
+            "npx".to_owned(),
+            "/bin/npx -y @agentclientprotocol/claude-agent-acp".to_owned(),
+        )),
+        candidates: vec![(
+            "npx -y @agentclientprotocol/claude-agent-acp".to_owned(),
+            Some("/bin/npx".to_owned()),
+        )],
+        searched_dirs: 3,
+        configured_adapter: None,
+        adapter: AdapterCheck {
+            status: "ok",
+            detail: "claude-agent-acp at /bin/claude-agent-acp (version 0.85.1)".to_owned(),
+            hint: None,
+        },
+        settings_path: Some("/h/.config/zed/settings.json".to_owned()),
+        settings: Some(Settings::Servers(vec![Server {
+            name: "claude-pons".to_owned(),
+            command: "/bin/pons".to_owned(),
+            args: vec!["--log".to_owned(), "/tmp/x".to_owned()],
+        }])),
+        registry_adapter: Some((
+            Some("0.85.1".to_owned()),
+            "/h/.local/share/zed/external_agents/registry/npx/claude-acp".to_owned(),
+        )),
+        log: Some(LogReport {
+            path: "/tmp/pons.log".to_owned(),
+            summary: Some(summarize_log(&wire_line(
+                "pons",
+                "background subagent A launched, card kept open",
+            ))),
+            size: Some(100),
+            rotated_size: None,
+        }),
+        processes: vec![Proc {
+            pid: 7,
+            age_secs: 60,
+        }],
+        exe_age_secs: Some(3600),
+    }
+}
+
+#[test]
+fn json_keeps_every_key_of_the_report() {
+    let mut v: Value = serde_json::from_str(&json_of(&View::new(fixture()))).unwrap();
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["groups"].as_array().map(Vec::len), Some(4));
+    let object = v.as_object_mut().unwrap();
+    object.remove("ok");
+    object.remove("groups");
+    assert_eq!(
+        v,
+        json!({
+            "pons": {"version": env!("CARGO_PKG_VERSION"), "platform": "linux", "arch": "x86_64"},
+            "launcher": {
+                "explicit_command": false,
+                "would_run": "npx",
+                "command": "/bin/npx -y @agentclientprotocol/claude-agent-acp",
+                "error": null,
+                "candidates": [{"name": "npx -y @agentclientprotocol/claude-agent-acp", "path": "/bin/npx"}],
+                "searched_dirs": 3,
+                "adapter": {"status": "ok", "detail": "claude-agent-acp at /bin/claude-agent-acp (version 0.85.1)", "hint": null},
+                "configured_adapter": null,
+            },
+            "zed": {
+                "settings_path": "/h/.config/zed/settings.json",
+                "settings": {"servers": [{"name": "claude-pons", "command": "/bin/pons", "args": ["--log", "/tmp/x"]}]},
+                "registry_adapter": {"version": "0.85.1", "dir": "/h/.local/share/zed/external_agents/registry/npx/claude-acp"},
+            },
+            "processes": [{"pid": 7, "age_secs": 60, "stale": false}],
+            "exe_age_secs": 3600,
+            "log": {
+                "path": "/tmp/pons.log",
+                "size": 100,
+                "rotated_size": null,
+                "summary": {
+                    "lines": 1,
+                    "cancels_seen": 0,
+                    "cancels_dropped": 0,
+                    "cancels_forwarded": 0,
+                    "stop_escapes": 0,
+                    "subagents_tracked": 1,
+                    "subagents_finished": 0,
+                    "subagents_provisional": 0,
+                    "fail_safe_events": 0,
+                    "notifications_dropped": 0,
+                    "stepped_aside": false,
+                    "last_exit": null,
+                    "last_notes": ["background subagent A launched, card kept open"],
+                },
+            },
+        })
+    );
 }

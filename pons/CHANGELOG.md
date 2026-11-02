@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- A client that sent `"notices": false` under `clientCapabilities.session` was treated as having advertised notices, so `--notices auto` sent it `notice` updates. `false` and `null` now count as not advertised, like for `subagents`.
+- When the agent exited, pons stopped reading its output after 1 s even though real responses could still be in the pipe, and answered the waiting prompts with "agent exited". It now reads to the end of the output (up to 5 s after the exit, with a log note when a descendant holds the pipe open), and handles every line already read before it answers the unanswered prompts.
+- A line over 32 MiB is no longer parsed: it is forwarded unchanged and a `fail-safe:` note is logged (the line itself is not logged). It was read into memory without a limit before and parsed like any other.
+- A broken pipe to the agent or to the client dropped every later line silently; pons now logs one `fail-safe:` note when the write breaks.
+- A launcher or spawn failure carries its fix as a hint: `pons self setup` (or an explicit command after `--`) when no adapter is found, `pons self doctor` when the agent command cannot start.
+- A subagent whose last call was a `Monitor` was finished by silence while its monitor was still streaming events. It now stays running until the monitor's timeout plus 30 s (30 min plus 30 s when the call has no timeout), unless a Stop, the end of its prompt or a `task-notification` that no other card qualifies for ends it first.
+- A message sent while background subagents ran dropped the held cancel, but the cancelled response had already marked their cards finished in Zed while the subagents kept running. pons now asserts each still-running card to the client again as in progress and sends the subagent plan again with them, after the message is steered or queued.
+
+### Changed
+
+- `self update` works without a GitHub token; a token only lifts the rate limit.
+- Dependencies updated (zip 8 → 9 for `pons self update`, and the other crates to their latest releases).
+- `pons self doctor` exits 1 when a check fails (it always exited 0 before). Its checks are grouped into launcher, zed, processes and wire log, each `ok`, `warn` or `fail`, and the details follow them. The human view is aligned and calm; the agent view is plain text with one line per check.
+- `pons self doctor --json` keeps every key it printed before and adds `ok` (false when a check fails) and `groups`. The object is now one compact line instead of pretty-printed JSON.
+- `--json`, `--human` and `--agent` are defined once on `pons self` and apply to its subcommands (`pons self doctor --json` still works). They are no longer separate options of `doctor` and `setup`.
+- `pons self setup --json` is byte-identical to before. When the install command fails, the error names the command and its hint says to run `pons self setup --dry-run` to see it, or to pick another manager with `--package-manager`.
+- `pons self update` and `pons self uninstall` print through the shared update code, with the same format flags as the other suite tools.
+- Performance: stdout is written by a thread of its own through a 64 KiB buffer, flushed when no more lines are queued (it was the tokio blocking pool with a flush per line), and the agent's stdin is buffered the same way. The newline is added by the writer, so a forwarded line is no longer copied to append it. The engine hands the wire log the summary of a `session/update` it parsed anyway, so the log no longer parses agent updates twice (the log text is unchanged). Ordinary user message chunks and a parent update's unchanged `rawInput` are no longer cloned. Measured with the ignored `proxy_line_cost` test (20k small updates through the proxy and the mock agent, `release-unwind`, Windows, median of three warm runs): 13.1 to 8.0 µs per line without the wire log, 20.6 to 14.4 µs per line with the default log level.
+- The wire log is JSON lines: one object per line with `ts`, `level`, `event`, `ms`, `dir` and `text` (the text is the same as before), written through `capsa_core::log`. A start writes `pons-<time>-<pid>.jsonl` (older `.log` files are still pruned with the new ones), and a rotated explicit `--log` file moves to `FILE.old` instead of `FILE.1`. `pons self doctor` summarizes the JSON lines; an old text log is reported as not summarized. Measured with the ignored `proxy_line_cost` test (`release-unwind`, Windows, 20k lines, median of three runs), before to after: 9.1 to 9.4 µs per line with the log off (the runs ranged 8.8 to 10.1 µs before and 8.7 to 9.8 µs after), and 16.1 to 12.3 µs per line with the default log level.
+- Internal: the rendering methods of `FoldEntry` moved from `fold/entry.rs` to `fold/render.rs`.
+
 ## [0.9.0]
 
 ### Changed

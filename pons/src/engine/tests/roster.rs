@@ -201,6 +201,27 @@ fn notice_is_not_sent_without_advertised_support() {
 }
 
 #[test]
+fn only_a_notices_capability_that_is_not_null_or_false_counts_as_advertised() {
+    let cases = [
+        (Some(json!(false)), false),
+        (Some(Value::Null), false),
+        (None, false),
+        (Some(json!(true)), true),
+        (Some(json!({})), true),
+    ];
+    for (advertised, sent) in cases {
+        let t0 = Instant::now();
+        let mut e = engine();
+        e.on_client(&initialize_notices(advertised.clone()), t0);
+        assert_eq!(
+            !notices_in(&notify_a(&mut e, t0)).is_empty(),
+            sent,
+            "session.notices = {advertised:?}"
+        );
+    }
+}
+
+#[test]
 fn notice_mode_overrides_the_advertisement() {
     let t0 = Instant::now();
     let mut e = Engine::new(Config {

@@ -6,8 +6,12 @@ use super::*;
 
 pub(super) enum Event {
     Client(Vec<u8>),
+    /// A client line over the cap, to forward unparsed.
+    ClientOversized(Vec<u8>),
     ClientClosed,
     Agent(Vec<u8>),
+    /// An agent line over the cap, to forward unparsed.
+    AgentOversized(Vec<u8>),
     AgentClosed,
     ClientWriteFailed,
 }
@@ -47,10 +51,14 @@ pub(super) async fn pump(s: &mut Session) -> Result<Exit> {
                     s.engine.on_client(&line, Instant::now().into_std())
                 }
                 Some(Event::Agent(line)) => {
-                    s.io.a2c.sub(line.len() + 1);
-                    s.logger.log(Dir::AgentToClient, &line);
-                    s.engine.on_agent(&line, Instant::now().into_std())
+                    agent_line(&mut s.engine, &s.logger, &s.io.a2c, &line)
                 }
+                Some(Event::ClientOversized(line)) => {
+                    s.io.c2a.sub(line.len() + 1);
+                    oversized_note(&s.logger, "client", line.len());
+                    vec![Action::ToAgent(line)]
+                }
+                Some(Event::AgentOversized(line)) => oversized_agent(&s.logger, &s.io.a2c, line),
                 Some(Event::ClientClosed) => return Ok(Exit::Client("client closed stdin")),
                 Some(Event::ClientWriteFailed) => {
                     return Ok(Exit::Client("writing to the client failed"));
@@ -104,9 +112,66 @@ pub(super) async fn pump(s: &mut Session) -> Result<Exit> {
     }
 }
 
+/// Logs and handles one agent line.
+fn agent_line(engine: &mut Engine, logger: &Logger, gate: &Gate, line: &[u8]) -> Vec<Action> {
+    gate.sub(line.len() + 1);
+    let actions = engine.on_agent(line, Instant::now().into_std());
+    logger.log_with(Dir::AgentToClient, line, engine.take_summary());
+    actions
+}
+
+fn oversized_agent(logger: &Logger, gate: &Gate, line: Vec<u8>) -> Vec<Action> {
+    gate.sub(line.len() + 1);
+    oversized_note(logger, "agent", line.len());
+    vec![Action::ToClient {
+        line,
+        synthesized: false,
+    }]
+}
+
+fn oversized_note(logger: &Logger, side: &str, len: usize) {
+    logger.log(
+        Dir::Pons,
+        format!(
+            "fail-safe: {side} line of {len} bytes is over the {MAX_LINE} byte cap: forwarded unparsed and unlogged"
+        )
+        .as_bytes(),
+    );
+}
+
+/// Handles the agent lines already read when the pump stopped, so a response that
+/// reached the proxy is not answered a second time with "agent exited". Returns how
+/// many it handled.
+fn drain_queued(s: &mut Session) -> usize {
+    let mut handled = 0;
+    while let Ok(event) = s.io.rx.try_recv() {
+        let actions = match event {
+            Event::Agent(line) => agent_line(&mut s.engine, &s.logger, &s.io.a2c, &line),
+            Event::AgentOversized(line) => oversized_agent(&s.logger, &s.io.a2c, line),
+            _ => continue,
+        };
+        handled += 1;
+        s.io.out.send(actions);
+    }
+    handled
+}
+
 /// Ends the session: tears the agent down when the client went away, or
 /// flushes the output when the agent exited.
-pub(super) async fn finish(exit: Exit, s: Session, grace: Duration) -> Result<i32> {
+pub(super) async fn finish(exit: Exit, mut s: Session, grace: Duration) -> Result<i32> {
+    if matches!(exit, Exit::Agent) {
+        let handled = drain_queued(&mut s);
+        if !s.agent_closed {
+            s.logger.log(
+                Dir::Pons,
+                format!(
+                    "agent output not read to the end {}s after the agent exited (a descendant may hold its stdout open): {handled} queued lines were still handled, anything unread is dropped",
+                    DRAIN_GRACE.as_secs()
+                )
+                .as_bytes(),
+            );
+        }
+    }
     let Session {
         mut child,
         pgid,

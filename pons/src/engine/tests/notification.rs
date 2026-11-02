@@ -194,3 +194,20 @@ fn replay_of_the_logged_session_shows_the_lateness_and_its_fix() {
         [2_096, 2_098, 0, 0]
     );
 }
+
+#[test]
+fn the_engine_hands_over_the_log_summary_of_an_update_it_parsed() {
+    let now = Instant::now();
+    let mut e = engine();
+    e.on_agent(&chunk("hello"), now);
+    assert_eq!(e.take_summary(), None, "off unless asked for");
+    e.want_summaries(true);
+    let raw = chunk("hello");
+    e.on_agent(&raw, now);
+    let summary = e.take_summary().expect("an update has a summary");
+    assert!(summary.starts_with("session/update session="), "{summary}");
+    assert!(summary.ends_with("textLen=5"), "{summary}");
+    assert_eq!(e.take_summary(), None, "taken once");
+    e.on_agent(&line(json!({"jsonrpc": "2.0", "id": 5, "result": {}})), now);
+    assert_eq!(e.take_summary(), None, "only updates have one");
+}

@@ -17,6 +17,7 @@ mod background;
 mod child;
 mod entry;
 mod label;
+mod render;
 mod retire;
 #[cfg(test)]
 mod tests;
@@ -62,6 +63,12 @@ const HIDDEN_KEEP: Duration = Duration::from_secs(3600);
 const MAX_TOMBSTONES: usize = 512;
 /// Most simultaneously open tool calls tracked per card.
 const MAX_OPEN_TOOLS: usize = 1024;
+/// How long a `Monitor` call with no readable timeout keeps its subagent open.
+const MONITOR_FALLBACK: Duration = Duration::from_secs(30 * 60);
+/// Time after a monitor's deadline for the agent to answer, before its card may finish.
+const MONITOR_GRACE: Duration = Duration::from_secs(30);
+/// Longest monitor timeout taken from the input, so the deadline cannot overflow.
+const MONITOR_MAX: Duration = Duration::from_secs(24 * 60 * 60);
 /// Prefix of a tool call id that pons made up; never a subagent parent.
 pub const ENTRY_PREFIX: &str = "pons-finished-";
 
@@ -166,6 +173,21 @@ struct Tombstone {
     title: Option<String>,
 }
 
+/// A `Monitor` call of a subagent. It keeps streaming events after the call itself
+/// completed, so its card stays open until the deadline.
+#[derive(Debug, Clone, Copy)]
+struct Monitor {
+    started: Instant,
+    /// The timeout from the call's input, once the input carries it.
+    timeout: Option<Duration>,
+}
+
+impl Monitor {
+    fn deadline(self) -> Instant {
+        self.started + self.timeout.unwrap_or(MONITOR_FALLBACK) + MONITOR_GRACE
+    }
+}
+
 /// Fold log of one parent tool call.
 #[derive(Debug)]
 pub struct FoldEntry {
@@ -213,6 +235,8 @@ pub struct FoldEntry {
     hidden: bool,
     /// The parent's `rawInput` once it has content: the subagent's type, description and prompt.
     input: Option<Value>,
+    /// The subagent's `Monitor` calls by call id, while they may still be streaming.
+    monitors: HashMap<String, Monitor>,
 }
 
 impl FoldEntry {}
@@ -337,6 +361,29 @@ fn str_field<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
 
 fn tool_name(update: &Value) -> Option<&str> {
     update.pointer("/_meta/claudeCode/toolName")?.as_str()
+}
+
+/// Tells whether a tool call is `Monitor`, by its tool name, else by its name or title.
+fn is_monitor(update: &Value) -> bool {
+    tool_name(update)
+        .or_else(|| str_field(update, "name"))
+        .or_else(|| str_field(update, "title"))
+        == Some("Monitor")
+}
+
+/// Reads the timeout of a `Monitor` call from its `rawInput`, in milliseconds or seconds.
+// ponytail: the field names are not checked against a captured Monitor call; `timeout_ms`
+// is the one expected, and the others are accepted in case the input names it differently.
+// To confirm, run a Monitor call with `--log` and compare its `rawInput` in the wire log.
+fn monitor_timeout(update: &Value) -> Option<Duration> {
+    let input = update.get("rawInput")?;
+    let ms = |key: &str| input.get(key)?.as_u64().map(Duration::from_millis);
+    let secs = |key: &str| input.get(key)?.as_u64().map(Duration::from_secs);
+    ms("timeout_ms")
+        .or_else(|| ms("timeout"))
+        .or_else(|| secs("timeout_seconds"))
+        .or_else(|| secs("timeoutSeconds"))
+        .map(|t| t.min(MONITOR_MAX))
 }
 
 /// Formats elapsed seconds as `45s`, `3m 05s` or `1h 02m`.
