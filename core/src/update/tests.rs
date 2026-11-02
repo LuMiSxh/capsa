@@ -6,8 +6,13 @@ use serde_json::Value;
 
 use super::archive::{extract, verify};
 use super::binary::{ensure_named, remove, replace};
-use super::release::{archive_name, asset_url, select_release, version};
-use super::{Report, State, UpdateError};
+use super::release::{
+    archive_name, asset_url, authorization, listing_error, resolve_token, select_release, version,
+};
+use super::{Removal, Report, State, Tool, UpdateError};
+use crate::format::Format;
+use crate::hint::Hint;
+use crate::render::emit_to;
 
 fn releases(json: &str) -> Vec<Value> {
     serde_json::from_str(json).unwrap()
@@ -213,7 +218,7 @@ fn removal_requires_the_tool_name() {
 fn selects_the_newest_published_release_of_the_tool() {
     let list = releases(
         r#"[
-            {"tag_name": "velum-v0.3.0", "draft": false, "prerelease": false},
+            {"tag_name": "census-v0.3.0", "draft": false, "prerelease": false},
             {"tag_name": "acus-v0.17.0", "draft": true, "prerelease": false},
             {"tag_name": "acus-v0.16.2-rc.1", "draft": false, "prerelease": true},
             {"tag_name": "acus-v0.16.1", "draft": false, "prerelease": false},
@@ -224,7 +229,7 @@ fn selects_the_newest_published_release_of_the_tool() {
         select_release(list.clone(), "acus").unwrap().tag,
         "acus-v0.16.1"
     );
-    assert_eq!(select_release(list, "velum").unwrap().tag, "velum-v0.3.0");
+    assert_eq!(select_release(list, "census").unwrap().tag, "census-v0.3.0");
 }
 
 #[test]
@@ -289,4 +294,145 @@ fn report_names_the_command_to_run() {
     };
     assert_eq!(current.outcome(true).code(), 1);
     assert_eq!(current.outcome(false).code(), 0);
+}
+
+fn pons_report(state: State) -> Report {
+    Report {
+        tool: "pons",
+        current: "0.5.2".into(),
+        latest: "0.6.0".into(),
+        exe: "/bin/pons".into(),
+        state,
+    }
+}
+
+#[test]
+fn report_agent_text_is_its_display_line() {
+    let report = pons_report(State::Available);
+    let mut out = Vec::new();
+    emit_to(&report, Format::Agent, false, &mut out).unwrap();
+    assert_eq!(String::from_utf8(out).unwrap(), format!("{report}\n"));
+}
+
+#[test]
+fn report_json_has_the_stable_shape() {
+    let report = pons_report(State::Updated);
+    assert_eq!(
+        serde_json::to_value(&report).unwrap(),
+        serde_json::json!({
+            "tool": "pons",
+            "current": "0.5.2",
+            "latest": "0.6.0",
+            "exe": "/bin/pons",
+            "state": "updated",
+        })
+    );
+}
+
+#[test]
+fn report_human_view_titles_the_update_and_hints_at_it() {
+    let mut out = Vec::new();
+    emit_to(
+        &pons_report(State::Available),
+        Format::Human,
+        false,
+        &mut out,
+    )
+    .unwrap();
+    let text = String::from_utf8(out).unwrap();
+    assert!(text.starts_with("pons self update\n"), "{text}");
+    assert!(text.contains("installed"), "{text}");
+    assert!(text.contains("run pons self update"), "{text}");
+}
+
+#[test]
+fn removal_agent_text_and_json_keep_the_display_line() {
+    let removal = Removal {
+        path: "/bin/pons".into(),
+        removed: false,
+    };
+    let mut out = Vec::new();
+    emit_to(&removal, Format::Agent, false, &mut out).unwrap();
+    assert_eq!(String::from_utf8(out).unwrap(), format!("{removal}\n"));
+    assert_eq!(
+        serde_json::to_value(&removal).unwrap(),
+        serde_json::json!({"path": "/bin/pons", "removed": false})
+    );
+}
+
+fn status_error(code: u16) -> UpdateError {
+    UpdateError::Http {
+        url: "https://api.github.com/repos/LuMiSxh/capsa/releases".to_owned(),
+        source: Box::new(ureq::Error::StatusCode(code)),
+    }
+}
+
+#[test]
+fn the_environment_token_wins_over_gh_and_is_trimmed() {
+    let token = resolve_token(Some(" abc \n".to_owned()), || Some("gh-token".to_owned()));
+    assert_eq!(token.as_deref(), Some("abc"));
+}
+
+#[test]
+fn a_blank_environment_token_falls_back_to_gh() {
+    let token = resolve_token(Some("  ".to_owned()), || Some("gh-token".to_owned()));
+    assert_eq!(token.as_deref(), Some("gh-token"));
+}
+
+#[test]
+fn gh_supplies_the_token_when_the_environment_has_none() {
+    let token = resolve_token(None, || Some("gh-token".to_owned()));
+    assert_eq!(token.as_deref(), Some("gh-token"));
+}
+
+#[test]
+fn no_token_is_resolved_when_neither_source_has_one() {
+    assert_eq!(resolve_token(None, || None), None);
+}
+
+#[test]
+fn only_a_token_adds_the_authorization_header() {
+    assert_eq!(authorization(None), None);
+    assert_eq!(authorization(Some("abc")).as_deref(), Some("Bearer abc"));
+}
+
+#[test]
+fn rate_limit_statuses_hint_at_the_token_fix() {
+    for code in [403, 429] {
+        assert_eq!(
+            status_error(code).hint().as_deref(),
+            Some(
+                "GitHub may rate-limit anonymous requests: set GITHUB_TOKEN or run `gh auth login`"
+            )
+        );
+    }
+}
+
+#[test]
+fn a_rejected_token_hints_at_the_token_fix() {
+    assert_eq!(
+        status_error(401).hint().as_deref(),
+        Some("GitHub rejected the token: check GITHUB_TOKEN, or run `gh auth login`")
+    );
+}
+
+#[test]
+fn other_statuses_have_no_hint() {
+    assert!(status_error(500).hint().is_none());
+}
+
+#[test]
+fn a_404_on_the_release_list_means_no_release() {
+    let acus = Tool {
+        name: "acus",
+        version: "0.1.0",
+    };
+    assert!(matches!(
+        listing_error(status_error(404), &acus),
+        UpdateError::NoRelease { tool: "acus" }
+    ));
+    assert!(matches!(
+        listing_error(status_error(500), &acus),
+        UpdateError::Http { .. }
+    ));
 }

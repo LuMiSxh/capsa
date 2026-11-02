@@ -10,8 +10,6 @@ use crate::hint::Hint;
 /// Why an update or an uninstall failed.
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateError {
-    #[error("the repository {REPO} is private and no GitHub token was found")]
-    NoToken,
     #[error("no release build for {os}-{arch}")]
     UnsupportedPlatform {
         os: &'static str,
@@ -51,10 +49,30 @@ pub enum UpdateError {
     },
 }
 
+impl UpdateError {
+    pub(super) fn status(&self) -> Option<u16> {
+        match self {
+            Self::Http { source, .. } => match **source {
+                ureq::Error::StatusCode(code) => Some(code),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 impl Hint for UpdateError {
     fn hint(&self) -> Option<Cow<'_, str>> {
         Some(Cow::Borrowed(match self {
-            Self::NoToken => "set GITHUB_TOKEN, or run `gh auth login`",
+            Self::Http { .. } => match self.status() {
+                Some(401) => {
+                    "GitHub rejected the token: check GITHUB_TOKEN, or run `gh auth login`"
+                }
+                Some(403 | 429) => {
+                    "GitHub may rate-limit anonymous requests: set GITHUB_TOKEN or run `gh auth login`"
+                }
+                _ => return None,
+            },
             Self::UnsupportedPlatform { .. } => {
                 "build it from source: cargo install --git https://github.com/LuMiSxh/capsa <tool>"
             }
