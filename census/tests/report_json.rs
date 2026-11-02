@@ -81,8 +81,10 @@ fn golden(name: &str, out: &Output, home: &Path, code: i32) {
     let resolved = home
         .canonicalize()
         .map_or_else(|_| root.clone(), |p| p.display().to_string());
+    let resolved = resolved.strip_prefix(r"\\?\").unwrap_or(&resolved);
     let shown = String::from_utf8_lossy(&out.stdout)
-        .replace(&resolved, "<HOME>")
+        .replace(&resolved.replace('\\', r"\\"), "<HOME>")
+        .replace(resolved, "<HOME>")
         .replace("Library/Application Support/census", "config/census")
         .replace(&root.replace('\\', r"\\"), "<HOME>")
         .replace(&root, "<HOME>")
