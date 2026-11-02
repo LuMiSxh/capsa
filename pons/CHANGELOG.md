@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.0]
+
 ### Fixed
 
 - A client that sent `"notices": false` under `clientCapabilities.session` was treated as having advertised notices, so `--notices auto` sent it `notice` updates. `false` and `null` now count as not advertised, like for `subagents`.

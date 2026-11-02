@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.20.0]
+
 ### Added
 
 - `acus self setup [--target claude|codex|all] [--dry-run]` installs the skill and registers the SessionStart and PreToolUse hooks in Claude Code's `settings.json` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`). A rerun changes nothing; `--dry-run` writes nothing.

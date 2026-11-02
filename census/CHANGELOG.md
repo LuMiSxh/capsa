@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0]
+
 ### Added
 
 - The ledger keeps `digest.json` next to `rows.jsonl`, a snapshot of the priced requests and hours
