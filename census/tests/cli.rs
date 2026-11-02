@@ -25,6 +25,8 @@ fn census(home: &Path, cwd: &Path, args: &[&str], stdin: &str, extra: &[(&str, &
         .env("XDG_STATE_HOME", home.join("state"))
         .env("LOCALAPPDATA", home.join("state"))
         .env("USERPROFILE", home)
+        .env("APPDATA", home.join("config"))
+        .env("XDG_CONFIG_HOME", home.join("config"))
         .env("CLAUDE_CONFIG_DIR", home.join("claude"))
         .env_remove("CLAUDE_SESSION_ID")
         .env_remove("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
@@ -83,6 +85,236 @@ fn claude_session(home: &Scratch, cwd: &Path) -> &'static str {
                 "usage": {"input_tokens": 1, "output_tokens": 1}}})]),
     );
     "s1"
+}
+
+#[test]
+fn guard_log_counts_rotated_and_current_lines_and_skips_bad_ones() {
+    let home = Scratch::new("cli-guard");
+    let cwd = home.path().to_path_buf();
+    home.write(
+        "acus/guard.jsonl.old",
+        &jsonl(&[json!({"ts": 10, "rule": "grep", "kind": "deny", "call": "grep a"})]),
+    );
+    home.write(
+        "acus/guard.jsonl",
+        &format!(
+            "{}not json\n{}",
+            jsonl(&[json!({"ts": 20, "rule": "grep", "kind": "hint", "call": "grep b"})]),
+            jsonl(&[json!({"ts": 30, "rule": "sed", "kind": "escape", "call": "sed -i x"})]),
+        ),
+    );
+    let config = home.path().join("acus/config.toml").display().to_string();
+    let out = census(
+        home.path(),
+        &cwd,
+        &["usage", "--guard", "--json"],
+        "",
+        &[("ACUS_CONFIG", config.as_str())],
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).expect("guard --json");
+    let rules = v["rules"].as_array().expect("rules");
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rules[0]["deny"], 1);
+    assert_eq!(rules[0]["hint"], 1);
+    assert_eq!(rules[1]["escape"], 1);
+    assert_eq!(v["escaped"].as_array().map(Vec::len), Some(1));
+}
+
+#[test]
+fn guard_log_reads_the_current_line_format() {
+    let home = Scratch::new("cli-guard-current");
+    let cwd = home.path().to_path_buf();
+    home.write(
+        "acus/guard.jsonl",
+        &jsonl(&[
+            json!({"ts": 1, "level": "info", "event": "decision", "session": "s", "cwd": "c",
+            "tool": "Bash", "rule": "grep", "kind": "rewrite", "call": "x"}),
+        ]),
+    );
+    let config = home.path().join("acus/config.toml").display().to_string();
+    let out = census(
+        home.path(),
+        &cwd,
+        &["usage", "--guard", "--json"],
+        "",
+        &[("ACUS_CONFIG", config.as_str())],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let v: Value = serde_json::from_slice(&out.stdout).expect("guard --json");
+    let rules = v["rules"].as_array().expect("rules");
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0]["rewrite"], 1);
+}
+
+#[test]
+fn the_config_command_moved_under_self() {
+    let home = Scratch::new("cli-config-moved");
+    let cwd = home.path().to_path_buf();
+    let old = census(home.path(), &cwd, &["config", "show"], "", &[]);
+    assert_eq!(old.status.code(), Some(2), "{}", text(&old.stderr));
+    let new = census(home.path(), &cwd, &["self", "config", "show"], "", &[]);
+    assert_eq!(new.status.code(), Some(0), "{}", text(&new.stderr));
+}
+
+#[test]
+fn doctor_is_one_json_value_and_exits_1_only_when_a_check_fails() {
+    let home = Scratch::new("cli-doctor");
+    let cwd = home.path().to_path_buf();
+    let home_str = home.path().to_str().expect("utf-8 path");
+    let extra = [("HOME", home_str)];
+    let setup = census(home.path(), &cwd, &["self", "setup"], "", &extra);
+    assert_eq!(setup.status.code(), Some(0), "{}", text(&setup.stderr));
+
+    let healthy = census(home.path(), &cwd, &["self", "doctor", "--json"], "", &extra);
+    assert_eq!(healthy.status.code(), Some(0), "{}", text(&healthy.stderr));
+    let v: Value = serde_json::from_slice(&healthy.stdout).expect("doctor --json is one value");
+    assert_eq!(v["tool"], "census");
+    assert_eq!(v["ok"], true);
+    let groups: Vec<&str> = v["groups"]
+        .as_array()
+        .expect("groups")
+        .iter()
+        .map(|g| g["name"].as_str().expect("group name"))
+        .collect();
+    assert_eq!(groups, ["install", "config", "skill", "hooks", "state"]);
+
+    home.write("config/census/config.json", "{not json");
+    let broken = census(home.path(), &cwd, &["self", "doctor", "--json"], "", &extra);
+    assert_eq!(broken.status.code(), Some(1), "{}", text(&broken.stderr));
+    let v: Value = serde_json::from_slice(&broken.stdout).expect("doctor --json is one value");
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["groups"][1]["name"], "config");
+    assert_eq!(v["groups"][1]["checks"][0]["status"], "fail");
+}
+
+#[test]
+fn uninstall_dry_run_prints_one_json_value_and_removes_nothing() {
+    let home = Scratch::new("cli-uninstall-dry");
+    let cwd = home.path().to_path_buf();
+    let home_str = home.path().to_str().expect("utf-8 path");
+    let extra = [("HOME", home_str)];
+    let skill = census(
+        home.path(),
+        &cwd,
+        &["self", "skill", "--install"],
+        "",
+        &extra,
+    );
+    assert_eq!(skill.status.code(), Some(0), "{}", text(&skill.stderr));
+
+    let out = census(
+        home.path(),
+        &cwd,
+        &["self", "uninstall", "--dry-run", "--json"],
+        "",
+        &extra,
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let v: Value = serde_json::from_slice(&out.stdout).expect("uninstall --json is one value");
+    assert_eq!(v["removed"], false);
+    assert!(home.path().join(".claude/skills/census/SKILL.md").is_file());
+}
+
+#[test]
+fn guard_log_reads_on_past_a_line_that_is_not_utf8() {
+    let home = Scratch::new("cli-guard-utf8");
+    let cwd = home.path().to_path_buf();
+    let mut bytes =
+        jsonl(&[json!({"ts": 20, "rule": "grep", "kind": "hint", "call": "grep b"})]).into_bytes();
+    bytes.extend_from_slice(b"\xff\xfe not utf-8\n");
+    bytes.extend_from_slice(
+        jsonl(&[json!({"ts": 30, "rule": "sed", "kind": "escape", "call": "sed -i x"})]).as_bytes(),
+    );
+    home.write_bytes("acus/guard.jsonl", &bytes);
+    let config = home.path().join("acus/config.toml").display().to_string();
+    let out = census(
+        home.path(),
+        &cwd,
+        &["usage", "--guard", "--json"],
+        "",
+        &[("ACUS_CONFIG", config.as_str())],
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).expect("guard --json");
+    let rules = v["rules"].as_array().expect("rules");
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rules[0]["hint"], 1);
+    assert_eq!(rules[1]["escape"], 1);
+}
+
+#[test]
+fn daily_limit_is_set_shown_and_cleared() {
+    let home = Scratch::new("cli-daily-set");
+    let cfg = home.path().join("config");
+    let state = home.path().join("state");
+    let extra = [
+        ("XDG_CONFIG_HOME", cfg.to_str().expect("utf-8 path")),
+        ("APPDATA", cfg.to_str().expect("utf-8 path")),
+        ("LOCALAPPDATA", state.to_str().expect("utf-8 path")),
+    ];
+    let run = |args: &[&str]| census(home.path(), home.path(), args, "", &extra);
+    let saved = || -> Value {
+        let text = std::fs::read_to_string(cfg.join("census/config.json")).expect("config file");
+        serde_json::from_str(&text).expect("config json")
+    };
+
+    assert_eq!(
+        run(&["self", "config", "set", "mode", "budget"])
+            .status
+            .code(),
+        Some(0)
+    );
+    assert_eq!(
+        run(&["self", "config", "set", "monthly-budget", "100"])
+            .status
+            .code(),
+        Some(0)
+    );
+    let set = run(&["self", "config", "set", "daily-limit", "8"]);
+    assert_eq!(set.status.code(), Some(0));
+    assert!(text(&set.stdout).contains("$8.00"), "{}", text(&set.stdout));
+    assert_eq!(saved()["daily_limit_usd"], 8.0);
+    assert_eq!(
+        run(&["self", "config", "set", "daily-limit", "0"])
+            .status
+            .code(),
+        Some(2)
+    );
+    let cleared = run(&["self", "config", "set", "daily-limit", "auto"]);
+    assert_eq!(cleared.status.code(), Some(0));
+    assert!(saved()["daily_limit_usd"].is_null());
+    assert!(
+        text(&cleared.stdout).contains("auto"),
+        "{}",
+        text(&cleared.stdout)
+    );
+}
+
+#[test]
+fn budget_limits_json_carries_today_and_its_daily_limit() {
+    let home = Scratch::new("cli-daily-json");
+    october_spend(&home, "budget");
+    let env = isolated_env(home.path());
+    let extra: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let limits = |extra: &[(&str, &str)]| {
+        let out = census(home.path(), home.path(), &["--json", "limits"], "", extra);
+        assert_eq!(out.status.code(), Some(0));
+        serde_json::from_slice::<Value>(&out.stdout).expect("json")
+    };
+
+    let derived = limits(&extra);
+    assert_eq!(derived["today"]["source"], "derived");
+    assert_eq!(derived["today"]["usd"], 0.0);
+    assert!(derived["today"]["limit"].as_f64().is_some_and(|l| l > 0.0));
+
+    home.write(
+        "config/census/config.json",
+        r#"{"mode":"budget","monthly_budget_usd":100.0,"daily_limit_usd":8.0}"#,
+    );
+    let fixed = limits(&extra);
+    assert_eq!(fixed["today"]["source"], "fixed");
+    assert_eq!(fixed["today"]["limit"], 8.0);
 }
 
 #[test]
@@ -246,7 +478,7 @@ fn session_summarizes_the_session_of_this_directory() {
     let shown = text(&out.stdout);
     assert!(shown.contains("2 (1 subagents)"), "{shown}");
     assert!(shown.contains("worker 1"), "{shown}");
-    assert!(shown.contains("compactions 0"), "{shown}");
+    assert!(shown.contains("compactions: 0"), "{shown}");
     assert!(shown.contains("60k of 400k"), "{shown}");
 }
 
@@ -297,23 +529,27 @@ fn budget_mode_switches_limits_and_statusline() {
     ];
     let run = |args: &[&str], stdin: &str| census(home.path(), home.path(), args, stdin, &extra);
 
-    let shown = text(&run(&["config", "show"], "").stdout);
+    let shown = text(&run(&["self", "config", "show"], "").stdout);
     assert!(shown.contains("plan"), "{shown}");
     assert_eq!(
-        run(&["config", "set", "mode", "budget"], "").status.code(),
+        run(&["self", "config", "set", "mode", "budget"], "")
+            .status
+            .code(),
         Some(0)
     );
-    let set = run(&["config", "set", "monthly-budget", "200"], "");
+    let set = run(&["self", "config", "set", "monthly-budget", "200"], "");
     assert_eq!(set.status.code(), Some(0));
     assert!(text(&set.stdout).contains("$200.00"));
     assert_eq!(
-        run(&["config", "set", "monthly-budget", "-5"], "")
+        run(&["self", "config", "set", "monthly-budget", "-5"], "")
             .status
             .code(),
         Some(2)
     );
     assert_eq!(
-        run(&["config", "set", "mode", "free"], "").status.code(),
+        run(&["self", "config", "set", "mode", "free"], "")
+            .status
+            .code(),
         Some(2)
     );
 
@@ -325,7 +561,7 @@ fn budget_mode_switches_limits_and_statusline() {
     let line = run(&["statusline", "--line"], STATUS);
     assert_eq!(text(&line.stdout), "ctx 44k/400k · $0/$200 0% →$0\n");
 
-    run(&["config", "set", "mode", "plan"], "");
+    run(&["self", "config", "set", "mode", "plan"], "");
     let line = run(&["statusline", "--line"], STATUS);
     assert_eq!(text(&line.stdout), "ctx 44k/400k · 5h 6% · wk 1%\n");
 }

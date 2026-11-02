@@ -5,10 +5,11 @@
 mod levels;
 mod state;
 
-pub use state::log_line;
+pub use state::{ErrorLine, error_log, log_error};
 
+use crate::config::Config;
 use crate::context;
-use crate::limits::{LimitStatus, MonthStatus};
+use crate::limits::{DailyStatus, LimitStatus, MonthStatus};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -36,11 +37,19 @@ struct Input {
 
 /// Reads, decides and records the shown levels under the session's lock, so two concurrent calls
 /// never print the same level. A call that cannot get the lock prints nothing.
+/// The budget the hook announces from: the month, today's daily limit when one applies, and the
+/// daily thresholds in percent.
+pub(super) struct Budget<'a> {
+    pub month: &'a MonthStatus,
+    pub daily: Option<DailyStatus>,
+    pub thresholds: &'a [u32],
+}
+
 fn announce(
     file: &std::path::Path,
     context: Option<&context::ContextUse>,
     limits: Option<&LimitStatus>,
-    month: Option<&MonthStatus>,
+    budget: Option<&Budget>,
     compacted: Option<(u64, u64)>,
     now: u64,
     prompt: bool,
@@ -54,11 +63,15 @@ fn announce(
     if prompt {
         let due = levels::prompt_due(&mut shown, now);
         if due {
-            messages.extend(levels::status_message(context, limits, month));
+            messages.extend(levels::status_message(
+                context,
+                limits,
+                budget.map(|b| b.month),
+            ));
         }
     }
     messages.extend(levels::decide(
-        context, limits, month, compacted, now, &mut shown,
+        context, limits, budget, compacted, now, &mut shown,
     ));
     if shown != before {
         state::store(file, &shown)?;
@@ -78,6 +91,7 @@ fn announce(
 pub fn run(
     input: &str,
     now: u64,
+    config: &Config,
     limits: impl FnOnce() -> Option<LimitStatus>,
     month: impl FnOnce() -> Option<MonthStatus>,
 ) -> Result<Option<String>, HookError> {
@@ -89,16 +103,29 @@ pub fn run(
     let Some(file) = input.session_id.as_deref().and_then(state::hints_file) else {
         return Ok(None);
     };
-    let transcript = input.transcript_path.as_deref();
-    let context = transcript.and_then(context::of_transcript);
-    let compacted = transcript.and_then(context::last_compaction);
+    let ends = input
+        .transcript_path
+        .as_deref()
+        .map(context::transcript_ends)
+        .unwrap_or_default();
+    // The settings file is read once per call, for the threshold of the context.
+    let settings = context::settings_window(&context::claude_config_dir());
+    let context = ends
+        .context
+        .map(|(model, tokens)| context::measure_with(tokens, Some(&model), settings));
+    let compacted = ends.compacted;
     let limits = limits();
     let month = month();
+    let budget = month.as_ref().map(|m| Budget {
+        month: m,
+        daily: DailyStatus::of(m, config.daily_limit_usd),
+        thresholds: &config.daily_thresholds,
+    });
     let messages = announce(
         &file,
         context.as_ref(),
         limits.as_ref(),
-        month.as_ref(),
+        budget.as_ref(),
         compacted,
         now,
         event == "UserPromptSubmit",

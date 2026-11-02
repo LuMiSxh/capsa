@@ -2,9 +2,9 @@
 //! Prices the ledger at list price, so that windows and hours can be summed in dollars.
 
 use super::clock::hour_start;
+use crate::ledger::Priced;
+#[cfg(test)]
 use crate::ledger::{Hourly, Row};
-use crate::usage::Tokens;
-use crate::usage::prices;
 use std::collections::BTreeMap;
 
 /// Holds the list-price USD of each raw request and each hourly aggregate, each list sorted by
@@ -17,13 +17,19 @@ pub(super) struct Costed {
 }
 
 impl Costed {
-    /// Prices the rows and the aggregates. A model without a price counts as 0 USD.
-    pub(super) fn new(rows: &[Row], hourly: &[Hourly]) -> Self {
-        let mut raw: Vec<(u64, f64)> = rows.iter().map(|r| (r.t, row_usd(r))).collect();
+    /// Sorts the priced rows and aggregates by time.
+    pub(super) fn from_priced(priced: &Priced) -> Self {
+        let mut raw = priced.raw.clone();
         raw.sort_by_key(|x| x.0);
-        let mut agg: Vec<(u64, f64)> = hourly.iter().map(|h| (h.hour, aggregate_usd(h))).collect();
-        agg.sort_by_key(|x| x.0);
-        Costed { raw, hourly: agg }
+        let mut hourly = priced.hourly.clone();
+        hourly.sort_by_key(|x| x.0);
+        Costed { raw, hourly }
+    }
+
+    /// Prices the rows and the aggregates. A model without a price counts as 0 USD.
+    #[cfg(test)]
+    pub(super) fn new(rows: &[Row], hourly: &[Hourly]) -> Self {
+        Self::from_priced(&Priced::of(rows, hourly))
     }
 
     /// Returns the USD of the requests from `from` to `to` inclusive, plus the hourly aggregates
@@ -68,29 +74,4 @@ fn sum(v: &[(u64, f64)], from: u64, to: u64) -> f64 {
     let a = v.partition_point(|x| x.0 < from);
     let b = v.partition_point(|x| x.0 < to);
     v.get(a..b).map_or(0.0, |s| s.iter().map(|x| x.1).sum())
-}
-
-fn row_usd(r: &Row) -> f64 {
-    let t = Tokens {
-        input: r.input,
-        cache_read: r.cache_read,
-        cache_write_5m: r.cache_write_5m,
-        cache_write_1h: r.cache_write_1h,
-        output: r.output,
-        requests: 1,
-    };
-    prices::request_cost(&r.model, &t).unwrap_or(0.0)
-}
-
-fn aggregate_usd(h: &Hourly) -> f64 {
-    let t = &h.tokens;
-    let t = Tokens {
-        input: t.input,
-        cache_read: t.cache_read,
-        cache_write_5m: t.cache_write_5m,
-        cache_write_1h: t.cache_write_1h,
-        output: t.output,
-        requests: t.requests,
-    };
-    prices::family_cost(&h.family, &t).unwrap_or(0.0)
 }

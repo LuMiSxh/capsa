@@ -32,7 +32,11 @@ pub struct ContextUse {
 
 /// Returns the context of `tokens` for `model` against the threshold of this process.
 pub fn measure(tokens: u64, model: Option<&str>) -> ContextUse {
-    let settings = settings_window(&claude_config_dir());
+    measure_with(tokens, model, settings_window(&claude_config_dir()))
+}
+
+/// Like [`measure`], with the `autoCompactWindow` of the settings already read by the caller.
+pub fn measure_with(tokens: u64, model: Option<&str>, settings: Option<u64>) -> ContextUse {
     let threshold = threshold(model, |k| std::env::var(k).ok(), settings);
     at(tokens, model, threshold)
 }
@@ -128,35 +132,64 @@ pub fn settings_window(dir: &Path) -> Option<u64> {
         .as_u64()
 }
 
-/// Bytes read from the end of a transcript to find its last API request.
+/// Bytes read from the end of a transcript to find its last API request and its last compaction.
 const TAIL_BYTES: u64 = 512 * 1024;
+/// Larger tails, read in turn only while the shorter ones hold no API request. Past the last one
+/// the context of the session is unknown.
+const FALLBACK_BYTES: [u64; 2] = [4 * 1024 * 1024, 16 * 1024 * 1024];
 
-/// Returns the context of the last API request of a transcript against the threshold of this
-/// process.
-pub fn of_transcript(transcript: &Path) -> Option<ContextUse> {
-    let (model, tokens) = last_context(transcript)?;
-    Some(measure(tokens, Some(&model)))
+/// What the end of a transcript says about its session.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Ends {
+    /// Model and context tokens of the last API request.
+    pub context: Option<(String, u64)>,
+    /// Tokens before and after the last compaction, when the end of the transcript records one.
+    pub compacted: Option<(u64, u64)>,
+}
+
+/// Reads the end of a transcript once and returns its last API request and its last compaction.
+/// The compaction is looked for in the first tail only.
+pub fn transcript_ends(path: &Path) -> Ends {
+    let Some(mut tail) = read_tail(path, TAIL_BYTES) else {
+        return Ends::default();
+    };
+    let mut ends = scan_ends(&String::from_utf8_lossy(&tail.bytes));
+    for limit in FALLBACK_BYTES {
+        if ends.context.is_some() || tail.whole {
+            break;
+        }
+        let Some(next) = read_tail(path, limit) else {
+            break;
+        };
+        ends.context = find_last(&String::from_utf8_lossy(&next.bytes));
+        tail = next;
+    }
+    ends
 }
 
 /// Returns the model and context tokens of the last API request in a transcript: the input,
-/// cache reads and cache writes of that request. Reads the end of the file first and the whole
-/// file only when the end holds no request.
+/// cache reads and cache writes of that request.
 pub fn last_context(transcript: &Path) -> Option<(String, u64)> {
-    let (tail, whole) = read_tail(transcript)?;
-    let found = find_last(&tail);
-    if found.is_some() || whole {
-        return found;
-    }
-    find_last(&std::fs::read_to_string(transcript).ok()?)
+    transcript_ends(transcript).context
 }
 
-/// Returns the tokens before and after the last compaction at the end of a transcript that records
-/// both numbers.
-pub fn last_compaction(transcript: &Path) -> Option<(u64, u64)> {
-    let (tail, _) = read_tail(transcript)?;
-    transcript::records(&tail)
-        .rev()
-        .find_map(|record| record.compaction())
+/// Returns the last API request and the last compaction of `text` in one pass from its end.
+fn scan_ends(text: &str) -> Ends {
+    let mut ends = Ends::default();
+    for record in transcript::records(text).rev() {
+        if ends.context.is_none() {
+            ends.context = record
+                .request()
+                .map(|req| (req.model, req.tokens.context()));
+        }
+        if ends.compacted.is_none() {
+            ends.compacted = record.compaction();
+        }
+        if ends.context.is_some() && ends.compacted.is_some() {
+            break;
+        }
+    }
+    ends
 }
 
 fn find_last(text: &str) -> Option<(String, u64)> {
@@ -166,17 +199,23 @@ fn find_last(text: &str) -> Option<(String, u64)> {
         .map(|req| (req.model, req.tokens.context()))
 }
 
-/// Returns the last `TAIL_BYTES` of a file as text, and whether that is the whole file.
-fn read_tail(path: &Path) -> Option<(String, bool)> {
+/// The last bytes of a transcript, and whether they are the whole file.
+struct Tail {
+    bytes: Vec<u8>,
+    whole: bool,
+}
+
+/// Reads the last `limit` bytes of a file, or the whole file when it is shorter. The cut may split
+/// a record or a character; the broken first line fails to parse and is skipped.
+fn read_tail(path: &Path, limit: u64) -> Option<Tail> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
-    let whole = len <= TAIL_BYTES;
+    let whole = len <= limit;
     if !whole {
-        file.seek(SeekFrom::Start(len - TAIL_BYTES)).ok()?;
+        file.seek(SeekFrom::Start(len - limit)).ok()?;
     }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;
-    // The cut may split a record or a character; the broken first line fails to parse and is skipped.
-    Some((String::from_utf8_lossy(&bytes).into_owned(), whole))
+    Some(Tail { bytes, whole })
 }

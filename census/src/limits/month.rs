@@ -2,12 +2,23 @@
 //! Sums the list-price spend of the current local calendar month and projects it to the end of the
 //! month, for the budget mode.
 
-use super::clock::{DAY_S, month_start, next_month_start};
+use super::clock::{DAY_S, day_start, days_until, month_start, next_month_start};
 use super::cost::Costed;
 use super::{History, LimitsError};
 use crate::ledger::{Ledger, Opts};
 use serde::Serialize;
 use std::time::Instant;
+
+/// The part of the month that is the local day of `now`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Today {
+    /// First second of the local day, its midnight.
+    pub start: u64,
+    /// The spend since `start`.
+    pub usd: f64,
+    /// Local days left in the month, the day of `now` included.
+    pub days_left: u64,
+}
 
 /// The spend of one local calendar month against an optional budget.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -32,6 +43,9 @@ pub struct MonthStatus {
     pub projected_over: bool,
     /// What is left of the budget for each remaining day; 0 once the budget is spent.
     pub per_day_left_usd: Option<f64>,
+    /// The spend of the local day of `now`; read by the daily limit, not printed with the month.
+    #[serde(skip)]
+    pub today: Today,
 }
 
 impl MonthStatus {
@@ -46,6 +60,7 @@ impl MonthStatus {
         now: u64,
         budget_usd: Option<f64>,
         data: bool,
+        today: Today,
     ) -> Self {
         // An empty sum is -0.0, which prints as `-0`; adding 0.0 turns it into 0.0.
         let spent_usd = spent_usd + 0.0;
@@ -70,16 +85,31 @@ impl MonthStatus {
             per_day_left_usd: budget
                 .filter(|_| days_left > 0)
                 .map(|b| (b - spent_usd).max(0.0) / days_left as f64),
+            today,
         }
     }
 }
 
 /// Returns the month status at `now` computed from `history`. Reads nothing.
 pub fn compute_month(history: &History, now: u64, budget_usd: Option<f64>) -> MonthStatus {
-    let costs = Costed::new(history.rows, history.hourly);
+    let costs = Costed::from_priced(history.priced);
     let (start, end) = (month_start(now), next_month_start(now));
-    let data = !(history.rows.is_empty() && history.hourly.is_empty());
-    MonthStatus::new(costs.between(start, now), start, end, now, budget_usd, data)
+    let data = !history.priced.is_empty();
+    let day = day_start(now);
+    let today = Today {
+        start: day,
+        usd: costs.between(day, now),
+        days_left: days_until(day, end),
+    };
+    MonthStatus::new(
+        costs.between(start, now),
+        start,
+        end,
+        now,
+        budget_usd,
+        data,
+        today,
+    )
 }
 
 /// Returns the month status at `now` from the ledger as it is, without reading transcripts, for
@@ -116,9 +146,9 @@ fn from_ledger(
     now: u64,
     budget_usd: Option<f64>,
 ) -> Result<MonthStatus, LimitsError> {
+    let priced = ledger.priced()?;
     let history = History {
-        rows: ledger.rows()?,
-        hourly: ledger.hourly()?,
+        priced: &priced,
         snapshots: &[],
     };
     Ok(compute_month(&history, now, budget_usd))
@@ -127,7 +157,7 @@ fn from_ledger(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ledger::{Hourly, Tokens};
+    use crate::ledger::{Hourly, Priced, Tokens};
 
     const START: u64 = 1_000_000;
 
@@ -139,6 +169,7 @@ mod tests {
             START + elapsed_s,
             budget,
             true,
+            Today::default(),
         )
     }
 
@@ -204,9 +235,9 @@ mod tests {
             },
         };
         let hourly = [hour(start - 3600), hour(start), hour(now - 3600)];
+        let priced = Priced::of(&[], &hourly);
         let history = History {
-            rows: &[],
-            hourly: &hourly,
+            priced: &priced,
             snapshots: &[],
         };
         let m = compute_month(&history, now, Some(1000.0));
@@ -214,5 +245,32 @@ mod tests {
         assert!(one > 0.0);
         assert!((m.spent_usd - 2.0 * one).abs() < 1e-9);
         assert!(m.data);
+    }
+
+    #[test]
+    fn today_is_the_spend_since_local_midnight_and_counts_its_own_day_left() {
+        let now = 1_800_000_000;
+        let today = day_start(now);
+        let hour = |hour| Hourly {
+            hour,
+            family: "opus".to_owned(),
+            sub: false,
+            tokens: Tokens {
+                output: 1_000_000,
+                ..Tokens::default()
+            },
+        };
+        let hourly = [hour(today), hour(today - DAY_S)];
+        let priced = Priced::of(&[], &hourly);
+        let history = History {
+            priced: &priced,
+            snapshots: &[],
+        };
+        let m = compute_month(&history, now, Some(1000.0));
+        let one = Costed::new(&[], &hourly[..1]).between(0, u64::MAX - 1);
+        assert!((m.today.usd - one).abs() < 1e-9);
+        assert!((m.spent_usd - 2.0 * one).abs() < 1e-9);
+        assert_eq!(m.today.start, today);
+        assert_eq!(m.today.days_left, (m.end - today) / DAY_S);
     }
 }

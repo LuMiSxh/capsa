@@ -6,7 +6,7 @@ use crate::now_secs;
 use crate::out::Out;
 use anyhow::{Result, bail};
 use capsa_core::exit::Outcome;
-use capsa_core::format::Format;
+use capsa_core::render::{Doc, Render, emit};
 use census::config::{Config, Mode};
 use census::ledger::{Ledger, Opts};
 use census::limits::month_start;
@@ -38,6 +38,28 @@ struct PruneOut {
     dry_run: bool,
     hourly_removed: usize,
     snapshots_removed: usize,
+}
+
+impl Render for PruneOut {
+    fn doc(&self, doc: &mut Doc) {
+        let verb = if self.dry_run {
+            "would remove"
+        } else {
+            "removed"
+        };
+        doc.line(format!(
+            "{verb} {} hourly aggregates and {} snapshots older than {}",
+            self.hourly_removed, self.snapshots_removed, self.older_than
+        ));
+    }
+
+    fn outcome(&self) -> Outcome {
+        if self.hourly_removed + self.snapshots_removed == 0 {
+            Outcome::Empty
+        } else {
+            Outcome::Found
+        }
+    }
 }
 
 /// Keeps the current month's hourly aggregates in budget mode, since the month's spend is read
@@ -77,25 +99,11 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     let cutoff = keep_current_month(cutoff, now);
     let mut ledger = Ledger::open_and_update(&Opts::defaults(now))?;
     let report = ledger.prune(cutoff, a.dry_run)?;
-    if out.format == Format::Json {
-        let body = PruneOut {
-            older_than,
-            dry_run: a.dry_run,
-            hourly_removed: report.hourly_removed,
-            snapshots_removed: report.snapshots_removed,
-        };
-        println!("{}", serde_json::to_string(&body)?);
-    } else {
-        let verb = if a.dry_run { "would remove" } else { "removed" };
-        println!(
-            "{verb} {} hourly aggregates and {} snapshots older than {older_than}",
-            report.hourly_removed, report.snapshots_removed
-        );
-    }
-    let removed = report.hourly_removed + report.snapshots_removed;
-    Ok(if removed == 0 {
-        Outcome::Empty
-    } else {
-        Outcome::Found
-    })
+    let body = PruneOut {
+        older_than,
+        dry_run: a.dry_run,
+        hourly_removed: report.hourly_removed,
+        snapshots_removed: report.snapshots_removed,
+    };
+    emit(&body, out.format)
 }

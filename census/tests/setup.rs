@@ -100,23 +100,6 @@ fn status_of(report: &str, item: &str) -> String {
         .to_owned()
 }
 
-/// Whether `command` is this binary followed by `args`, such as " hook".
-#[expect(
-    clippy::expect_used,
-    reason = "the census binary must exist for the test to mean anything"
-)]
-fn runs_census(command: &str, args: &str) -> bool {
-    let exe = Path::new(env!("CARGO_BIN_EXE_census"))
-        .canonicalize()
-        .expect("canonicalize the census binary");
-    command
-        .strip_suffix(args)
-        // The Windows command quotes its path, so the quotes are dropped before the path is read.
-        .map(|path| path.trim_matches('"'))
-        .and_then(|path| Path::new(path).canonicalize().ok())
-        .is_some_and(|path| path == exe)
-}
-
 #[expect(
     clippy::expect_used,
     reason = "a settings file without a census hook must fail the test"
@@ -136,6 +119,24 @@ fn keys(value: &Value) -> Vec<&str> {
 }
 
 #[test]
+fn dry_run_json_is_one_value_and_writes_nothing() {
+    let home = Scratch::new("setup-dry-json");
+    let out = setup(&home, &["--dry-run", "--json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+    let report: Value = serde_json::from_slice(&out.stdout).expect("one JSON value");
+    assert_eq!(report["dry_run"], true);
+    let names: Vec<&str> = report["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["name"].as_str().expect("item name"))
+        .collect();
+    assert_eq!(names, ITEMS);
+    assert!(!settings_path(&home).exists());
+    assert!(!skill_path(&home).exists());
+}
+
+#[test]
 fn missing_settings_get_every_item_and_valid_json() {
     let home = Scratch::new("setup-missing");
     let out = setup(&home, &[]);
@@ -146,20 +147,12 @@ fn missing_settings_get_every_item_and_valid_json() {
     }
     let settings = read_json(&settings_path(&home));
     assert_eq!(settings["statusLine"]["type"], "command");
-    assert!(runs_census(
-        settings["statusLine"]["command"]
-            .as_str()
-            .unwrap_or_default(),
-        " statusline --line"
-    ));
-    assert!(runs_census(
-        &hook_command(&settings, "UserPromptSubmit"),
-        " hook"
-    ));
-    assert!(runs_census(
-        &hook_command(&settings, "PostToolUse"),
-        " hook"
-    ));
+    assert_eq!(
+        settings["statusLine"]["command"],
+        "census statusline --line"
+    );
+    assert_eq!(hook_command(&settings, "UserPromptSubmit"), "census hook");
+    assert_eq!(hook_command(&settings, "PostToolUse"), "census hook");
     assert_eq!(read(&skill_path(&home)), SKILL);
 }
 
@@ -183,13 +176,13 @@ fn a_second_run_changes_nothing_and_writes_no_backup() {
 }
 
 #[test]
-fn entries_that_already_run_census_are_left_alone() {
-    let home = Scratch::new("setup-macset");
+fn census_entries_in_the_bare_form_are_left_alone() {
+    let home = Scratch::new("setup-bare");
     let original = json!({
         "statusLine": {"type": "command", "command": MACSET_LINE},
         "hooks": {
-            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": MACSET_HOOK}]}],
-            "PostToolUse": [{"hooks": [{"type": "command", "command": MACSET_HOOK}]}]
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "census hook"}]}],
+            "PostToolUse": [{"hooks": [{"type": "command", "command": "census hook"}]}]
         }
     })
     .to_string();
@@ -205,6 +198,44 @@ fn entries_that_already_run_census_are_left_alone() {
     }
     assert_eq!(read(&settings_path(&home)), original);
     assert!(!backup_path(&home).exists());
+}
+
+#[test]
+fn an_entry_with_an_absolute_or_quoted_path_that_runs_census_is_replaced() {
+    let home = Scratch::new("setup-replaced");
+    let original = json!({
+        "statusLine": {"type": "command", "command": r#""C:/Users/u/.cargo/bin/census.exe" statusline --line"#},
+        "hooks": {
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/home/u/.cargo/bin/census hook"}]}],
+            "PostToolUse": [{"hooks": [{"type": "command", "command": MACSET_HOOK}]}]
+        }
+    })
+    .to_string();
+    home.write("claude/settings.json", &original);
+
+    let out = setup(&home, &[]);
+    assert_eq!(out.status.code(), Some(0));
+    let report = stdout(&out);
+    for item in &ITEMS[1..] {
+        assert_eq!(status_of(&report, item), "replaced", "{report}");
+    }
+    let settings = read_json(&settings_path(&home));
+    assert_eq!(
+        settings["statusLine"]["command"],
+        "census statusline --line"
+    );
+    assert_eq!(hook_command(&settings, "UserPromptSubmit"), "census hook");
+    assert_eq!(hook_command(&settings, "PostToolUse"), "census hook");
+    assert_eq!(read(&backup_path(&home)), original);
+
+    let first = read(&settings_path(&home));
+    let out = setup(&home, &[]);
+    assert_eq!(out.status.code(), Some(0));
+    let report = stdout(&out);
+    for item in &ITEMS[1..] {
+        assert_eq!(status_of(&report, item), "already set", "{report}");
+    }
+    assert_eq!(read(&settings_path(&home)), first);
 }
 
 #[test]
@@ -240,12 +271,10 @@ fn a_foreign_status_line_stays_without_force_and_is_replaced_with_it() {
         "{report}"
     );
     let settings = read_json(&settings_path(&home));
-    assert!(runs_census(
-        settings["statusLine"]["command"]
-            .as_str()
-            .unwrap_or_default(),
-        " statusline --line"
-    ));
+    assert_eq!(
+        settings["statusLine"]["command"],
+        "census statusline --line"
+    );
 }
 
 #[test]
@@ -343,7 +372,7 @@ fn json_output_has_the_same_items() {
 }
 
 #[test]
-fn a_binary_in_a_path_with_a_space_is_recognised_on_the_next_run() {
+fn the_commands_are_bare_names_whatever_the_binary_path() {
     let home = Scratch::new("setup-spaced");
     std::fs::create_dir_all(home.path().join("My Apps")).expect("create the directory");
     let exe = home.path().join("My Apps/census");
@@ -352,13 +381,11 @@ fn a_binary_in_a_path_with_a_space_is_recognised_on_the_next_run() {
     let out = setup_with(&exe, &home, &[]);
     assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
     let settings = read_json(&settings_path(&home));
-    let line = settings["statusLine"]["command"]
-        .as_str()
-        .unwrap_or_default();
-    assert!(
-        line.starts_with('"') && line.ends_with("\" statusline --line"),
-        "{line}"
+    assert_eq!(
+        settings["statusLine"]["command"],
+        "census statusline --line"
     );
+    assert_eq!(hook_command(&settings, "UserPromptSubmit"), "census hook");
     let first = read(&settings_path(&home));
 
     let out = setup_with(&exe, &home, &[]);

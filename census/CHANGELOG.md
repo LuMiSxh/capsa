@@ -2,6 +2,70 @@
 
 ## [Unreleased]
 
+### Added
+
+- The ledger keeps `digest.json` next to `rows.jsonl`, a snapshot of the priced requests and hours
+  with the census version, the time of its update and the sizes of the two files it was built from.
+  `census hook` and `census limits` read it instead of the whole ledger. A missing, stale or unreadable
+  digest is rebuilt from the files, and `census prune` removes it.
+- `census self config set daily-limit <USD|auto>` sets the daily limit of budget mode: a fixed amount, or
+  `auto` (the default), which shares what is left of the monthly budget before today over the local
+  days left, today included. `daily_limit_usd` and `daily_thresholds` in `config.json` store the limit
+  and the announced percentages (50, 80 and 100 by default).
+- The hook announces the daily budget at each threshold once per local day, and past 100 % at each
+  further full multiple of the limit. The daily line comes first in the same output as the monthly
+  budget line, and the monthly forecast is not repeated when the daily line states it.
+- `census limits` and `census self config` show today's spend against the daily limit in budget mode.
+  The JSON of `census --json limits` has a `today` object with `usd`, `limit` and `source`.
+- `census self doctor` checks the install, the config file, the skill, the hooks in `settings.json` and
+  the state files, one line per check with a hint for each failure. `--json` is one value; exit 1 when a
+  check fails, and warnings do not change the exit code.
+
+### Changed
+
+- `self update` works without a GitHub token; a token only lifts the rate limit.
+- Dependencies updated (zip 8 → 9 for `census self update`, and the other crates to their latest releases).
+- `census self setup` writes the hook and statusLine commands as bare names, `census hook` and
+  `census statusline --line`, not the path of the binary, as `acus self setup` writes its hooks.
+  Claude Code runs them from PATH, so census must be on PATH: `census self doctor` warns when it is
+  not. An entry that runs census in another form (an absolute or quoted path, `.exe`, or the old
+  `2>/dev/null ||` fallback) is replaced by the bare command. An entry in bare form is left alone.
+- The human views of `census limits` and `census usage` are redesigned on `capsa_core::render`.
+  `limits --human` shows each window with a 16-cell bar, its percent and its reset, and in budget
+  mode the month with a bar and its forecast, then today against the daily limit. `usage --human`
+  prints its tables with right-aligned numbers. The report commands (`limits`, `usage`, `context`,
+  `session`, `prune`, `self config`) share the render path; their `--json` is unchanged.
+- The agent text of the report commands uses `label: value` lines and comma-separated tables. The
+  information is the same: budget mode keeps its `mode` line, and the forecast keeps its
+  "at the month-to-date rate" wording. The burn rate and money sums no longer print `$-0.00`.
+- The guard hint of `census usage --guard` names `acus self setup`, the command that installs the
+  hook.
+- `census self uninstall` runs through `capsa_core::update::uninstall_run`. The check still runs
+  before the binary is removed, and the skill file lines still print only outside `--json`.
+- `census config` moved to `census self config`, with the same subcommands and the same JSON. The old
+  path is refused with exit 2. The hints that name the command now name the new path.
+- `census hook` logs its errors to `hook.jsonl`, as JSON lines, moved to `hook.jsonl.old` at 256 KB. The
+  old `hook.log` is left where it is and is no longer written.
+- `census self update --json` prints only the report: the reinstall of the skill no longer adds its path
+  line to stdout.
+- `census hook` reads the end of the transcript once. It looks for the last API request in a 512 KiB
+  tail, then in 4 MiB and 16 MiB tails only while the request is not found, and reports the context as
+  unknown past that. It reads `settings.json` once per call.
+- `census usage --guard` streams the guard log and parses a line in full only when its time is in
+  range. A line that is not valid UTF-8 is skipped and the file is read on past it.
+- `census hook` on a synthetic 20-day ledger and a 6.4 MB transcript (19,200 requests): median 79 ms
+  before and 69 ms after over 21 runs in the same session (70 ms before in an earlier run). Output of
+  `census limits`, text and JSON, is unchanged on the same state, with and without snapshots.
+
+### Fixed
+
+- `census self uninstall` removes the binary before the skill file, so a failed binary removal
+  leaves the skill in place.
+- The `census` integration tests isolate the configuration directory, so a developer's budget
+  configuration no longer changes the expected status line.
+- The digest parses floats exactly (`serde_json` `float_roundtrip`), so the priced values match the
+  ledger files.
+
 ## [0.3.0]
 
 ### Fixed

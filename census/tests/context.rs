@@ -119,6 +119,38 @@ fn last_context_skips_synthetic_messages() {
     assert_eq!(last_context(&scratch.path().join("missing.jsonl")), None);
 }
 
+/// A request of `claude-opus-5-5` with 1,203 context tokens, as one line.
+fn request_line(id: &str) -> String {
+    let usage = r#""usage":{"input_tokens":3,"cache_read_input_tokens":1000,"cache_creation_input_tokens":200,"output_tokens":5}"#;
+    format!(r#"{{"type":"assistant","message":{{"id":"{id}","model":"claude-opus-5-5",{usage}}}}}"#)
+        + "\n"
+}
+
+/// About `kib` KiB of user lines that hold no API request.
+fn filler(kib: usize) -> String {
+    let content = "x".repeat(1000);
+    let line = format!(r#"{{"type":"user","message":{{"role":"user","content":"{content}"}}}}"#);
+    format!("{line}\n").repeat(kib)
+}
+
+#[test]
+fn a_request_beyond_the_first_tail_is_found_in_the_fallback_windows() {
+    let scratch = Scratch::new("transcript-fallback");
+    let near = scratch.write("near.jsonl", &(request_line("m1") + &filler(1024)));
+    assert_eq!(
+        last_context(&near),
+        Some(("claude-opus-5-5".to_owned(), 1203))
+    );
+    let deep = scratch.write("deep.jsonl", &(request_line("m1") + &filler(5 * 1024)));
+    assert_eq!(
+        last_context(&deep),
+        Some(("claude-opus-5-5".to_owned(), 1203))
+    );
+    // Beyond the 16 MiB fallback the context is unknown, rather than read from the whole file.
+    let lost = scratch.write("lost.jsonl", &(request_line("m1") + &filler(17 * 1024)));
+    assert_eq!(last_context(&lost), None);
+}
+
 #[test]
 fn at_reports_the_share_used_and_the_tokens_left() {
     let threshold = Threshold {

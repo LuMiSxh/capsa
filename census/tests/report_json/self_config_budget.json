@@ -1,0 +1,1 @@
+{"mode":"budget","monthly_budget_usd":100.0,"daily_limit_usd":8.0,"daily_thresholds":[50,80,100],"path":"<HOME>/config/census/config.json","today":{"usd":1.6002,"limit":8.0,"source":"fixed","percent":20.0025}}

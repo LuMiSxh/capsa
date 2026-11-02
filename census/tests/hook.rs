@@ -54,6 +54,8 @@ impl Hook {
             .env("APPDATA", self.home.path().join("config"))
             .env("LOCALAPPDATA", self.home.path().join("state"))
             .env("CENSUS_NOW", self.now.to_string())
+            // Parallel tests can starve the hook for longer than the 150 ms production deadline.
+            .env("CENSUS_HOOK_DEADLINE_MS", "60000")
             .env_remove("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
             .env_remove("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")
             .stdin(Stdio::piped())
@@ -337,6 +339,21 @@ fn budget_mode_warns_when_the_month_spend_passes_the_budget() {
         .hook(hook_input("UserPromptSubmit", &path).as_bytes())
         .expect("a budget warning");
     assert!(text.contains("census: monthly budget used up"), "{text}");
+}
+
+#[test]
+fn daily_budget_reached_is_said_once_per_day() {
+    let h = Hook::new("hook-daily");
+    h.home.write(
+        "config/census/config.json",
+        r#"{"mode":"budget","monthly_budget_usd":100.0,"daily_limit_usd":0.01}"#,
+    );
+    // The request is at the clock's instant, so it falls on today in any time zone.
+    let path = h.transcript_lines(&[request_at("2026-10-14T08:00:00.000Z", "m1", 400_000)]);
+    let input = hook_input("UserPromptSubmit", &path);
+    let text = h.hook(input.as_bytes()).expect("a daily warning");
+    assert!(text.contains("census: daily budget reached: $"), "{text}");
+    assert_eq!(h.hook(input.as_bytes()), None);
 }
 
 #[test]

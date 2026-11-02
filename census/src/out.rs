@@ -2,8 +2,7 @@
 //! Owns the output helpers: section headers, coloured only on a terminal.
 
 use anstyle::{AnsiColor, Style};
-use capsa_core::format::Format;
-use std::io::IsTerminal;
+use capsa_core::format::{Format, Stream, color};
 
 /// Printing helpers. Colour is applied only when stdout is a terminal, so piped output is plain text.
 pub struct Out {
@@ -15,7 +14,7 @@ impl Out {
     pub fn new(format: Format) -> Self {
         Out {
             format,
-            color: format == Format::Human && std::io::stdout().is_terminal(),
+            color: color(format, Stream::Stdout),
         }
     }
 

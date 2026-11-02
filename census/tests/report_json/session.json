@@ -1,0 +1,1 @@
+{"session":"s1","picked":"recent","cwd":"<HOME>/work","model":"claude-opus-5-5","duration_s":60,"requests":2,"subagents":1,"cost":{"usd":0.016012000000000002,"unpriced":0},"spawns":{"worker":1},"compactions":0,"context":{"tokens":60000,"model":"claude-opus-5-5","threshold":{"tokens":400000,"source":"autoCompactWindow in settings.json"},"percent":15.0,"left":340000}}

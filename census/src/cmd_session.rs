@@ -6,8 +6,8 @@ use crate::out::Out;
 use crate::usage_views::{k, money};
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
-use capsa_core::format::Format;
 use capsa_core::hint::ResultExt;
+use capsa_core::render::{Doc, Render, emit};
 use census::session::{self, Picked, Summary};
 use serde::Serialize;
 
@@ -26,47 +26,49 @@ struct SessionOut<'a> {
     summary: &'a Summary,
 }
 
+impl Render for SessionOut<'_> {
+    fn doc(&self, doc: &mut Doc) {
+        let s = self.summary;
+        doc.title("census session");
+        doc.row("session")
+            .text(format!("{} ({})", self.session, self.picked.label()));
+        doc.row("cwd")
+            .text(s.cwd.as_deref().unwrap_or("unknown").to_owned());
+        doc.row("model")
+            .text(s.model.as_deref().unwrap_or("unknown").to_owned());
+        doc.row("duration").text(duration(s.duration_s));
+        doc.row("requests")
+            .text(format!("{} ({} subagents)", s.requests, s.subagents));
+        doc.row("cost").text(money(&s.cost));
+        doc.row("spawns").text(spawns(s));
+        match &s.context {
+            Some(c) => {
+                doc.row("context").bar(c.percent / 100.0).text(format!(
+                    "{} of {} ({:.0}%), {} left",
+                    k(c.tokens as f64),
+                    k(c.threshold.tokens as f64),
+                    c.percent,
+                    k(c.left as f64)
+                ));
+            }
+            None => {
+                doc.row("context").text("none");
+            }
+        }
+        doc.row("compactions").text(s.compactions.to_string());
+    }
+}
+
 pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     let resolved = session::resolve_here(a.session.as_deref()).hinted()?;
     let summary = session::summarize(&resolved.transcript)
         .with_context(|| format!("cannot read {}", resolved.transcript.display()))?;
-    if out.format == Format::Json {
-        let body = SessionOut {
-            session: &resolved.id,
-            picked: resolved.picked,
-            summary: &summary,
-        };
-        println!("{}", serde_json::to_string(&body)?);
-    } else {
-        print_text(out, &resolved.id, resolved.picked, &summary);
-    }
-    Ok(Outcome::Found)
-}
-
-fn print_text(out: &Out, id: &str, picked: Picked, s: &Summary) {
-    let field = |label: &str, value: &str| println!("{}", out.field(label, value));
-    field("session", &format!("{id} ({})", picked.label()));
-    field("cwd", s.cwd.as_deref().unwrap_or("unknown"));
-    field("model", s.model.as_deref().unwrap_or("unknown"));
-    field("duration", &duration(s.duration_s));
-    field(
-        "requests",
-        &format!("{} ({} subagents)", s.requests, s.subagents),
-    );
-    field("cost", &money(&s.cost));
-    field("spawns", &spawns(s));
-    let context = match &s.context {
-        Some(c) => format!(
-            "{} of {} ({:.0}%), {} left",
-            k(c.tokens as f64),
-            k(c.threshold.tokens as f64),
-            c.percent,
-            k(c.left as f64)
-        ),
-        None => "none".to_owned(),
+    let body = SessionOut {
+        session: &resolved.id,
+        picked: resolved.picked,
+        summary: &summary,
     };
-    field("context", &context);
-    field("compactions", &s.compactions.to_string());
+    emit(&body, out.format)
 }
 
 /// `2h 13m`, `4m 05s` or `30s`.
