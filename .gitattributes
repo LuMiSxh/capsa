@@ -1,0 +1,2 @@
+# Golden files hold the exact bytes a tool prints, so no checkout may rewrite their line endings.
+census/tests/report_json/*.json text eol=lf
