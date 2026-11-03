@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Derives a DeepSeek variant of an agent file by editing its top-level frontmatter lines.
 
+use crate::config::Effort;
 use std::ops::Range;
 
 use thiserror::Error;
@@ -28,14 +29,19 @@ pub enum DeriveError {
 
 /// Returns the DeepSeek variant of the agent file `source`, derived for `from` on `model`.
 ///
-/// Only the top-level frontmatter keys are edited: `name` and `model` are set, and `description`
-/// gets the DeepSeek note. Every other line, the body included, is kept byte for byte, and so are
-/// the line endings.
+/// Only the top-level frontmatter keys are edited: `name` and `model` are set, `effort` is changed
+/// unless it is `Keep`, and `description` gets the DeepSeek note. Every other line, the body
+/// included, is kept byte for byte, and so are the line endings.
 ///
 /// # Errors
 /// Fails when the frontmatter is not fenced, when `source` is already a derived variant, or when
 /// the description is a form that cannot take the note.
-pub fn derive(source: &str, from: &str, model: &str) -> Result<String, DeriveError> {
+pub fn derive(
+    source: &str,
+    from: &str,
+    model: &str,
+    effort: Effort,
+) -> Result<String, DeriveError> {
     let mut lines = split_lines(source);
     let close = closing_fence(&lines)?;
     if lines[1..close].iter().any(|line| is_marker(&line.text)) {
@@ -55,6 +61,16 @@ pub fn derive(source: &str, from: &str, model: &str) -> Result<String, DeriveErr
         nl,
         after_name,
     );
+    if effort != Effort::Keep {
+        let after_model = key_span(&lines, "model").map_or(after_name, |span| span.end);
+        set_key(
+            &mut lines,
+            "effort",
+            format!("effort: {}", effort.as_str()),
+            nl,
+            after_model,
+        );
+    }
     extend_description(&mut lines, from, model, nl)?;
     Ok(join(&lines))
 }

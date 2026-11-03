@@ -30,6 +30,33 @@ pub struct Config {
     pub agents: Vec<Agent>,
 }
 
+/// The effort applied to a derived agent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    /// Keep the source agent's effort unchanged.
+    #[default]
+    Keep,
+    /// Use low effort.
+    Low,
+    /// Use high effort.
+    High,
+    /// Use maximum effort.
+    Max,
+}
+
+impl Effort {
+    /// Returns the config and frontmatter spelling of this effort.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::Low => "low",
+            Self::High => "high",
+            Self::Max => "max",
+        }
+    }
+}
+
 /// An agent with a DeepSeek variant named `<from>-ds`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Agent {
@@ -37,6 +64,9 @@ pub struct Agent {
     pub from: String,
     /// The DeepSeek model the variant runs on, such as `deepseek-flash`.
     pub model: String,
+    /// The effort override, or `keep` to preserve the source agent's setting.
+    #[serde(default)]
+    pub effort: Effort,
 }
 
 /// Lists what can go wrong with the config file or a change to it.
@@ -116,6 +146,7 @@ impl Default for Config {
             agents: vec![Agent {
                 from: "senior-worker".to_owned(),
                 model: "deepseek-flash".to_owned(),
+                effort: Effort::Keep,
             }],
         }
     }
@@ -272,6 +303,7 @@ mod tests {
         Agent {
             from: from.to_owned(),
             model: model.to_owned(),
+            effort: Effort::Keep,
         }
     }
 
@@ -304,6 +336,13 @@ mod tests {
                 ..Config::default()
             }
         );
+    }
+
+    #[test]
+    fn existing_agent_configs_default_effort_to_keep() {
+        let config =
+            Config::parse(r#"{"agents":[{"from":"worker","model":"deepseek-flash"}]}"#).unwrap();
+        assert_eq!(config.agents[0].effort, Effort::Keep);
     }
 
     #[test]

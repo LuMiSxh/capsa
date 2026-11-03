@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::Notify;
-use vicarius::config::{Agent, Config};
+use vicarius::config::{Agent, Config, Effort};
 use vicarius::gate::{Closed, Gate};
 use vicarius::proxy::{DeepseekKey, Proxy, ProxyConfig};
 use vicarius::refresh::{RefreshConfig, Refresher};
@@ -233,10 +233,15 @@ async fn sync_reads_the_config_again_for_added_agents() {
     config.agents.push(Agent {
         from: "worker".to_owned(),
         model: "deepseek-flash".to_owned(),
+        effort: Effort::Max,
     });
     config.save_to(&rig.config_file).unwrap();
     rig.refresher.sync_agents();
-    assert!(rig.agents.join("worker-ds.md").exists());
+    let derived = std::fs::read_to_string(rig.agents.join("worker-ds.md")).unwrap();
+    assert!(
+        derived.lines().any(|line| line == "effort: max"),
+        "{derived}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

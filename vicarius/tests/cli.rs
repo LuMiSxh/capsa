@@ -226,6 +226,77 @@ fn agent_add_and_remove_change_the_list_and_refuse_bad_ones() {
 }
 
 #[test]
+fn agent_add_saves_custom_effort_and_defaults_to_keep() {
+    let home = tempfile::tempdir().expect("scratch home");
+    let default = vicarius(
+        home.path(),
+        &[
+            "self",
+            "config",
+            "agent",
+            "add",
+            "worker",
+            "--model",
+            "deepseek-flash",
+        ],
+    );
+    assert_eq!(default.status.code(), Some(0), "{}", text(&default.stderr));
+    assert_eq!(saved(home.path())["agents"][1]["effort"], "keep");
+
+    let custom = vicarius(
+        home.path(),
+        &[
+            "self",
+            "config",
+            "agent",
+            "add",
+            "reviewer",
+            "--model",
+            "deepseek-flash",
+            "--effort",
+            "high",
+        ],
+    );
+    assert_eq!(custom.status.code(), Some(0), "{}", text(&custom.stderr));
+    assert_eq!(saved(home.path())["agents"][2]["effort"], "high");
+
+    let maximum = vicarius(
+        home.path(),
+        &[
+            "self",
+            "config",
+            "agent",
+            "add",
+            "max-worker",
+            "--model",
+            "deepseek-flash",
+            "--effort",
+            "max",
+        ],
+    );
+    assert_eq!(maximum.status.code(), Some(0), "{}", text(&maximum.stderr));
+    assert_eq!(saved(home.path())["agents"][3]["effort"], "max");
+
+    for unsupported in ["medium", "xhigh", "extreme"] {
+        let invalid = vicarius(
+            home.path(),
+            &[
+                "self",
+                "config",
+                "agent",
+                "add",
+                "another",
+                "--model",
+                "deepseek-flash",
+                "--effort",
+                unsupported,
+            ],
+        );
+        assert_eq!(invalid.status.code(), Some(2), "{unsupported}");
+    }
+}
+
+#[test]
 fn uninstall_dry_run_prints_one_json_value_and_removes_nothing() {
     let home = tempfile::tempdir().expect("scratch home");
     let out = vicarius(home.path(), &["self", "uninstall", "--dry-run", "--json"]);

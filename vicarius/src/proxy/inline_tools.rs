@@ -7,6 +7,8 @@ use std::borrow::Cow;
 const MARKER: &[u8] = b"tool_definition";
 const TOOL_DEFINITION: &str = "tool_definition";
 const TOOL_RESULT: &str = "tool_result";
+/// The block of a mid-conversation `system` message that adds a tool under `tool`.
+const TOOL_ADDITION: &str = "tool_addition";
 /// The fields that may hold the tool object of a `tool_definition` block, in order.
 const NESTED_KEYS: [&str; 2] = ["tool", "definition"];
 const PLACEHOLDER: &str = "(tool loaded)";
@@ -80,6 +82,14 @@ fn take_definitions(blocks: &mut Vec<Value>, found: &mut Vec<Value>) -> bool {
         };
         if fields.get("type").and_then(Value::as_str) == Some(TOOL_DEFINITION) {
             found.push(definition(fields));
+            changed = true;
+            return false;
+        }
+        if fields.get("type").and_then(Value::as_str) == Some(TOOL_ADDITION)
+            && let Some(Value::Object(tool)) = fields.get_mut("tool")
+            && tool.get("type").and_then(Value::as_str) == Some(TOOL_DEFINITION)
+        {
+            found.push(definition(tool));
             changed = true;
             return false;
         }
@@ -260,6 +270,36 @@ mod tests {
         assert_eq!(
             out["messages"][0]["content"],
             json!([{"type": "text", "text": "x"}])
+        );
+    }
+
+    #[test]
+    fn a_tool_addition_in_a_system_message_moves_its_definition() {
+        let body = json!({
+            "tools": [],
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "system", "content": [
+                    {"type": "text", "text": "tools changed"},
+                    {"type": "tool_addition", "tool": {
+                        "type": "tool_definition",
+                        "definition": {"name": "load", "input_schema": {"type": "object"}}
+                    }},
+                    {"type": "tool_addition", "tool": {"type": "tool_reference", "tool_name": "x"}}
+                ]}
+            ]
+        });
+        let out = rewritten(&body);
+        assert_eq!(
+            out["tools"],
+            json!([{"name": "load", "input_schema": {"type": "object"}}])
+        );
+        assert_eq!(
+            out["messages"][1]["content"],
+            json!([
+                {"type": "text", "text": "tools changed"},
+                {"type": "tool_addition", "tool": {"type": "tool_reference", "tool_name": "x"}}
+            ])
         );
     }
 

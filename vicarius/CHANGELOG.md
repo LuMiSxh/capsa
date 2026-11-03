@@ -4,6 +4,8 @@
 
 ### Added
 
+- `vicarius self config agent add` accepts `--effort keep|low|high|max`; `keep` preserves
+  the source agent's effort and is the default for existing and new config entries.
 - `vicarius serve` runs the local proxy in the foreground on `127.0.0.1:<port>` until SIGTERM or
   SIGINT. It routes each `/v1/messages` and `/v1/messages/count_tokens` request by the body's
   `model`: `deepseek-*` goes to DeepSeek's Anthropic API with `DEEPSEEK_API_KEY`, everything else
@@ -20,8 +22,8 @@
 - `POST /vicarius/refresh` runs a refresh and a sync at once. `GET /vicarius/status` adds `agents`
   (the last sync report) and `refresh` (`last_ok_at`, `last_error`, `next_at`).
 - Each configured agent gets `~/.claude/agents/<from>-ds.md`, derived from its file with `name`,
-  `model` and `description` changed and the rest left byte for byte. A file without the vicarius
-  marker is never overwritten or removed.
+  `model` and `description` changed, and `effort` changed only when explicitly configured; the
+  rest is left byte for byte. A file without the vicarius marker is never overwritten or removed.
 - The DeepSeek balance answer is parsed and availability is decided against the USD minimum. An
   account with only CNY is available while its balance is above zero.
 - `vicarius self setup`, `start`, `stop` and `doctor` manage the launchd agent

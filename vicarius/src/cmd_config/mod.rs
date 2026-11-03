@@ -9,7 +9,7 @@ use capsa_core::render::{Doc, Render, emit};
 use serde::Serialize;
 use std::str::FromStr;
 use std::time::Duration;
-use vicarius::config::{Agent, Config, ConfigError};
+use vicarius::config::{Agent, Config, ConfigError, Effort};
 
 use crate::cmd_service::{self, Item, RESTART_NOTE, WAIT};
 use crate::service::{self, Install, Launchctl, Replacement, System};
@@ -69,13 +69,16 @@ struct AgentArgs {
 
 #[derive(clap::Subcommand)]
 enum AgentAction {
-    /// Add the DeepSeek variant `<from>-ds`, which runs on `--model`.
+    /// Add the DeepSeek variant `<from>-ds`, which runs on `--model` and can override effort.
     Add {
         /// The agent file in `~/.claude/agents` to derive from, without `.md`.
         from: String,
         /// The DeepSeek model id, such as `deepseek-flash`.
         #[arg(long)]
         model: String,
+        /// The effort to use, or `keep` to preserve the source effort.
+        #[arg(long, value_enum, default_value = "keep")]
+        effort: Effort,
     },
     /// Remove the derived agent of `<from>`.
     Remove {
@@ -112,8 +115,12 @@ impl Render for ConfigOut<'_> {
             doc.row("agents").dim("none");
         }
         for agent in &c.agents {
-            doc.row(format!("agent {}", agent.from))
-                .text(format!("{}-ds on {}", agent.from, agent.model));
+            doc.row(format!("agent {}", agent.from)).text(format!(
+                "{}-ds on {} (effort: {})",
+                agent.from,
+                agent.model,
+                agent.effort.as_str()
+            ));
         }
         for step in &self.steps {
             doc.row(step.name).text(step.status.as_str());
@@ -164,8 +171,17 @@ fn change(config: &mut Config, action: Action) -> Result<(), ConfigError> {
             config.validate()
         }
         Action::Agent(AgentArgs {
-            action: AgentAction::Add { from, model },
-        }) => config.add_agent(Agent { from, model }),
+            action:
+                AgentAction::Add {
+                    from,
+                    model,
+                    effort,
+                },
+        }) => config.add_agent(Agent {
+            from,
+            model,
+            effort,
+        }),
         Action::Agent(AgentArgs {
             action: AgentAction::Remove { from },
         }) => config.remove_agent(&from),

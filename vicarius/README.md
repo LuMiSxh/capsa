@@ -39,16 +39,16 @@ Build from source, with the toolchain pinned in `rust-toolchain.toml` (see [Buil
 
 `vicarius <command>` prints its result to stdout. The proxy itself runs under `vicarius serve`; the other commands talk to it or to the settings.
 
-| Command                              | What it does                                                                                                     |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `vicarius serve`                     | Runs the proxy in the foreground until SIGTERM or SIGINT; launchd starts it                                      |
-| `vicarius status`                    | The gate, the balance, the last refresh, the requests, the tokens and the agents                                 |
-| `vicarius hook session-start`        | SessionStart hook: prints the line that lists the DeepSeek agents when they are available                       |
-| `vicarius self setup`                | Installs the launchd service, the hook and the settings `env`, then starts the service                          |
-| `vicarius self start` / `stop`       | Starts or stops the service and sets or removes `ANTHROPIC_BASE_URL` in the settings with it                    |
-| `vicarius self config`               | Shows the settings and changes them; see Settings                                                               |
-| `vicarius self doctor`               | Checks the service, the port, the settings, the key, the balance, the agent files and the hook                  |
-| `vicarius self update` / `uninstall` | As in the other tools                                                                                           |
+| Command                              | What it does                                                                                   |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `vicarius serve`                     | Runs the proxy in the foreground until SIGTERM or SIGINT; launchd starts it                    |
+| `vicarius status`                    | The gate, the balance, the last refresh, the requests, the tokens and the agents               |
+| `vicarius hook session-start`        | SessionStart hook: prints the line that lists the DeepSeek agents when they are available      |
+| `vicarius self setup`                | Installs the launchd service, the hook and the settings `env`, then starts the service         |
+| `vicarius self start` / `stop`       | Starts or stops the service and sets or removes `ANTHROPIC_BASE_URL` in the settings with it   |
+| `vicarius self config`               | Shows the settings and changes them; see Settings                                              |
+| `vicarius self doctor`               | Checks the service, the port, the settings, the key, the balance, the agent files and the hook |
+| `vicarius self update` / `uninstall` | As in the other tools                                                                          |
 
 Output is agent text by default. `--human` adds colour on a terminal, `--json` prints the report as JSON, and `--format agent|human|json` is the same choice. `NO_COLOR` turns colour off. Exit codes are 0 for results, 1 for nothing found and 2 for an error.
 
@@ -56,18 +56,18 @@ Output is agent text by default. `--human` adds colour on a terminal, `--json` p
 
 `vicarius self config` reads `config.json` in the vicarius config directory. `vicarius self config set <key> <value>` changes one setting:
 
-| Key               | Default  | What it does                                                                                                       |
-| ----------------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
-| `port`            | `3337`   | Local port of the proxy. A change rewrites the settings `env`; running sessions need a restart                     |
-| `min-balance`     | `1.0`    | DeepSeek balance in USD below which the `-ds` agents are withdrawn                                                 |
-| `balance-refresh` | `10`     | Minutes between two balance checks                                                                                 |
-| `max-context`     | `400000` | Context window in tokens that Claude Code assumes for the DeepSeek models, as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`      |
+| Key               | Default  | What it does                                                                                                   |
+| ----------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
+| `port`            | `3337`   | Local port of the proxy. A change rewrites the settings `env`; running sessions need a restart                 |
+| `min-balance`     | `1.0`    | DeepSeek balance in USD below which the `-ds` agents are withdrawn                                             |
+| `balance-refresh` | `10`     | Minutes between two balance checks                                                                             |
+| `max-context`     | `400000` | Context window in tokens that Claude Code assumes for the DeepSeek models, as `CLAUDE_CODE_MAX_CONTEXT_TOKENS` |
 
-`vicarius self config agent add <from> --model <id>` adds a `<from>-ds` variant of `~/.claude/agents/<from>.md` that runs on the model `<id>`, and `agent remove <from>` removes it. The default is one agent, `senior-worker` on `deepseek-flash`, which gives `senior-worker-ds`.
+`vicarius self config agent add <from> --model <id> [--effort keep|low|high|max]` adds a `<from>-ds` variant of `~/.claude/agents/<from>.md`. Effort defaults to `keep`, preserving the source agent's setting; an explicit value overrides it. `agent remove <from>` removes the entry. The default is one agent, `senior-worker` on `deepseek-flash`, which gives `senior-worker-ds`.
 
 ## Subagents
 
-Each configured agent gets `~/.claude/agents/<from>-ds.md`: the source file with `name`, `model` and `description` changed and the rest left byte for byte. The service writes it while the balance is at least `min-balance`, and removes it when the balance drops, when the key is missing and when the service stops. A file without the vicarius marker is never written or removed.
+Each configured agent gets `~/.claude/agents/<from>-ds.md`: the source file with `name`, `model` and `description` changed, and `effort` changed only when configured to a value other than `keep`; the rest is left byte for byte. The service writes it while the balance is at least `min-balance`, and removes it when the balance drops, when the key is missing and when the service stops. A file without the vicarius marker is never written or removed.
 
 Claude Code reads the agent list once, at session start, so a new session sees the state of the last refresh. The SessionStart hook adds a line to the main agent's context that lists the available `-ds` agents and their models.
 

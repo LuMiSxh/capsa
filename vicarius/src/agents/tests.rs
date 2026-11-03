@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use crate::config::Agent;
+use crate::config::{Agent, Effort};
 use std::fs;
 use std::path::Path;
 
@@ -35,7 +35,43 @@ Return the outcome, files changed, verification commands and results, remaining 
 "##;
 
 fn worker(source: &str) -> String {
-    derive(source, "worker", "deepseek-flash").unwrap()
+    derive(source, "worker", "deepseek-flash", Effort::Keep).unwrap()
+}
+
+#[test]
+fn an_explicit_effort_replaces_the_source_effort() {
+    let derived = derive(
+        SENIOR_WORKER,
+        "senior-worker",
+        "deepseek-flash",
+        Effort::High,
+    )
+    .unwrap();
+    assert!(derived.lines().any(|line| line == "effort: high"));
+    assert!(!derived.lines().any(|line| line == "effort: medium"));
+}
+
+#[test]
+fn max_effort_is_written_to_the_derived_agent() {
+    let derived = derive(WORKER, "worker", "deepseek-flash", Effort::Max).unwrap();
+    assert!(
+        derived.lines().any(|line| line == "effort: max"),
+        "{derived}"
+    );
+}
+
+#[test]
+fn an_explicit_effort_is_added_when_the_source_has_none() {
+    let source = r"---
+name: worker
+model: claude-haiku-5-5
+---
+";
+    let derived = derive(source, "worker", "deepseek-flash", Effort::Low).unwrap();
+    assert!(
+        derived.lines().any(|line| line == "effort: low"),
+        "{derived}"
+    );
 }
 
 #[test]
@@ -153,7 +189,12 @@ fn the_body_is_kept_byte_for_byte() {
 #[test]
 fn a_file_without_an_opening_fence_is_refused() {
     assert_eq!(
-        derive("name: worker\n---\n", "worker", "deepseek-flash"),
+        derive(
+            "name: worker\n---\n",
+            "worker",
+            "deepseek-flash",
+            Effort::Keep
+        ),
         Err(DeriveError::NoOpeningFence)
     );
 }
@@ -161,7 +202,12 @@ fn a_file_without_an_opening_fence_is_refused() {
 #[test]
 fn a_file_without_a_closing_fence_is_refused() {
     assert_eq!(
-        derive("---\nname: worker\n", "worker", "deepseek-flash"),
+        derive(
+            "---\nname: worker\n",
+            "worker",
+            "deepseek-flash",
+            Effort::Keep
+        ),
         Err(DeriveError::NoClosingFence)
     );
 }
@@ -169,7 +215,7 @@ fn a_file_without_a_closing_fence_is_refused() {
 #[test]
 fn a_derived_file_is_refused_as_a_source() {
     assert_eq!(
-        derive(&worker(WORKER), "worker", "deepseek-flash"),
+        derive(&worker(WORKER), "worker", "deepseek-flash", Effort::Keep),
         Err(DeriveError::AlreadyDerived)
     );
 }
@@ -178,7 +224,7 @@ fn a_derived_file_is_refused_as_a_source() {
 fn an_unterminated_quoted_description_is_refused() {
     let source = "---\nname: worker\ndescription: \"Does work.\nmodel: x\n---\n";
     assert_eq!(
-        derive(source, "worker", "deepseek-flash"),
+        derive(source, "worker", "deepseek-flash", Effort::Keep),
         Err(DeriveError::Description(
             "the quoted description is not closed"
         ))
@@ -197,7 +243,13 @@ fn the_senior_worker_fixture_derives_as_expected() {
         )
         .replacen("model: claude-sonnet-5-5", "model: deepseek-flash", 1);
     assert_eq!(
-        derive(SENIOR_WORKER, "senior-worker", "deepseek-flash").unwrap(),
+        derive(
+            SENIOR_WORKER,
+            "senior-worker",
+            "deepseek-flash",
+            Effort::Keep
+        )
+        .unwrap(),
         expected
     );
 }
@@ -214,6 +266,7 @@ fn agent(from: &str) -> Agent {
     Agent {
         from: from.to_owned(),
         model: "deepseek-flash".to_owned(),
+        effort: Effort::Keep,
     }
 }
 

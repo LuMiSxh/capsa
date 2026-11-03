@@ -87,7 +87,7 @@ fn write_agent(dir: &Path, agent: &Agent, file: &str) -> Outcome {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return remove_orphan(&dir.join(file)),
         Err(e) => return Outcome::Error(e.to_string()),
     };
-    let derived = match derive(&source, &agent.from, &agent.model) {
+    let derived = match derive(&source, &agent.from, &agent.model, agent.effort) {
         Ok(derived) => derived,
         Err(e) => return Outcome::Unparsable(e.to_string()),
     };
