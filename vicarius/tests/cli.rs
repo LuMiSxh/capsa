@@ -24,6 +24,7 @@ fn vicarius(home: &Path, args: &[&str]) -> Output {
         .env("USERPROFILE", home)
         .env("XDG_CONFIG_HOME", home.join("config"))
         .env("APPDATA", home.join("config"))
+        .env("VICARIUS_LAUNCHCTL", "/usr/bin/false")
         .output()
         .expect("start vicarius")
 }
@@ -64,6 +65,30 @@ fn json_is_one_value_with_the_settings_and_the_path() {
     assert_eq!(value["port"], 3337);
     assert_eq!(value["agents"][0]["from"], "senior-worker");
     assert!(value["path"].is_string());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_port_change_calls_the_launchctl_named_in_the_environment() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().expect("scratch home");
+    let calls = home.path().join("calls");
+    let stub = home.path().join("launchctl");
+    std::fs::write(
+        &stub,
+        format!("#!/bin/sh\necho \"$*\" >> '{}'\nexit 1\n", calls.display()),
+    )
+    .expect("write stub");
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).expect("chmod stub");
+    let out = Command::new(env!("CARGO_BIN_EXE_vicarius"))
+        .args(["self", "config", "set", "port", "4001"])
+        .env("HOME", home.path())
+        .env("VICARIUS_LAUNCHCTL", &stub)
+        .output()
+        .expect("start vicarius");
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let seen = std::fs::read_to_string(&calls).expect("the stub was called");
+    assert!(seen.contains("io.github.lumisxh.vicarius"), "{seen}");
 }
 
 #[test]

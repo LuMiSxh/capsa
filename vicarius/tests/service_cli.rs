@@ -33,6 +33,7 @@ fn vicarius(home: &Path, args: &[&str]) -> Output {
         .env("XDG_CONFIG_HOME", home.join("config"))
         .env("APPDATA", home.join("config"))
         .env_remove("CLAUDE_CONFIG_DIR")
+        .env("VICARIUS_LAUNCHCTL", "/usr/bin/false")
         .output()
         .expect("start vicarius")
 }

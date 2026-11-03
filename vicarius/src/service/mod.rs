@@ -18,6 +18,9 @@ use vicarius::config::Config;
 
 pub use plist::program_path;
 
+/// The environment variable that replaces the `launchctl` program, so that tests of the binary
+/// never reach the real launchd: the agent label is the same for every `HOME`.
+pub const LAUNCHCTL_ENV: &str = "VICARIUS_LAUNCHCTL";
 /// The launchd label of the agent.
 pub const LABEL: &str = "io.github.lumisxh.vicarius";
 /// The settings `env` key that points Claude Code at the service.
@@ -125,7 +128,8 @@ pub struct System;
 
 impl Launchctl for System {
     fn run(&self, args: &[&str]) -> io::Result<Call> {
-        let out = Command::new("launchctl").args(args).output()?;
+        let program = std::env::var_os(LAUNCHCTL_ENV).unwrap_or_else(|| "launchctl".into());
+        let out = Command::new(program).args(args).output()?;
         Ok(Call {
             ok: out.status.success(),
             stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
