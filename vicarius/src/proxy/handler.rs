@@ -5,7 +5,7 @@ use super::headers::{HeaderLog, strip_hop_by_hop, strip_request_framing};
 use super::record::{Pending, Recorder, RequestLine, Route};
 use super::tap::Tap;
 use super::usage::{Usage, UsageTap};
-use super::{BoxError, ResBody, local};
+use super::{BoxError, ResBody, inline_tools, local};
 use crate::gate::{Closed, Gate, unix_now};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
@@ -13,7 +13,9 @@ use hyper::http::request::Parts;
 use hyper::http::uri::PathAndQuery;
 use hyper::http::{Extensions, HeaderValue, Version};
 use hyper::{Request, Response, StatusCode};
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, HOST, HeaderName, ORIGIN};
+use reqwest::header::{
+    ACCEPT_ENCODING, AUTHORIZATION, CONTENT_TYPE, COOKIE, HOST, HeaderName, ORIGIN,
+};
 use serde::Deserialize;
 use serde_json::json;
 use std::borrow::Cow;
@@ -191,6 +193,8 @@ async fn send(
     let mut headers = parts.headers.clone();
     strip_hop_by_hop(&mut headers);
     strip_request_framing(&mut headers);
+    // The usage tap reads only plain bodies, so the upstream must not compress the response.
+    headers.remove(ACCEPT_ENCODING);
     if route == Route::Deepseek {
         headers.remove(AUTHORIZATION);
         headers.remove(X_API_KEY);
@@ -199,6 +203,15 @@ async fn send(
             headers.insert(X_API_KEY, key.clone());
         }
     }
+    // DeepSeek rejects Claude Code's inline `tool_definition` blocks, so they move to `tools`.
+    let body = if route == Route::Deepseek {
+        match inline_tools::rewrite(&body) {
+            Cow::Borrowed(_) => body,
+            Cow::Owned(bytes) => Bytes::from(bytes),
+        }
+    } else {
+        body
+    };
     let mut request = state
         .client
         .request(parts.method.clone(), format!("{base}{target}"))

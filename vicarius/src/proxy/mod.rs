@@ -3,6 +3,7 @@
 
 mod handler;
 mod headers;
+mod inline_tools;
 mod local;
 mod record;
 mod tap;

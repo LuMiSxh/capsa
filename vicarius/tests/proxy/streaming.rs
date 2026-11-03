@@ -88,6 +88,41 @@ async fn usage_is_read_when_events_split_across_chunks() {
     assert_eq!(line["output_tokens"], 42);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn usage_is_read_when_the_client_accepts_compression() {
+    let text = format!("{START}{DELTA}");
+    let sse = move |_: &crate::mock::Seen| {
+        Reply::full(
+            200,
+            &[("content-type", b"text/event-stream")],
+            text.as_bytes(),
+        )
+    };
+    let anthropic = Mock::start(sse.clone()).await;
+    let deepseek = Mock::start(sse).await;
+    let proxy = start(&anthropic, &deepseek, Some(KEY), true).await;
+    for body in [MESSAGES_BODY, DEEPSEEK_BODY] {
+        proxy
+            .client
+            .post(proxy.url("/v1/messages"))
+            .header("accept-encoding", "gzip, deflate, br, zstd")
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+    }
+    for seen in anthropic.seen().into_iter().chain(deepseek.seen()) {
+        assert!(!seen.headers.contains_key("accept-encoding"));
+    }
+    for line in proxy.log_lines(2).await {
+        assert_eq!(line["input_tokens"], 12);
+        assert_eq!(line["output_tokens"], 42);
+    }
+}
+
 fn split(text: &str, cuts: &[usize]) -> Vec<Step> {
     let mut steps = Vec::new();
     let mut from = 0;

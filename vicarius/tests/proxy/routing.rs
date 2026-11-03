@@ -153,6 +153,60 @@ async fn deepseek_404_for_count_tokens_passes_through() {
     assert!(proxy.gate.closed().is_none());
 }
 
+fn inline_body(model: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": [{
+            "type": "tool_definition",
+            "name": "Lookup",
+            "description": "Finds a record",
+            "input_schema": {"type": "object"}
+        }]}]
+    }))
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deepseek_route_moves_inline_tool_definitions_into_tools() {
+    let deepseek = idle().await;
+    let anthropic = idle().await;
+    let proxy = start(&anthropic, &deepseek, Some(KEY), true).await;
+    let resp = proxy
+        .client
+        .post(proxy.url("/v1/messages"))
+        .body(inline_body("deepseek-flash"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let seen = deepseek.seen();
+    assert_eq!(seen.len(), 1);
+    let body: serde_json::Value = serde_json::from_slice(&seen[0].body).unwrap();
+    assert_eq!(body["tools"][0]["name"], "Lookup");
+    assert_eq!(body["messages"][0]["content"][0]["text"], "(tool loaded)");
+    assert!(anthropic.seen().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn anthropic_route_forwards_inline_tool_definitions_unchanged() {
+    let anthropic = idle().await;
+    let deepseek = idle().await;
+    let proxy = start(&anthropic, &deepseek, Some(KEY), true).await;
+    let body = inline_body("claude-opus-4");
+    let resp = proxy
+        .client
+        .post(proxy.url("/v1/messages"))
+        .body(body.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let seen = anthropic.seen();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].body, body);
+    assert!(deepseek.seen().is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn closed_gate_refuses_without_calling_deepseek() {
     let deepseek = idle().await;

@@ -56,3 +56,7 @@
 - Initial crate with `vicarius self config`: shows the settings, sets the port, the minimum
   balance, the refresh interval and the context window, and adds or removes the agents that get a
   DeepSeek variant. `self update` and `self uninstall` work as in the other tools.
+- On the DeepSeek route, a `tool_definition` block that Claude Code puts in a message when an agent
+  loads a deferred tool moves into the request's `tools` array and the block is removed, because
+  DeepSeek rejects it with a 422 that ends the subagent. A tool whose name is already in `tools` is
+  not added twice. Anthropic requests are forwarded unchanged.
