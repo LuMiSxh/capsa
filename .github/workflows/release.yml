@@ -11,6 +11,7 @@ on:
           - acus
           - pons
           - census
+          - vicarius
       version:
         description: "Crate version without v, e.g. 0.16.2. Must match the tool's Cargo.toml and have a CHANGELOG.md section."
         required: true
@@ -42,6 +43,7 @@ jobs:
             acus)  manifest="acus/crates/acus-cli/Cargo.toml"; changelog="acus/CHANGELOG.md" ;;
             pons)  manifest="pons/Cargo.toml";                 changelog="pons/CHANGELOG.md" ;;
             census) manifest="census/Cargo.toml";              changelog="census/CHANGELOG.md" ;;
+            vicarius) manifest="vicarius/Cargo.toml"; changelog="vicarius/CHANGELOG.md" ;;
           esac
 
           if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -93,6 +95,7 @@ jobs:
             acus)  package="acus-cli"; bin="acus";  features="cmd-update"; profile="release" ;;
             pons)  package="pons";     bin="pons";  features="";           profile="release-unwind" ;;
             census) package="census"; bin="census"; features="cmd-update"; profile="release" ;;
+            vicarius) package="vicarius"; bin="vicarius"; features="cmd-update"; profile="release" ;;
           esac
           bin_file="$bin"
           if [ "$RUNNER_OS" = "Windows" ]; then bin_file="$bin.exe"; fi
@@ -176,6 +179,7 @@ jobs:
             acus)  changelog="acus/CHANGELOG.md" ;;
             pons)  changelog="pons/CHANGELOG.md" ;;
             census) changelog="census/CHANGELOG.md" ;;
+            vicarius) changelog="vicarius/CHANGELOG.md" ;;
           esac
           awk -v heading="## [$VERSION]" '
             index($0, heading) == 1 { found = 1; next }

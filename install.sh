@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs capsa tools from the newest release of each tool.
-# Usage: install.sh [acus|pons|census|all ...]   (default: all)
-#        install.sh --uninstall <acus|pons|census|all>
+# Usage: install.sh [acus|pons|census|vicarius|all ...]   (default: all)
+#        install.sh --uninstall <acus|pons|census|vicarius|all>
 # Env: CAPSA_INSTALL_DIR (default ~/.local/bin), CAPSA_INSTALL_SCOPE=user|system,
 #      CAPSA_NO_SKILL=1 skips `acus self skill --install` (ACUS_NO_SKILL works too) and
 #      keeps the acus skill on --uninstall,
@@ -28,14 +28,14 @@ main() {
     for arg in "$@"; do
         case "$arg" in
             --uninstall) ;;
-            all)       selected="$selected acus pons census" ;;
-            acus|pons|census) selected="$selected $arg" ;;
-            *) err "unknown tool: $arg (use acus, pons, census or all)" ;;
+            all)       selected="$selected acus pons census vicarius" ;;
+            acus|pons|census|vicarius) selected="$selected $arg" ;;
+            *) err "unknown tool: $arg (use acus, pons, census, vicarius or all)" ;;
         esac
     done
 
     if [ -n "$uninstall" ]; then
-        [ -n "$selected" ] || err "usage: install.sh --uninstall <acus|pons|census|all>"
+        [ -n "$selected" ] || err "usage: install.sh --uninstall <acus|pons|census|vicarius|all>"
         for tool in $selected; do
             uninstall_tool "$tool"
         done
