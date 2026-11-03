@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Reads and edits Claude Code's `settings.json` for one tool's hooks. Everything else in the
-//! file stays as it was, and a write is refused when the file changed since it was read.
+//! Reads and edits Claude Code's `settings.json`: one tool's hooks and the keys in `env`.
+//! Everything else in the file stays as it was, and a write is refused when the file changed
+//! since it was read.
 
 use std::borrow::Cow;
 use std::io::Write as _;
@@ -11,8 +12,11 @@ use serde_json::{Map, Value, json};
 
 use crate::hint::Hint;
 
+mod env;
 #[cfg(test)]
 mod tests;
+
+pub use env::{Removal, env_value, remove_env, set_env};
 
 const SETTINGS: &str = "settings.json";
 
@@ -27,13 +31,13 @@ pub struct Settings {
     pub value: Value,
 }
 
-/// What `set_hook` did to a tool's hook.
+/// What `set_hook` or `set_env` did to a tool's hook or env key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Step {
-    /// The hook was added.
+    /// The hook or env key was added.
     Install,
-    /// The tool's entry was replaced because its matcher or command differed.
+    /// The tool's entry or env value was replaced because it differed.
     Replace,
     /// The same entry is already there; nothing changes.
     Set,
@@ -71,7 +75,7 @@ pub fn path() -> PathBuf {
 ///
 /// # Errors
 ///
-/// Fails when the file cannot be read, is not a JSON object, or has `hooks` of another shape.
+/// Fails when the file cannot be read, is not a JSON object, or has a malformed `hooks` or `env`.
 pub fn read(path: &Path) -> Result<Settings, SettingsError> {
     let path = resolve(path)?;
     let text = match std::fs::read_to_string(&path) {
@@ -93,6 +97,7 @@ pub fn read(path: &Path) -> Result<Settings, SettingsError> {
         return Err(SettingsError::NotObject { path });
     }
     check_hooks(&value, &path)?;
+    env::check_env(&value, &path)?;
     Ok(Settings {
         path,
         before: Some(text),
@@ -140,6 +145,38 @@ pub fn set_hook(
     });
     entries.push(group(matcher, &hook));
     if had { Step::Replace } else { Step::Install }
+}
+
+/// Removes the entries of `event` that `owns` claims, with the groups and the event that they
+/// leave empty. Other hooks stay in place. Returns whether an entry was removed.
+pub fn remove_hook(v: &mut Value, event: &str, owns: impl Fn(&str) -> bool) -> bool {
+    if !event_entries(v, event)
+        .iter()
+        .any(|g| items(g).any(|i| is_owned(i, &owns)))
+    {
+        return false;
+    }
+    let Some(hooks) = v.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    let Some(entries) = hooks.get_mut(event).and_then(Value::as_array_mut) else {
+        return false;
+    };
+    entries.retain_mut(|g| {
+        let Some(items) = g.get_mut("hooks").and_then(Value::as_array_mut) else {
+            return true;
+        };
+        let before = items.len();
+        items.retain(|i| !is_owned(i, &owns));
+        !items.is_empty() || before == 0
+    });
+    if entries.is_empty() {
+        hooks.remove(event);
+    }
+    if hooks.is_empty() {
+        object_mut(v).remove("hooks");
+    }
+    true
 }
 
 /// Writes the settings over their file. The old file is copied to `<file>.bak` first. The new

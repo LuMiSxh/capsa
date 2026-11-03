@@ -4,7 +4,12 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use super::{Step, command_line, has_hook, read, runs, set_hook, write};
+use crate::hint::Hint;
+
+use super::{
+    Removal, Step, command_line, env_value, has_hook, read, remove_env, remove_hook, runs, set_env,
+    set_hook, write,
+};
 
 const COMMAND: &str = "demo-hook run";
 
@@ -201,6 +206,33 @@ fn a_symlinked_settings_file_stays_a_link() {
 }
 
 #[test]
+fn remove_hook_keeps_foreign_hooks_and_reports_absence() {
+    let t = tempfile::tempdir().unwrap();
+    let mut s = read(&t.path().join("settings.json")).unwrap();
+    set_hook(&mut s.value, "SessionStart", None, "other-tool run", |_| {
+        false
+    });
+    set_hook(&mut s.value, "SessionStart", None, COMMAND, owned);
+    assert!(remove_hook(&mut s.value, "SessionStart", owned));
+    assert_eq!(
+        s.value,
+        json!({"hooks": {"SessionStart": [
+            {"hooks": [{"type": "command", "command": "other-tool run"}]}
+        ]}})
+    );
+    assert!(!remove_hook(&mut s.value, "SessionStart", owned));
+}
+
+#[test]
+fn removing_the_only_hook_drops_the_empty_event_and_hooks() {
+    let t = tempfile::tempdir().unwrap();
+    let mut s = read(&t.path().join("settings.json")).unwrap();
+    set_hook(&mut s.value, "SessionStart", None, COMMAND, owned);
+    assert!(remove_hook(&mut s.value, "SessionStart", owned));
+    assert_eq!(s.value, json!({}));
+}
+
+#[test]
 fn runs_recognises_the_plain_quoted_and_exe_forms() {
     assert!(runs(r#""/My Apps/demo" hook"#, "demo", "hook"));
     assert!(runs(
@@ -237,4 +269,148 @@ fn a_windows_binary_path_is_quoted_with_forward_slashes_and_still_recognised() {
     let command = command_line(Path::new(r"C:\My Apps\demo.exe"), "hook");
     assert_eq!(command, r#""C:/My Apps/demo.exe" hook"#);
     assert!(runs(&command, "demo", "hook"));
+}
+
+#[test]
+fn sets_an_env_key_on_a_missing_file() {
+    let t = tempfile::tempdir().unwrap();
+    let mut s = read(&t.path().join("settings.json")).unwrap();
+    let step = set_env(&mut s.value, "ANTHROPIC_BASE_URL", "http://127.0.0.1:8080");
+    assert_eq!(step, Step::Install);
+    write(&s).unwrap();
+    assert_eq!(
+        written(&s.path)["env"],
+        json!({"ANTHROPIC_BASE_URL": "http://127.0.0.1:8080"})
+    );
+    assert!(!t.path().join("settings.json.bak").exists());
+}
+
+#[test]
+fn adds_env_to_a_file_without_it_and_keeps_the_rest() {
+    let mut v = json!({"theme": "dark"});
+    let step = set_env(&mut v, "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "200000");
+    assert_eq!(step, Step::Install);
+    assert_eq!(
+        v,
+        json!({"theme": "dark", "env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "200000"}})
+    );
+}
+
+#[test]
+fn skips_the_write_when_the_env_value_is_identical() {
+    let start = json!({"env": {"ANTHROPIC_BASE_URL": "http://x"}});
+    let mut v = start.clone();
+    let step = set_env(&mut v, "ANTHROPIC_BASE_URL", "http://x");
+    assert_eq!(step, Step::Set);
+    assert!(!step.writes());
+    assert_eq!(v, start);
+}
+
+#[test]
+fn replaces_an_env_value_that_differs() {
+    let mut v = json!({"env": {"ANTHROPIC_BASE_URL": "http://old"}});
+    let step = set_env(&mut v, "ANTHROPIC_BASE_URL", "http://new");
+    assert_eq!(step, Step::Replace);
+    assert_eq!(env_value(&v, "ANTHROPIC_BASE_URL"), Some("http://new"));
+}
+
+#[test]
+fn env_keys_and_settings_keep_their_order() {
+    let mut v = json!({"model": "x", "env": {
+        "FOO": "1", "ANTHROPIC_BASE_URL": "http://old", "BAR": "2"
+    }, "theme": "dark"});
+    set_env(&mut v, "ANTHROPIC_BASE_URL", "http://new");
+    set_env(&mut v, "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "200000");
+    let top: Vec<_> = v.as_object().unwrap().keys().collect();
+    assert_eq!(top, ["model", "env", "theme"]);
+    let env: Vec<_> = v["env"].as_object().unwrap().keys().collect();
+    assert_eq!(
+        env,
+        [
+            "FOO",
+            "ANTHROPIC_BASE_URL",
+            "BAR",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+        ]
+    );
+}
+
+#[test]
+fn removes_an_env_key_with_the_expected_value() {
+    let mut v = json!({"env": {"ANTHROPIC_BASE_URL": "http://x", "FOO": "1"}});
+    let removal = remove_env(&mut v, "ANTHROPIC_BASE_URL", "http://x");
+    assert_eq!(removal, Removal::Removed);
+    assert!(removal.writes());
+    assert_eq!(v, json!({"env": {"FOO": "1"}}));
+}
+
+#[test]
+fn keeps_an_env_key_whose_value_differs() {
+    let start = json!({"env": {"ANTHROPIC_BASE_URL": "http://hand-set"}});
+    let mut v = start.clone();
+    let removal = remove_env(&mut v, "ANTHROPIC_BASE_URL", "http://x");
+    assert_eq!(removal, Removal::Kept);
+    assert!(!removal.writes());
+    assert_eq!(v, start);
+}
+
+#[test]
+fn removing_an_absent_env_key_changes_nothing() {
+    let start = json!({"theme": "dark", "env": {"FOO": "1"}});
+    let mut v = start.clone();
+    assert_eq!(
+        remove_env(&mut v, "ANTHROPIC_BASE_URL", "http://x"),
+        Removal::Absent
+    );
+    assert_eq!(v, start);
+    let mut none = json!({"theme": "dark"});
+    assert_eq!(
+        remove_env(&mut none, "ANTHROPIC_BASE_URL", "http://x"),
+        Removal::Absent
+    );
+    assert_eq!(none, json!({"theme": "dark"}));
+}
+
+#[test]
+fn removing_the_last_env_key_drops_the_env_object() {
+    let mut v = json!({"theme": "dark", "env": {"ANTHROPIC_BASE_URL": "http://x"}});
+    let removal = remove_env(&mut v, "ANTHROPIC_BASE_URL", "http://x");
+    assert_eq!(removal, Removal::Removed);
+    assert_eq!(v, json!({"theme": "dark"}));
+}
+
+#[test]
+fn read_refuses_a_non_object_env() {
+    let t = tempfile::tempdir().unwrap();
+    let path = t.path().join("settings.json");
+    std::fs::write(&path, r#"{"env": ["ANTHROPIC_BASE_URL"]}"#).unwrap();
+    let err = read(&path).unwrap_err();
+    assert!(err.to_string().contains("env in"), "{err}");
+    assert!(err.hint().is_some());
+}
+
+#[test]
+fn an_env_write_refuses_a_file_that_changed_since_it_was_read() {
+    let t = tempfile::tempdir().unwrap();
+    let path = t.path().join("settings.json");
+    std::fs::write(&path, r#"{"theme":"light"}"#).unwrap();
+    let mut s = read(&path).unwrap();
+    set_env(&mut s.value, "ANTHROPIC_BASE_URL", "http://x");
+    std::fs::write(&path, r#"{"theme":"dark"}"#).unwrap();
+
+    let err = write(&s).unwrap_err();
+    assert!(err.to_string().contains("changed while writing"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        r#"{"theme":"dark"}"#
+    );
+}
+
+#[test]
+fn env_value_reads_only_string_values() {
+    let v = json!({"env": {"ANTHROPIC_BASE_URL": "http://x", "CLAUDE_CODE_MAX_CONTEXT_TOKENS": 200000}});
+    assert_eq!(env_value(&v, "ANTHROPIC_BASE_URL"), Some("http://x"));
+    assert_eq!(env_value(&v, "CLAUDE_CODE_MAX_CONTEXT_TOKENS"), None);
+    assert_eq!(env_value(&v, "MISSING"), None);
+    assert_eq!(env_value(&json!({}), "ANTHROPIC_BASE_URL"), None);
 }
