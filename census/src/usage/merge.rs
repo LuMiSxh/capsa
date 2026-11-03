@@ -48,6 +48,7 @@ struct Acc<'a> {
     seen: HashSet<&'a str>,
     sessions: HashMap<(&'static str, String), Session>,
     models: HashMap<&'a str, (Tokens, Cost)>,
+    providers: HashMap<&'static str, (Tokens, Cost)>,
     tools: HashMap<String, ToolStat>,
     contexts: Vec<u64>,
     compactions: Vec<u64>,
@@ -126,6 +127,12 @@ impl<'a> Acc<'a> {
             let m = self.models.entry(q.model.as_str()).or_default();
             m.0.add(t);
             m.1.merge(&cost);
+            let p = self
+                .providers
+                .entry(super::prices::billed_by(&q.model))
+                .or_default();
+            p.0.add(t);
+            p.1.merge(&cost);
             self.r.total.add(t);
             self.r.cost.merge(&cost);
             if s.model.is_empty() || s.model == "<synthetic>" {
@@ -170,14 +177,29 @@ impl<'a> Acc<'a> {
         }
         r.sessions
             .sort_by(|a, b| b.weighted.total_cmp(&a.weighted).then(a.id.cmp(&b.id)));
-        let mut models: Vec<(String, Tokens, Cost)> = self
+        let mut models: Vec<super::ModelStat> = self
             .models
             .into_iter()
-            .map(|(m, (t, c))| (m.to_owned(), t, c))
+            .map(|(m, (tokens, cost))| super::ModelStat {
+                provider: super::prices::billed_by(m),
+                model: m.to_owned(),
+                tokens,
+                cost,
+            })
             .collect();
-        models.sort_by(|a, b| b.1.weighted().total_cmp(&a.1.weighted()));
-        r.models = models.iter().map(|(m, t, _)| (m.clone(), *t)).collect();
-        r.model_costs = models.into_iter().map(|(m, _, c)| (m, c)).collect();
+        models.sort_by(|a, b| b.tokens.weighted().total_cmp(&a.tokens.weighted()));
+        r.models = models;
+        let mut providers: Vec<super::ProviderStat> = self
+            .providers
+            .into_iter()
+            .map(|(provider, (tokens, cost))| super::ProviderStat {
+                provider,
+                tokens,
+                cost,
+            })
+            .collect();
+        providers.sort_by_key(|p| p.provider);
+        r.providers = providers;
         r.tools = self.tools.into_values().collect();
         r.result_chars = r.tools.iter().map(|t| t.result_chars).sum();
         r.tools

@@ -13,7 +13,7 @@ mod tools;
 mod walk;
 
 pub use handback::HandbackWeek;
-pub use prices::Cost;
+pub use prices::{Cost, knows_provider, refresh as refresh_prices};
 pub use time::{parse_date, parse_ts};
 pub use tools::group;
 
@@ -158,7 +158,8 @@ pub struct Report {
     pub prompts: u64,
     /// Requests' context size percentiles: p50, p90, p99.
     pub context: [u64; 3],
-    pub models: Vec<(String, Tokens)>,
+    /// Requests and cost per model, in order of weighted tokens.
+    pub models: Vec<ModelStat>,
     pub sessions: Vec<Session>,
     pub tools: Vec<ToolStat>,
     pub chains: Chains,
@@ -169,8 +170,8 @@ pub struct Report {
     /// Characters of all tool results.
     pub result_chars: u64,
     pub cost: Cost,
-    /// Cost per model, in the order of `models`.
-    pub model_costs: Vec<(String, Cost)>,
+    /// Requests and cost per provider, sorted by name: `anthropic` is the subscription.
+    pub providers: Vec<ProviderStat>,
     pub cache: CacheStat,
     /// Compactions counted in the report.
     pub compactions: u64,
@@ -178,6 +179,23 @@ pub struct Report {
     pub compaction_context: [u64; 3],
     /// Spawns and hand-backs per ISO week, see `handback`.
     pub handbacks: Vec<HandbackWeek>,
+}
+
+/// One model of the report, with the provider that bills its requests.
+#[derive(Debug, Serialize)]
+pub struct ModelStat {
+    pub model: String,
+    pub provider: &'static str,
+    pub tokens: Tokens,
+    pub cost: Cost,
+}
+
+/// The requests of one provider. `anthropic` is the Claude subscription, the others are API spend.
+#[derive(Debug, Serialize)]
+pub struct ProviderStat {
+    pub provider: &'static str,
+    pub tokens: Tokens,
+    pub cost: Cost,
 }
 
 /// Cache rewrites of a role, or of all requests. `expired` counts requests that wrote cache after

@@ -2,6 +2,78 @@
 
 ## [Unreleased]
 
+### Added
+
+- Prices come from LiteLLM's price file (`model_prices_and_context_window.json`) instead of seven
+  hardcoded Claude models. Census keeps the chat models of the `anthropic`, `deepseek` and `openai`
+  providers in USD per million tokens, in `prices.json` in the state directory. `census usage`,
+  `census limits` and `census session` fetch the list again when the cache is older than
+  `prices_refresh_days` (7 by default). A failed fetch keeps the cache and writes a warning to
+  `prices.jsonl`. `census hook` and `census statusline` never fetch. Without a cache the snapshot
+  built into the binary is used (`data/prices.snapshot.json`).
+- `census self config set prices-refresh-days <days>` sets the refresh period, at least 1. The key
+  `prices_refresh_days` in `config.json` stores it, and `census self config` shows it.
+- Long-prompt tiers come from the same file, at the threshold named in the key: Haiku 5.5 still pays
+  its tier above 100k prompt tokens.
+- `census usage` splits the requests by provider. Each model row names its provider, and a
+  `providers` line totals each one: `anthropic` is the Claude subscription, `deepseek` and `openai`
+  are API spend. `--json` has `providers` (requests, tokens and cost per provider) and `models` as
+  objects with `model`, `provider`, `tokens` and `cost`, which replace the `models` pairs and
+  `model_costs`. A model the price list does not know is `anthropic` when its id starts with
+  `claude`, else `unknown`.
+- `census session` shows the cost of the Claude subscription, and an `api` row with the API spend per
+  provider when a subagent ran on DeepSeek. The JSON has `api`, which is absent when empty.
+- `billing` in `config.json` says how each provider bills its requests: `subscription` or `api`.
+  `anthropic` is the subscription by default, and a provider the map does not list is `api`.
+  `census self config set billing <provider> <subscription|api>` sets one entry. Any lowercase
+  provider name is accepted; a name the price table does not list gets a warning. `census self
+  config` shows the map, and its `--json` gains `billing`. `census usage` names each provider's
+  billing on the `providers` row and in a `billing` column of the models table, and `census
+  session` counts requests by it, so `openai` set to `subscription` moves its history from API
+  spend to the subscription. The limits, the budget month and `census usage --by` still count
+  `anthropic` only, whatever `billing` says, so the windows keep tracking Claude's own limits.
+
+### Changed
+
+- `census session` labels its cost row `subscription` in the agent and human formats. `--json`
+  keeps `cost`, which now means the requests billed as subscription under `billing`.
+- `census usage` gains a `billing` column in the models table; its `--json` is unchanged.
+
+- Models without a price in the old table now have one: `claude-haiku-4-5-20251001`, and the OpenAI
+  and DeepSeek models of Codex transcripts, which showed `n/a`. On this machine's full history,
+  `census usage --json` moves from $756.92 with 29,596 unpriced requests to $1,925.44 with none.
+  Most of the rise is the Codex (OpenAI) requests. The Claude models priced before cost the same
+  to the cent: `claude-haiku-5-5` $53.30, `claude-opus-5-5` $430.67, `claude-sonnet-5-5` $272.94.
+- `claude-fable-5` cache reads cost $1.00 per million tokens, the price LiteLLM lists today; census
+  had $0.25. No golden file or cost on this machine's history changed for it.
+- The ledger digest records the fetch time of the price list and is rebuilt when it changes, once
+  after the upgrade.
+- The `self_config` and `self_config_budget` goldens gain the `prices_refresh_days` key.
+- A failed price fetch is not retried for an hour: `prices.attempt` in the state directory holds the
+  time of the failure, and a successful fetch clears it.
+- The limits, the budget month and `census usage --by` count only requests billed to `anthropic`.
+  DeepSeek subagents were priced at DeepSeek's list price and counted toward the five-hour and weekly
+  windows, the burn rate, the forecast and the monthly budget. Codex (OpenAI) requests never reached
+  the limits, since the ledger reads only the Claude projects. On this machine's full history, the
+  providers are `anthropic` $761.83, `deepseek` $0.05 and `openai` $1,168.28 of $1,930.15.
+- The ledger digest has a `format` field (2). A digest without it is rebuilt once after the upgrade,
+  as the price-list change did.
+- The `usage` and `usage_compare` goldens change: the `models` rows become objects with a `provider`,
+  `model_costs` folds into them, and `providers` is added. `session.json` is unchanged; the `api` key
+  appears only with API spend.
+
+### Performance
+
+- `census hook`, mean of 50 runs after a warm-up on the real history (202 transcripts, 951 MB, the
+  session transcript 1.9 MB), in two rounds: before 11.28 ms and 11.61 ms; after with the snapshot
+  11.16 ms and 11.48 ms; after with the cache 11.23 ms and 11.90 ms. No change beyond the noise.
+  The hook reads the table once per process to check the digest's price list.
+- The release binary is about 3.0 MB before and 3.1 MB after (the table and the snapshot).
+- `census hook`, mean of 50 runs after a warm-up, interleaved with the other build and each on its own
+  state directory, on a busy machine: before 13.93 and 13.38 ms, after 14.05 and 12.83 ms, no change
+  beyond the noise. The provider filter runs when the digest is built, so the hook path reads the
+  same digest as before.
+
 ## [0.4.0]
 
 ### Added

@@ -4,6 +4,7 @@
 
 use capsa_core::exit::Outcome;
 use capsa_core::render::{Align, Doc, Render, Table};
+use census::config::{Billing, Config};
 use census::limits::{Kind, Pattern, Table as Buckets};
 use census::usage::{AgentStat, CategoryStat, Cost, HandbackWeek, Report, group};
 use serde::Serialize;
@@ -58,13 +59,36 @@ pub(crate) fn sizes_text(sizes: &[u64]) -> String {
         .join(",")
 }
 
+/// Names what a provider's requests cost the user, as `billing` in the config sets it. An API
+/// provider that the price list does not know is `not in limits`.
+pub(crate) fn provider_kind(config: &Config, provider: &str) -> &'static str {
+    match (config.billing_of(provider), provider) {
+        (Billing::Subscription, _) => "subscription",
+        (Billing::Api, "unknown") => "not in limits",
+        (Billing::Api, _) => "API",
+    }
+}
+
 /// The cost, cache and compaction rows of the summary.
-pub(crate) fn cost_rows(doc: &mut Doc, r: &Report) {
+pub(crate) fn cost_rows(doc: &mut Doc, r: &Report, config: &Config) {
     doc.row("cost").text(format!(
         "{} at list prices, unpriced requests: {}",
         usd(r.cost.usd),
         r.cost.unpriced
     ));
+    let providers: Vec<String> = r
+        .providers
+        .iter()
+        .map(|p| {
+            format!(
+                "{} {} ({})",
+                p.provider,
+                usd(p.cost.usd),
+                provider_kind(config, p.provider)
+            )
+        })
+        .collect();
+    doc.row("providers").text(providers.join(", "));
     doc.row("cache").text(format!(
         "hit {}, expired-cache rewrites {} ({}), unexpected busts {}",
         rate(r.total.cache_hit_rate()),

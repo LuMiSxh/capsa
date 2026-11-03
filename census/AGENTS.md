@@ -21,7 +21,9 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
   default), `cmd_doctor.rs` (`self doctor`).
 - `src/cmd_config.rs`: `census self config`, which shows and sets the config.
 - `src/config.rs`: `config.json` in the census config directory: `mode` (`plan` or `budget`), the
-  monthly budget, the daily limit and the daily thresholds.
+  monthly budget, the daily limit, the daily thresholds, the days before the price list is
+  fetched again and `billing`, how each provider is billed (`subscription` or `api`; `anthropic`
+  is `subscription` by default).
 - `skill/SKILL.md`: the skill `census self skill` prints, compiled into the binary.
 - `src/hook/`: the decision of `census hook`, a library returning values. `mod.rs` parses the input
   and builds the output JSON, `levels.rs` decides and words the new levels, `state.rs` owns
@@ -33,7 +35,8 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
   five-hour summary, `clock.rs` the calendar and `when`, `month.rs` the budget month and today's
   spend, `daily.rs` the daily limit of the budget mode, `error.rs`, `tests.rs`.
 - `src/usage/`: transcript analytics. `mod.rs` builds the report, `claude.rs` and `codex.rs` parse
-  transcripts, `tools.rs` classifies tool calls, `prices.rs` holds the list prices, `merge.rs` folds
+  transcripts, `tools.rs` classifies tool calls, `prices/` holds the list prices (see Gotchas),
+  `merge.rs` folds
   the files into the report, `handback.rs` counts hand-backs, `read.rs` reads files in parallel,
   `time.rs` does dates and ISO weeks, `walk.rs` lists the `*.jsonl` files.
 - `src/usage_views.rs`: the table views of `census usage` (`--by`, `--agents`, `--handbacks`,
@@ -52,6 +55,8 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
 - `src/session.rs`: which transcript is the session, and the summary of a session with its
   subagents.
 - `src/statusline.rs`: the statusLine input, its limit snapshots and the status line text.
+- `data/prices.snapshot.json`: the price table built into the binary, trimmed from LiteLLM's file
+  (see Commands to regenerate it).
 - `src/transcript.rs`: the transcript records that the session and context views read.
 - `tests/`: `report_json.rs` pins the `--json` output of the report commands against the files in
   `tests/report_json/`; `usage.rs` and `ledger.rs` over generated transcripts; `context.rs`,
@@ -65,6 +70,10 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
 - `CENSUS_GOLDEN_UPDATE=1 cargo test -p census --test report_json`: rewrites the golden files from
   the binary. Use it only for an intended JSON change, and record that change in CHANGELOG.
 - `cargo run -q -p census -- usage --help`: the options.
+- `CENSUS_PRICES_SOURCE=<litellm.json> cargo test -p census --lib regenerates_the_snapshot -- --ignored`:
+  rewrites `data/prices.snapshot.json`. Download the source first with `curl -fsSL
+  https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json -o
+  <litellm.json>`. Put the moved prices in the CHANGELOG entry.
 
 ## Rules
 
@@ -107,3 +116,26 @@ Shared rules: see root AGENTS.md.
   system zone. `usage_hour_buckets_follow_the_offset` checks that it is used.
 - `CENSUS_HOOK_DEADLINE_MS` replaces the hook's 150 ms limits deadline (`cmd_hook.rs`). The hook
   tests set it to 60000: under parallel load the 150 ms deadline skipped the limits and failed them.
+- Prices: `usage/prices/`. `table.rs` trims LiteLLM's file to the chat models of anthropic, deepseek
+  and openai, in USD per million tokens, with the long tiers and the context window. `source.rs`
+  reads the cache and fetches. The table in use is `<state>/census/prices.json` when it reads, else
+  the snapshot. Only `census usage`, `census limits` and `census session` refresh the cache, when it
+  is older than `prices_refresh_days`; a failed fetch keeps it and writes `prices.jsonl`. `census
+  hook` and `census statusline` never fetch. The digest records the table's `fetched_at`, so a new
+  list reprices it.
+- A model missing from the table is unpriced: `n/a` and `(+N unpriced)`, never 0.
+- `CENSUS_NO_PRICE_REFRESH=1` turns the fetch off. The CLI and golden tests set it, so they price
+  from the snapshot.
+- `WEIGHTS` in `usage/mod.rs` is a fixed unit, not read from the table: the list ratios differ per
+  model, and the weighted unit feeds the limit calibration.
+- The provider of a request is `billed_by` in `usage/prices/mod.rs`: the table's provider, else
+  `anthropic` for a `claude` id, else `unknown`. `billing` in the config classifies it for `census
+  usage` and `census session` only (`Config::billing_of`). The limits, the budget month and `census
+  usage --by` count `counts_toward_limits`, which is `anthropic` alone, whatever `billing` says: the
+  digest keeps their USD and an id for every raw row, so the updater does not read a request twice.
+  `FORMAT` in `ledger/digest.rs` names the digest layout;
+  bump it with any change to the digest's fields or to what its USD means.
+- Folded hourly aggregates carry no provider. Their family `other` has no price, so a folded row of
+  another provider adds 0 USD, while a raw row of it is left out of the digest.
+- Codex rows never reach the ledger: its roots are the Claude projects. They appear only in
+  `census usage`, under their provider.

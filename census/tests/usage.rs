@@ -260,12 +260,66 @@ fn prices_per_request_tier_and_cache_ttl() {
     assert!((r.cost.usd - 0.045).abs() < 1e-9, "{}", r.cost.usd);
     assert_eq!(r.cost.unpriced, 1);
     let haiku = r
-        .model_costs
+        .models
         .iter()
-        .find(|(m, _)| m == "claude-haiku-5-5")
+        .find(|m| m.model == "claude-haiku-5-5")
         .unwrap()
-        .1;
+        .cost;
     assert!((haiku.usd - 0.0296).abs() < 1e-9, "{}", haiku.usd);
+}
+
+#[test]
+fn providers_split_the_requests_and_each_model_names_its_provider() {
+    let d = tempfile::tempdir().unwrap();
+    write(
+        d.path(),
+        "projects/app/s1.jsonl",
+        &[
+            request(
+                "2026-10-14T08:00:00.000Z",
+                "c1",
+                "claude-opus-5-5",
+                &usage(10, 0, 0, 0),
+            ),
+            request(
+                "2026-10-14T08:01:00.000Z",
+                "d1",
+                "deepseek-flash",
+                &usage(1000, 0, 0, 0),
+            ),
+            request(
+                "2026-10-14T08:02:00.000Z",
+                "d2",
+                "deepseek-v4-pro",
+                &usage(1000, 0, 0, 0),
+            ),
+            request(
+                "2026-10-14T08:03:00.000Z",
+                "x1",
+                "mystery-model",
+                &usage(1, 0, 0, 0),
+            ),
+        ],
+    );
+    let r = claude_only(d.path());
+    let names: Vec<&str> = r.providers.iter().map(|p| p.provider).collect();
+    assert_eq!(names, ["anthropic", "deepseek", "unknown"]);
+    let provider = |name: &str| r.providers.iter().find(|p| p.provider == name).unwrap();
+    assert_eq!(provider("anthropic").tokens.requests, 1);
+    assert_eq!(provider("deepseek").tokens.requests, 2);
+    assert_eq!(provider("deepseek").tokens.input, 2000);
+    assert!(provider("deepseek").cost.usd > 0.0);
+    assert_eq!(provider("unknown").cost.unpriced, 1);
+    let model = |name: &str| r.models.iter().find(|m| m.model == name).unwrap();
+    assert_eq!(model("claude-opus-5-5").provider, "anthropic");
+    assert_eq!(model("deepseek-flash").provider, "deepseek");
+    assert_eq!(model("mystery-model").provider, "unknown");
+    let total: f64 = r.providers.iter().map(|p| p.cost.usd).sum();
+    assert!(
+        (total - r.cost.usd).abs() < 1e-12,
+        "{total} vs {}",
+        r.cost.usd
+    );
 }
 
 #[test]

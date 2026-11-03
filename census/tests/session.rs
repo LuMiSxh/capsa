@@ -2,6 +2,7 @@
 
 mod common;
 
+use census::config::{Billing, Config};
 use census::session::{Picked, SessionError, resolve, summarize};
 use common::Scratch;
 use std::collections::BTreeMap;
@@ -118,7 +119,7 @@ fn summary_counts_requests_roles_compactions_and_context() {
         ),
     );
 
-    let s = summarize(&main).expect("the summary");
+    let s = summarize(&main, &Config::default()).expect("the summary");
     assert_eq!(s.cwd.as_deref(), Some("/work/app"));
     assert_eq!(s.requests, 4);
     assert_eq!(s.subagents, 2);
@@ -132,4 +133,51 @@ fn summary_counts_requests_roles_compactions_and_context() {
     assert_eq!(s.cost.unpriced, 0);
     assert!(s.cost.usd > 0.0);
     assert_eq!(s.context.map(|c| c.tokens), Some(2005));
+}
+
+#[test]
+fn a_deepseek_subagent_is_api_spend_apart_from_the_subscription_cost() {
+    let scratch = Scratch::new("api");
+    let claude = r#"{"type":"assistant","timestamp":"2026-10-14T08:00:10.000Z","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":10,"output_tokens":50}}}"#;
+    let alone = scratch.write("projects/app/s1.jsonl", &format!("{claude}\n"));
+    let with_api = scratch.write("projects/app/s2.jsonl", &format!("{claude}\n"));
+    scratch.write(
+        "projects/app/s2/subagents/agent-c.jsonl",
+        r#"{"type":"assistant","attributionAgent":"worker","timestamp":"2026-10-14T08:03:00.000Z","message":{"id":"m3","model":"deepseek-v4-pro","usage":{"input_tokens":1000,"output_tokens":100}}}"#,
+    );
+
+    let subscription = summarize(&alone, &Config::default()).expect("the summary");
+    let mixed = summarize(&with_api, &Config::default()).expect("the summary");
+    assert_eq!(mixed.requests, 2);
+    assert!((mixed.cost.usd - subscription.cost.usd).abs() < 1e-12);
+    assert_eq!(mixed.cost.unpriced, 0);
+    assert_eq!(mixed.api.keys().copied().collect::<Vec<_>>(), ["deepseek"]);
+    assert!(mixed.api["deepseek"].usd > 0.0);
+    assert!(subscription.api.is_empty());
+}
+
+#[test]
+fn a_provider_billed_as_subscription_moves_its_spend_from_the_api_rows_to_the_cost() {
+    let scratch = Scratch::new("billing");
+    let claude = r#"{"type":"assistant","timestamp":"2026-10-14T08:00:10.000Z","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":10,"output_tokens":50}}}"#;
+    let main = scratch.write("projects/app/s1.jsonl", &format!("{claude}\n"));
+    scratch.write(
+        "projects/app/s1/subagents/agent-d.jsonl",
+        r#"{"type":"assistant","attributionAgent":"worker","timestamp":"2026-10-14T08:03:00.000Z","message":{"id":"m4","model":"gpt-5","usage":{"input_tokens":1000,"output_tokens":100}}}"#,
+    );
+
+    let as_api = summarize(&main, &Config::default()).expect("the summary");
+    let openai = Config {
+        billing: BTreeMap::from([
+            ("anthropic".to_owned(), Billing::Subscription),
+            ("openai".to_owned(), Billing::Subscription),
+        ]),
+        ..Config::default()
+    };
+    let as_subscription = summarize(&main, &openai).expect("the summary");
+    assert_eq!(as_api.api.keys().copied().collect::<Vec<_>>(), ["openai"]);
+    assert!(as_subscription.api.is_empty());
+    let api_usd = as_api.api["openai"].usd;
+    assert!(api_usd > 0.0);
+    assert!((as_subscription.cost.usd - (as_api.cost.usd + api_usd)).abs() < 1e-9);
 }

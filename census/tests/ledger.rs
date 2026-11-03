@@ -68,6 +68,11 @@ fn iso(t: u64) -> String {
     )
 }
 
+/// A request of `model` instead of the Claude model `rec` writes.
+fn api_rec(id: &str, t: u64, model: &str) -> String {
+    rec(id, t, None).replace("claude-opus-5", model)
+}
+
 fn rec(id: &str, t: u64, agent: Option<(&str, &str)>) -> String {
     let who = agent.map_or(String::new(), |(a, r)| {
         format!(r#""isSidechain":true,"agentId":"{a}","attributionAgent":"{r}","#)
@@ -123,6 +128,58 @@ fn digest_matches_the_files_through_appends_folds_and_loss() {
 
     std::fs::write(e.state.join("digest.json"), b"{not json").unwrap();
     assert_digest_matches(&Ledger::open(&e.state));
+}
+
+#[test]
+fn requests_of_other_providers_stay_out_of_the_limits_and_the_priced_rows() {
+    let now = BASE + 3600;
+    let mixed = env();
+    append(
+        &mixed.file("a.jsonl"),
+        &(rec("claude", BASE, None)
+            + &api_rec("ds", BASE + 60, "deepseek-flash")
+            + &api_rec("gpt", BASE + 120, "gpt-5")),
+    );
+    let l = mixed.update(now);
+    assert_digest_matches(&l);
+    let priced = l.priced().unwrap();
+    assert_eq!(priced.raw.iter().map(|x| x.0).collect::<Vec<_>>(), [BASE]);
+
+    let only = env();
+    append(&only.file("a.jsonl"), &rec("claude", BASE, None));
+    let claude = only.update(now).priced().unwrap();
+    let burn = |p: &Priced| {
+        census::limits::compute(
+            &census::limits::History {
+                priced: p,
+                snapshots: &[],
+            },
+            now,
+        )
+        .burn
+    };
+    assert!(burn(&claude).usd_per_hour_60 > 0.0);
+    assert_eq!(burn(&priced), burn(&claude));
+}
+
+#[test]
+fn a_digest_without_the_provider_split_is_rebuilt() {
+    let e = env();
+    append(
+        &e.file("a.jsonl"),
+        &(rec("claude", BASE, None) + &api_rec("ds", BASE + 60, "deepseek-flash")),
+    );
+    let l = e.update(BASE + 3600);
+    let path = e.state.join("digest.json");
+    let mut digest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    digest["raw"][1][2] = serde_json::json!(1.0);
+    digest.as_object_mut().unwrap().remove("format");
+    std::fs::write(&path, serde_json::to_vec(&digest).unwrap()).unwrap();
+
+    let rebuilt = Ledger::open(&e.state).priced().unwrap();
+    assert_eq!(rebuilt.raw.len(), 1);
+    assert_eq!(rebuilt, Priced::of(l.rows().unwrap(), l.hourly().unwrap()));
 }
 
 #[test]

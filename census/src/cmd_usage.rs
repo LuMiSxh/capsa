@@ -4,14 +4,15 @@
 use crate::now_secs;
 use crate::out::Out;
 use crate::usage_views::{
-    AgentsView, ByView, CompareOut, HandbacksView, ToolsView, cost_rows, k, money, rate,
-    sizes_text, table,
+    AgentsView, ByView, CompareOut, HandbacksView, ToolsView, cost_rows, k, money, provider_kind,
+    rate, sizes_text, table,
 };
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::render::{Doc, Render, emit};
+use census::config::Config;
 use census::limits::{self, Kind};
-use census::usage::{Report, UsageOpts, WEIGHTS, compare, parse_date, report};
+use census::usage::{Report, UsageOpts, WEIGHTS, compare, parse_date, refresh_prices, report};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -70,6 +71,8 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     if a.guard {
         return guard(&a, out);
     }
+    let config = Config::load();
+    refresh_prices(now_secs(), config.prices_refresh_days);
     if let Some(kind) = &a.by {
         return by(kind, out);
     }
@@ -110,6 +113,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     let body = Summary {
         report: &r,
         top: a.top,
+        config: &config,
     };
     emit(&body, out.format)
 }
@@ -122,14 +126,16 @@ struct Summary<'a> {
     report: &'a Report,
     #[serde(skip)]
     top: usize,
+    #[serde(skip)]
+    config: &'a Config,
 }
 
 impl Render for Summary<'_> {
     fn doc(&self, doc: &mut Doc) {
         let r = self.report;
         doc.title("census usage");
-        totals(doc, r);
-        models(doc, r, self.top);
+        totals(doc, r, self.config);
+        models(doc, r, self.top, self.config);
         sessions(doc, r, self.top);
         tools(doc, r, self.top);
     }
@@ -141,7 +147,7 @@ fn pct(x: f64, total: f64) -> String {
 }
 
 /// The totals: requests, cost share and context, then the cost, cache and compaction rows.
-fn totals(doc: &mut Doc, r: &Report) {
+fn totals(doc: &mut Doc, r: &Report, config: &Config) {
     doc.row("usage").text(format!(
         "{} sessions, {} requests, {} prompts ({:.1} req/prompt), {} weighted input-token equivalents",
         r.sessions.len(),
@@ -169,30 +175,33 @@ fn totals(doc: &mut Doc, r: &Report) {
         k(r.context[1] as f64),
         k(r.context[2] as f64)
     ));
-    cost_rows(doc, r);
+    cost_rows(doc, r, config);
 }
 
 /// The top models, with their share of the weighted tokens and their cost.
-fn models(doc: &mut Doc, r: &Report, top: usize) {
+fn models(doc: &mut Doc, r: &Report, top: usize, config: &Config) {
     doc.section("models");
     let rows = r
         .models
         .iter()
-        .zip(&r.model_costs)
         .take(top)
-        .map(|((m, t), (_, c))| {
+        .map(|m| {
             vec![
-                m.clone(),
-                t.requests.to_string(),
-                k(t.weighted()),
-                pct(t.weighted(), r.weighted),
-                money(c),
+                m.model.clone(),
+                m.provider.to_owned(),
+                provider_kind(config, m.provider).to_owned(),
+                m.tokens.requests.to_string(),
+                k(m.tokens.weighted()),
+                pct(m.tokens.weighted(), r.weighted),
+                money(&m.cost),
             ]
         })
         .collect();
     doc.table(table(
-        &["model", "requests", "weighted", "share", "cost"],
-        "lrrrr",
+        &[
+            "model", "provider", "billing", "requests", "weighted", "share", "cost",
+        ],
+        "lllrrrr",
         rows,
     ));
 }

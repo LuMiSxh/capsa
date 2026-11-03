@@ -2,13 +2,16 @@
 //! `census session`: what the current session has done so far, from its transcript and the
 //! transcripts of its subagents.
 
+use crate::now_secs;
 use crate::out::Out;
 use crate::usage_views::{k, money};
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
 use capsa_core::hint::ResultExt;
 use capsa_core::render::{Doc, Render, emit};
+use census::config::Config;
 use census::session::{self, Picked, Summary};
+use census::usage::refresh_prices;
 use serde::Serialize;
 
 #[derive(clap::Args)]
@@ -39,7 +42,15 @@ impl Render for SessionOut<'_> {
         doc.row("duration").text(duration(s.duration_s));
         doc.row("requests")
             .text(format!("{} ({} subagents)", s.requests, s.subagents));
-        doc.row("cost").text(money(&s.cost));
+        doc.row("subscription").text(money(&s.cost));
+        if !s.api.is_empty() {
+            let api: Vec<String> = s
+                .api
+                .iter()
+                .map(|(provider, cost)| format!("{provider} {}", money(cost)))
+                .collect();
+            doc.row("api").text(api.join(", "));
+        }
         doc.row("spawns").text(spawns(s));
         match &s.context {
             Some(c) => {
@@ -60,8 +71,10 @@ impl Render for SessionOut<'_> {
 }
 
 pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
+    let config = Config::load();
+    refresh_prices(now_secs(), config.prices_refresh_days);
     let resolved = session::resolve_here(a.session.as_deref()).hinted()?;
-    let summary = session::summarize(&resolved.transcript)
+    let summary = session::summarize(&resolved.transcript, &config)
         .with_context(|| format!("cannot read {}", resolved.transcript.display()))?;
     let body = SessionOut {
         session: &resolved.id,

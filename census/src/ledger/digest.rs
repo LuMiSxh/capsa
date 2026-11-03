@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Keeps `digest.json`, the list-price USD of each raw request and hourly aggregate. The limits
 //! read it instead of the ledger files. The updater keeps it in step with `rows.jsonl` and
-//! `hourly.jsonl`. A digest that records other file sizes, or another census version, is stale.
+//! `hourly.jsonl`. A digest that records other file sizes, another census version or another price
+//! list is stale.
 
 use super::error::LedgerError;
 use super::model::{Hourly, Row};
@@ -15,20 +16,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type Result<T> = std::result::Result<T, LedgerError>;
 
+/// Layout of `digest.json`. Bump it when a digest with the same fields would mean something else.
+const FORMAT: u32 = 2;
+
 /// The list-price USD of each raw request and each hourly aggregate, in file order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Priced {
-    /// Request time and USD of each raw row.
+    /// Request time and USD of each raw request that counts toward the limits.
     pub raw: Vec<(u64, f64)>,
     /// Hour start and USD of each hourly aggregate.
     pub hourly: Vec<(u64, f64)>,
 }
 
 impl Priced {
-    /// Prices the rows and the aggregates. A model without a price counts as 0 USD.
+    /// Prices the limit requests and the aggregates. A model without a price counts as 0 USD, and
+    /// requests of other providers are left out.
     pub fn of(rows: &[Row], hourly: &[Hourly]) -> Self {
         Priced {
-            raw: rows.iter().map(|r| (r.t, row_usd(r))).collect(),
+            raw: rows
+                .iter()
+                .filter_map(|r| Some((r.t, limit_usd(r)?)))
+                .collect(),
             hourly: hourly.iter().map(|h| (h.hour, aggregate_usd(h))).collect(),
         }
     }
@@ -43,14 +51,19 @@ impl Priced {
 /// built from or appended to, and `census` is the version whose prices the USD values use.
 #[derive(Serialize, Deserialize)]
 pub(super) struct Digest {
+    /// The layout the digest was written in, see `FORMAT`.
+    format: u32,
     census: String,
     /// Unix seconds of the last write.
     updated: u64,
     rows_len: u64,
     hourly_len: u64,
-    /// Message id, time and USD of each raw row. The ids let the updater skip requests it has read.
-    raw: Vec<(String, u64, f64)>,
+    /// Message id, time and USD of each raw row, the USD absent for a request billed to another
+    /// provider. The ids let the updater skip requests it has read.
+    raw: Vec<(String, u64, Option<f64>)>,
     hourly: Vec<(u64, f64)>,
+    /// The fetch time of the price list the USD values were priced with.
+    prices: u64,
 }
 
 impl Digest {
@@ -61,7 +74,11 @@ impl Digest {
 
     pub(super) fn into_priced(self) -> Priced {
         Priced {
-            raw: self.raw.into_iter().map(|(_, t, usd)| (t, usd)).collect(),
+            raw: self
+                .raw
+                .into_iter()
+                .filter_map(|(_, t, usd)| Some((t, usd?)))
+                .collect(),
             hourly: self.hourly,
         }
     }
@@ -69,7 +86,7 @@ impl Digest {
     /// Adds the rows the updater appended to `rows.jsonl`, which now has `rows_len` bytes.
     pub(super) fn append(&mut self, rows: &[Row], rows_len: u64, now: u64) {
         self.raw
-            .extend(rows.iter().map(|r| (r.id.clone(), r.t, row_usd(r))));
+            .extend(rows.iter().map(|r| (r.id.clone(), r.t, limit_usd(r))));
         self.rows_len = rows_len;
         self.updated = now;
     }
@@ -90,9 +107,11 @@ pub(super) fn unix_now() -> u64 {
 /// Returns the digest when this census version wrote it for the ledger files as they are now.
 pub(super) fn read(layout: &Layout) -> Option<Digest> {
     let digest: Digest = serde_json::from_slice(&std::fs::read(&layout.digest).ok()?).ok()?;
-    let current = digest.census == env!("CARGO_PKG_VERSION")
+    let current = digest.format == FORMAT
+        && digest.census == env!("CARGO_PKG_VERSION")
         && digest.rows_len == file_len(&layout.rows)
-        && digest.hourly_len == file_len(&layout.hourly);
+        && digest.hourly_len == file_len(&layout.hourly)
+        && digest.prices == prices::fetched_at();
     current.then_some(digest)
 }
 
@@ -102,24 +121,34 @@ pub(super) fn build(layout: &Layout, now: u64) -> Result<Digest> {
     let (rows_len, hourly_len) = (file_len(&layout.rows), file_len(&layout.hourly));
     let (folded, hourly) = state::load_hourly(&layout.hourly)?;
     let rows = state::load_rows(&layout.rows, folded)?;
-    let priced = Priced::of(&rows, &hourly);
     Ok(Digest {
+        format: FORMAT,
         census: env!("CARGO_PKG_VERSION").to_owned(),
         updated: now,
         rows_len,
         hourly_len,
         raw: rows
             .into_iter()
-            .zip(priced.raw)
-            .map(|(r, (_, usd))| (r.id, r.t, usd))
+            .map(|r| {
+                let usd = limit_usd(&r);
+                (r.id, r.t, usd)
+            })
             .collect(),
-        hourly: priced.hourly,
+        hourly: hourly.iter().map(|h| (h.hour, aggregate_usd(h))).collect(),
+        prices: prices::fetched_at(),
     })
 }
 
 /// Replaces `digest.json` with `digest`.
 pub(super) fn write(layout: &Layout, digest: &Digest) -> Result<()> {
     state::write_atomic(&layout.digest, &serde_json::to_vec(digest)?)
+}
+
+/// Returns the USD of a request that counts toward the limits, or `None` for any other provider.
+/// The limits and the budget month read only `anthropic`, whatever `billing` in the config says,
+/// because the windows track Claude's own limits.
+fn limit_usd(r: &Row) -> Option<f64> {
+    prices::counts_toward_limits(&r.model).then(|| row_usd(r))
 }
 
 fn row_usd(r: &Row) -> f64 {

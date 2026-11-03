@@ -6,9 +6,11 @@ use crate::now_secs;
 use crate::out::Out;
 use anyhow::Result;
 use capsa_core::exit::Outcome;
+use capsa_core::hint::Hinted;
 use capsa_core::render::{Doc, Render, emit};
-use census::config::{Config, Mode};
+use census::config::{Billing, Config, Mode};
 use census::limits::{self, DailyStatus};
+use census::usage::knows_provider;
 use serde::Serialize;
 
 #[derive(clap::Args)]
@@ -21,7 +23,9 @@ pub struct Args {
 enum Action {
     /// Print the mode, the monthly budget and the config file.
     Show,
-    /// Change a setting: `set mode <plan|budget>`, `set monthly-budget <usd>` or `set daily-limit <usd|auto>`.
+    /// Change a setting: `set mode <plan|budget>`, `set monthly-budget <usd>`,
+    /// `set daily-limit <usd|auto>`, `set prices-refresh-days <days>` or
+    /// `set billing <provider> <subscription|api>`.
     Set(SetArgs),
 }
 
@@ -47,6 +51,18 @@ enum Key {
     DailyLimit {
         #[arg(value_name = "USD|auto", value_parser = daily_arg)]
         value: DailyArg,
+    },
+    /// Days before the cached price list is fetched again, at least 1.
+    PricesRefreshDays {
+        #[arg(value_name = "DAYS", value_parser = clap::value_parser!(u64).range(1..))]
+        days: u64,
+    },
+    /// How a provider bills its requests; a provider not set is API spend.
+    Billing {
+        #[arg(value_name = "PROVIDER")]
+        provider: String,
+        #[arg(value_name = "subscription|api")]
+        value: String,
     },
 }
 
@@ -97,12 +113,40 @@ fn positive_usd(s: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("`{s}` is not an amount above 0"))
 }
 
+/// Reads the arguments of `set billing`: a provider is written in lowercase letters, digits, `-`
+/// or `_`, and a billing is `subscription` or `api`.
+fn billing_key(provider: &str, value: &str) -> Result<(String, Billing), Hinted> {
+    let well_formed = !provider.is_empty()
+        && provider
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
+    if !well_formed {
+        return Err(Hinted::new(
+            format!("`{provider}` is not a provider name"),
+            "write the provider in lowercase, as the price table names it, such as `openai`",
+        ));
+    }
+    let billing = match value {
+        "subscription" => Billing::Subscription,
+        "api" => Billing::Api,
+        _ => {
+            return Err(Hinted::new(
+                format!("`{value}` is not a billing"),
+                "use `subscription` or `api`, as in `set billing openai subscription`",
+            ));
+        }
+    };
+    Ok((provider.to_owned(), billing))
+}
+
 #[derive(Serialize)]
 struct ConfigOut<'a> {
     #[serde(flatten)]
     config: &'a Config,
     path: String,
     today: Option<DailyStatus>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
 }
 
 impl Render for ConfigOut<'_> {
@@ -126,6 +170,21 @@ impl Render for ConfigOut<'_> {
             .map(|t| format!("{t} %"))
             .collect();
         doc.row("thresholds").text(thresholds.join(", "));
+        doc.row("prices")
+            .text(format!("refresh every {} days", c.prices_refresh_days));
+        let billing: Vec<String> = c
+            .billing
+            .iter()
+            .map(|(provider, billing)| format!("{provider} {}", billing.name()))
+            .collect();
+        doc.row("billing").text(if billing.is_empty() {
+            "every provider is api".to_owned()
+        } else {
+            billing.join(", ")
+        });
+        for warning in &self.warnings {
+            doc.row("warning").text(warning.as_str());
+        }
         if let Some(d) = self.today.as_ref() {
             today_row(doc, d);
         }
@@ -136,11 +195,22 @@ impl Render for ConfigOut<'_> {
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     let path = Config::path();
     let mut config = Config::load_from(&path)?;
+    let mut warnings = Vec::new();
     if let Action::Set(set) = a.action {
         match set.key {
             Key::Mode { mode } => config.mode = mode.into(),
             Key::MonthlyBudget { usd } => config.monthly_budget_usd = Some(usd),
             Key::DailyLimit { value } => config.daily_limit_usd = value.usd(),
+            Key::PricesRefreshDays { days } => config.prices_refresh_days = days,
+            Key::Billing { provider, value } => {
+                let (provider, billing) = billing_key(&provider, &value)?;
+                if !knows_provider(&provider) {
+                    warnings.push(format!(
+                        "`{provider}` is not in the price table; the setting has no effect yet"
+                    ));
+                }
+                config.billing.insert(provider, billing);
+            }
         }
         config.save_to(&path)?;
     }
@@ -149,6 +219,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         config: &config,
         path: path.display().to_string(),
         today,
+        warnings,
     };
     emit(&body, out.format)
 }

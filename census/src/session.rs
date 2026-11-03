@@ -2,6 +2,7 @@
 //! Owns the Claude Code session that `census context` and `census session` describe: which
 //! transcript it is, and what it has done so far.
 
+use crate::config::{Billing, Config};
 use crate::context::{self, ContextUse};
 use crate::transcript::{self, Record};
 use crate::usage::{Cost, Tokens, parse_ts};
@@ -175,7 +176,11 @@ pub struct Summary {
     /// API requests, one per message id, main and subagents together.
     pub requests: u64,
     pub subagents: u64,
+    /// List-price cost of the requests billed as subscription, main and subagents.
     pub cost: Cost,
+    /// List-price cost of the requests billed as API spend, by provider.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub api: BTreeMap<&'static str, Cost>,
     /// Subagents per role, from `attributionAgent`.
     pub spawns: BTreeMap<String, u64>,
     pub compactions: u64,
@@ -184,11 +189,12 @@ pub struct Summary {
 }
 
 /// Summarizes the session whose main transcript is `main`; its subagent transcripts are the
-/// `.jsonl` files in the `subagents` directory beside it.
+/// `.jsonl` files in the `subagents` directory beside it. Each request is priced as subscription
+/// or API spend as `config` bills its provider.
 ///
 /// # Errors
 /// Fails when the main transcript cannot be read.
-pub fn summarize(main: &Path) -> std::io::Result<Summary> {
+pub fn summarize(main: &Path, config: &Config) -> std::io::Result<Summary> {
     let main_scan = Scan::of(&std::fs::read_to_string(main)?);
     let subagents: Vec<(String, Scan)> = subagent_files(main)
         .into_iter()
@@ -201,10 +207,15 @@ pub fn summarize(main: &Path) -> std::io::Result<Summary> {
     let scans = || std::iter::once(&main_scan).chain(subagents.iter().map(|(_, s)| s));
 
     let mut cost = Cost::default();
+    let mut api: BTreeMap<&'static str, Cost> = BTreeMap::new();
     let mut requests = 0;
     for scan in scans() {
         for (model, tokens) in &scan.requests {
-            cost.add_request(model, tokens);
+            let provider = crate::usage::prices::billed_by(model);
+            match config.billing_of(provider) {
+                Billing::Subscription => cost.add_request(model, tokens),
+                Billing::Api => api.entry(provider).or_default().add_request(model, tokens),
+            }
             requests += 1;
         }
     }
@@ -225,6 +236,7 @@ pub fn summarize(main: &Path) -> std::io::Result<Summary> {
         requests,
         subagents: subagents.len() as u64,
         cost,
+        api,
         spawns,
         compactions: scans().map(|s| s.compactions).sum(),
         context: last_request

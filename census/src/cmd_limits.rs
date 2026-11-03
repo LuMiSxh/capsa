@@ -13,12 +13,14 @@ use census::limits::{
     self, DailyStatus, FiveHourDay, Forecast, Full, LimitStatus, MonthStatus, PeakSource, Reading,
     WindowStatus, when,
 };
+use census::usage::refresh_prices;
 use serde::Serialize;
 
 /// Prints the limit state, or the month summary in budget mode. Exit 1 when the ledger and the
 /// snapshot file hold nothing.
 pub fn run(out: &Out) -> Result<Outcome> {
     let config = Config::load_from(&Config::path())?;
+    refresh_prices(now_secs(), config.prices_refresh_days);
     if config.mode == Mode::Budget {
         return run_budget(&config, out);
     }

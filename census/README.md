@@ -36,7 +36,7 @@ Build from source, with the toolchain pinned in `rust-toolchain.toml` (see [Buil
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `census usage`                                                | Token, cost and tool-call statistics from the transcripts; options below                                         |
 | `census context [--session ID]`                               | Context tokens against the compaction threshold, the share used and the tokens left                              |
-| `census session [--session ID]`                               | Duration, requests, cost, subagents per role, context and compactions                                            |
+| `census session [--session ID]`                               | Duration, requests, subscription cost, API spend per provider, subagents per role, context and compactions                                            |
 | `census limits`                                               | The two subscription windows (plan mode) or the month's spend against the budget (budget mode); see Limits and Budget mode |
 | `census statusline [--line]`                                  | Records limit snapshots from Claude Code's `statusLine` input; `--line` prints `ctx 44k/400k · 5h 6% · wk 1%`    |
 | `census prune --before YYYY-MM-DD \| --keep DAYS [--dry-run]` | Deletes hourly aggregates and snapshots older than the cutoff; raw ledger rows stay                              |
@@ -49,15 +49,23 @@ Output is agent text by default. `--human` adds colour on a terminal, `--json` p
 
 ## Usage reports
 
-Cost is the list price of each request (`src/usage/prices.rs`): input, output and cache reads at the model's rates, cache writes at 1.25x (5 minutes) or 2x (1 hour) the input price. Haiku 5.5 requests above 100k context tokens use its long-prompt tier. A model without a price shows `n/a`.
+Cost is the list price of each request (`src/usage/prices/`): input, output and cache reads at the model's rates, cache writes at the model's 5-minute and 1-hour rates. The prices are LiteLLM's (`model_prices_and_context_window.json`) for the Anthropic, DeepSeek and OpenAI chat models. `census usage`, `census limits` and `census session` keep them in `prices.json` in the state directory and fetch them again after 7 days (`census self config set prices-refresh-days <days>`); before the first fetch the snapshot built into the binary is used. A request above a model's long-prompt threshold, such as 100k prompt tokens for Haiku 5.5, pays its tier. A model without a price shows `n/a`.
+
+Each request is billed to the provider of its model: `anthropic` (the Claude subscription), `deepseek` or `openai` (API spend). `census usage` names the provider of each model and totals each provider under `providers`; `census session` shows the API spend of its subagents under `api`. A model the price list does not know is `anthropic` when its id starts with `claude`, else `unknown`, which no view counts toward the limits.
 
 A thread is one transcript file: the main session or one subagent. Cache hit rate is `cache_read / (input + cache_read + cache writes)`. A cache write after a gap longer than the TTL (1 hour in the main thread, 5 minutes in a subagent) is an expired-cache rewrite; a write within the TTL whose cache writes are over half the context is an unexpected bust. The first request after a compaction (its context under half the previous request's, or a compact boundary before it) that writes cache counts as a compaction, apart from both. `<synthetic>` messages (aborts and errors) are not requests.
 
 A hand-back is a senior-worker spawn that starts within 30 minutes after a worker spawn of the same session ended (or started, if its end is unknown). The rate is hand-backs per worker spawn, per ISO week of the spawn's start. `--compare` splits requests at midnight UTC of the date.
 
+## Billing
+
+`billing` in `config.json` says how each provider bills its requests: `subscription` or `api`. `anthropic` is the subscription by default, and a provider the map does not list is `api`. `census self config set billing openai subscription` sets one provider, for example a Codex plan that has since been cancelled, so its history counts as subscription; `census self config set billing anthropic api` sets Claude to API spend. `census usage` names each provider's billing on the `providers` row and in a `billing` column of the models table, and `census session` shows the requests billed as subscription as `subscription` and the others as `api`. The JSON of `census session` keeps `cost` for the subscription share as set.
+
+The limits do not follow `billing`: `census limits`, the status line, the hook, the budget month and `census usage --by` count only `anthropic` requests, whatever the setting says, because the five-hour and weekly windows track Claude's own limits.
+
 ## Limits
 
-`census limits` estimates the five-hour and the weekly subscription window and forecasts the weekly one, in list-price cost from the ledger.
+`census limits` estimates the five-hour and the weekly subscription window and forecasts the weekly one, in list-price cost from the ledger. Only requests billed to `anthropic` count: DeepSeek and OpenAI spend never move the windows, the forecast or the budget, and the `billing` setting does not change that.
 
 - **Calibration**: per window, each snapshot gives `used_percentage` divided by the cost of the window up to the snapshot. `k` is the median of the last 20 points within 30 days; points under $0.01 or at 0 % are skipped, and the spread `(p75 - p25) / k` needs four points.
 - **Estimate**: a snapshot under two minutes old is the reading; otherwise the share is `k` times the cost since the window start. A weekly window past its reset repeats every seven days; a five-hour window starts at the first request after its reset.
@@ -70,7 +78,7 @@ Without a snapshot there is no calibration and only the burn rate shows. `census
 
 ## Budget mode
 
-For API billing, `census self config set mode budget` replaces the subscription windows with a dollar budget, set in USD by `census self config set monthly-budget 100`. `census limits`, the status line and the hook then report the list-price spend of the local month against it. `census self config set mode plan` switches back.
+For API billing, `census self config set mode budget` replaces the subscription windows with a dollar budget, set in USD by `census self config set monthly-budget 100`. `census limits`, the status line and the hook then report the list-price spend of the local month against it. `census self config set mode plan` switches back. Budget mode counts only `anthropic` requests, whatever `billing` says.
 
 - **Daily limit**: `census self config set daily-limit 8` fixes it in USD. The default `auto` derives it: what is left of the monthly budget before today, shared over the local days left, today included (0 once the budget is spent).
 - **Thresholds**: `daily_thresholds` in `config.json` lists the percentages of the daily limit that are announced, `[50, 80, 100]` by default. Each is announced once per local day; past 100 %, each further full multiple of the limit is announced once.
@@ -121,7 +129,7 @@ An entry that runs census in another form (an absolute or quoted path, `.exe`, o
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `census self skill [--install]`                                     | Prints the skill for the main agent; `--install` writes it                                                           |
 | `census self setup [--dry-run] [--force]`                           | Installs the skill, then wires the statusLine and hooks into `settings.json` (see Hook)                              |
-| `census self config [show]`, `census self config set <key> <value>` | Shows or sets `mode plan\|budget`, the monthly budget and the daily limit (see Budget mode); `--json` for the document |
+| `census self config [show]`, `census self config set <key> <value>` | Shows or sets `mode plan\|budget`, the monthly budget, the daily limit and `billing` (see Billing and Budget mode); `--json` for the document |
 | `census self doctor [--json\|--human\|--agent]`                     | Checks the binary, config, skill, hooks, state files and hook log, one line per check; exit 1 when a check fails, warnings do not |
 | `census self update [--check\|--force]`                             | Replaces the binary with the latest release, then reinstalls the skill                                               |
 | `census self uninstall [--dry-run]`                                 | Removes the skill, then the binary; settings entries stay                                                            |
