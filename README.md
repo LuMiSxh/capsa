@@ -10,17 +10,18 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-d9973f?style=flat-square&labelColor=23252a)
 [![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-d9973f?style=flat-square&labelColor=23252a)](LICENSE)
 
-**[acus](acus/README.md)** · [census](census/README.md) · [pons](pons/README.md)
+**[acus](acus/README.md)** · [census](census/README.md) · [pons](pons/README.md) · [vicarius](vicarius/README.md)
 
 </div>
 
 ## Tools
 
-| Tool       | What it does                                                           | Docs                       |
-| ---------- | ---------------------------------------------------------------------- | -------------------------- |
-| **acus**   | Code search, outline and editing for coding agents.                    | [README](acus/README.md)   |
-| **pons**   | Transparent stdio proxy between Zed and the Claude ACP adapter.        | [README](pons/README.md)   |
-| **census** | Usage, limits, budget and context awareness for Claude Code and Codex. | [README](census/README.md) |
+| Tool         | What it does                                                           | Docs                         |
+| ------------ | ---------------------------------------------------------------------- | ---------------------------- |
+| **acus**     | Code search, outline and editing for coding agents.                    | [README](acus/README.md)     |
+| **pons**     | Transparent stdio proxy between Zed and the Claude ACP adapter.        | [README](pons/README.md)     |
+| **census**   | Usage, limits, budget and context awareness for Claude Code and Codex. | [README](census/README.md)   |
+| **vicarius** | Routes Claude Code subagents to DeepSeek while credit lasts.           | [README](vicarius/README.md) |
 
 ## Install
 
@@ -30,7 +31,7 @@
 ```
 
 ```powershell
-.\install.ps1             # acus, pons and census
+.\install.ps1             # acus, pons, census and vicarius
 .\install.ps1 acus        # selected tools
 ```
 
@@ -40,7 +41,7 @@ The installers send a GitHub token when one is available (`GITHUB_TOKEN`, else `
 
 Uninstall with `./install.sh --uninstall <tool|all>` or `.\install.ps1 -Uninstall <tool|all>`. It removes each binary from the directory the installer uses, and the acus skill unless `CAPSA_NO_SKILL` is set.
 
-Management commands about a tool itself sit under `self`: `acus self update|setup|doctor|skill|uninstall`, `census self update|setup|doctor|skill|config|uninstall`, `pons self update|setup|doctor|uninstall`. `acus self setup` and `census self setup` register their hooks in Claude Code's `settings.json`, which the installers do not do. `pons self setup` installs the Claude ACP adapter.
+Management commands about a tool itself sit under `self`: `acus self update|setup|doctor|skill|uninstall`, `census self update|setup|doctor|skill|config|uninstall`, `pons self update|setup|doctor|uninstall`, `vicarius self setup|start|stop|doctor|config|update|uninstall`. `acus self setup` and `census self setup` register their hooks in Claude Code's `settings.json`, which the installers do not do. `pons self setup` installs the Claude ACP adapter, and `vicarius self setup` installs its launchd service and hook.
 
 ## Build from source
 
@@ -48,6 +49,7 @@ Management commands about a tool itself sit under `self`: `acus self update|setu
 cargo install --path acus/crates/acus-cli
 cargo install --path census
 cargo install --path pons --profile release-unwind
+cargo install --path vicarius
 ```
 
 The toolchain is pinned in `rust-toolchain.toml`. pons uses the `release-unwind` profile, which keeps panics unwinding for its failsafe.
