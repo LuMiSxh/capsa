@@ -267,8 +267,13 @@ fn no_idle_finish_after_a_tool_result() {
     assert!(!e.folds.is_finished("A"));
 }
 
+/// Replays the false finish from the real log (card
+/// toolu_01UC57bMXEuU5ebLSC9tLFd6): the last child event is a tool result,
+/// then the subagent thinks for 86 s without a sign of life. The card must
+/// stay in progress until its completion notification, not show as done and
+/// reopen as "resumed" when the thinking text finally arrives.
 #[test]
-fn tool_result_then_silence_under_the_long_idle_is_not_finished() {
+fn a_tool_result_then_a_long_silence_is_not_finished() {
     let t0 = Instant::now();
     let mut e = engine();
     e.on_client(&prompt(1), t0);
@@ -276,31 +281,28 @@ fn tool_result_then_silence_under_the_long_idle_is_not_finished() {
     e.on_agent(&real_launch_result("A"), t0);
     e.on_agent(&kid("A", "a1", "Read a"), t0 + secs(5));
     e.on_agent(&kid_end("A", "a1"), t0 + secs(6));
-    let out = e.tick(t0 + secs(65));
-    assert!(entries(&out).is_empty());
-    assert!(!e.folds.is_finished("A"));
-    assert!(e.folds.running_background("s").contains(&"A".to_owned()));
-}
-
-#[test]
-fn tool_result_then_silence_past_the_long_idle_finishes_provisionally() {
-    let t0 = Instant::now();
-    let mut e = engine();
-    e.on_client(&prompt(1), t0);
-    e.on_agent(&real_parent("A"), t0);
-    e.on_agent(&real_launch_result("A"), t0);
-    e.on_agent(&kid("A", "a1", "Read a"), t0 + secs(5));
-    e.on_agent(&kid_end("A", "a1"), t0 + secs(6));
-    let out = e.tick(t0 + secs(67));
-    let a = updates_for(&out, "A");
-    assert_eq!(a[0]["params"]["update"]["status"], "completed");
+    let out = e.tick(t0 + secs(92));
     assert!(
-        out.iter()
-            .any(|x| matches!(x, Action::Note(n) if n.contains("finished (idle, provisional)")))
+        updates_for(&out, "A")
+            .iter()
+            .all(|m| m["params"]["update"]["status"] == "in_progress")
     );
-    assert!(e.folds.is_finished("A"));
-    assert!(e.sessions["s"].in_flight.contains("A"));
-    assert!(e.tick(t0 + secs(90)).is_empty(), "heartbeat stops");
+    assert!(entries(&out).is_empty(), "no finished entry");
+    assert!(!e.folds.is_finished("A"));
+    // The subagent wakes up: nothing was announced, so nothing says "resumed".
+    let out = e.on_agent(&child_text("A", "Still working."), t0 + secs(95));
+    assert_eq!(
+        updates_for(&out, "A")[0]["params"]["update"]["status"],
+        "in_progress"
+    );
+    assert!(entries(&out).is_empty());
+    // Only its completion notification finishes the card.
+    let out = e.on_agent(&task_notification(), t0 + secs(120));
+    assert_eq!(
+        updates_for(&out, "A")[0]["params"]["update"]["status"],
+        "completed"
+    );
+    assert_eq!(entries(&out).len(), 1);
 }
 
 #[test]
@@ -335,13 +337,13 @@ fn a_monitor_as_the_last_call_keeps_the_card_open_until_its_timeout() {
     e.on_client(&prompt(1), t0);
     e.on_agent(&real_parent("A"), t0);
     e.on_agent(&real_launch_result("A"), t0);
-    e.on_agent(&child_text("A", "Watching the log."), t0 + secs(1));
     e.on_agent(
         &monitor("A", "m1", json!({"timeout_ms": 300_000})),
         t0 + secs(2),
     );
     e.on_agent(&kid_end("A", "m1"), t0 + secs(3));
-    // Past the 60 s idle wait after a tool result, and the card still runs.
+    // Text after the monitor ended: only the monitor's deadline may finish it.
+    e.on_agent(&child_text("A", "Watching the log."), t0 + secs(4));
     for at in [60, 100, 331] {
         let out = e.tick(t0 + secs(at));
         assert!(!updates_for(&out, "A").iter().any(is_card_done), "at {at}");
@@ -386,6 +388,7 @@ fn a_monitor_without_a_timeout_keeps_the_card_open_for_thirty_minutes() {
     e.on_agent(&real_launch_result("A"), t0);
     e.on_agent(&monitor("A", "m1", json!({})), t0 + secs(2));
     e.on_agent(&kid_end("A", "m1"), t0 + secs(3));
+    e.on_agent(&child_text("A", "Watching."), t0 + secs(4));
     assert!(
         !updates_for(&e.tick(t0 + secs(1_831)), "A")
             .iter()

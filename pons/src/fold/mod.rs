@@ -44,11 +44,6 @@ const MAX_ACTION_CHARS: usize = 60;
 const ELAPSED_STEP: u64 = 5;
 /// Silence after which a running card says `quiet Ns` in its title.
 const QUIET_SHOWN: u64 = 10;
-/// Silence after a tool result before the idle rule finishes a subagent whose
-/// last event was that result (no text since). A result is often followed by
-/// thinking, so the wait is longer than `--subagent-idle-ms`; the configured
-/// idle wins when it is longer.
-const TOOL_RESULT_IDLE: Duration = Duration::from_secs(60);
 /// How long a finished background subagent stays known (roster, reopening).
 const FINISHED_KEEP: Duration = Duration::from_secs(60);
 /// A card that shows activity this long after a `task-notification` ended it

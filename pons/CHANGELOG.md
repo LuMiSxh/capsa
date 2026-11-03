@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A background subagent whose last event was a tool result was shown as done
+  (`completed`, followed by its finished entry) 60 s later even while it was
+  still thinking, then reopened as "resumed" when its next update arrived. A
+  card whose last event was a tool result or thinking is no longer finished by
+  silence: it stays `in_progress` until the adapter's `task-notification`, the
+  response of the prompt that launched it, or a Stop. Only a card whose last
+  event was its own text still finishes after `--subagent-idle-ms`.
+
 ## [0.10.0]
 
 ### Fixed

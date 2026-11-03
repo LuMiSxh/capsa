@@ -75,8 +75,9 @@ pub struct Cli {
 
     /// A background subagent whose last sign of life was agent text (no tool
     /// call open) and that is silent this long is shown as done, provisionally:
-    /// later activity reopens it. A subagent that is thinking or has a tool
-    /// call open is only labelled "quiet Ns". 0 disables.
+    /// later activity reopens it. A subagent that is thinking, has a tool call
+    /// open, or whose last event was a tool result is only labelled "quiet Ns"
+    /// until a task-notification or its prompt response confirms it. 0 disables.
     #[arg(long, value_name = "MS", default_value_t = 20000)]
     pub subagent_idle_ms: u64,
 

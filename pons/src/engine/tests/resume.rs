@@ -137,9 +137,9 @@ fn every_finish_path_after_a_retirement_updates_the_same_entry() {
 }
 
 /// A subagent woken from a retirement whose woken tool fails, then goes quiet
-/// with no text: it finishes once the long idle has passed, and stays finished.
+/// with no text: silence does not finish it; its notification does.
 #[test]
-fn a_retired_card_whose_woken_tool_fails_finishes_after_the_long_idle() {
+fn a_retired_card_whose_woken_tool_fails_is_finished_by_its_notification() {
     let t0 = Instant::now();
     let mut e = engine();
     e.on_client(&prompt(1), t0);
@@ -158,18 +158,21 @@ fn a_retired_card_whose_woken_tool_fails_finishes_after_the_long_idle() {
         "toolCallId": "a2", "sessionUpdate": "tool_call_update", "status": "failed"
     }));
     e.on_agent(&failed, t0 + secs(101));
-    assert!(e.tick(t0 + secs(130)).iter().all(|x| !matches!(
-        x,
-        Action::Note(n) if n.contains("finished (")
-    )));
-    let out = e.tick(t0 + secs(162));
+    assert!(
+        e.tick(t0 + secs(162))
+            .iter()
+            .all(|x| !matches!(x, Action::Note(n) if n.contains("finished (")))
+    );
+    let out = e.on_agent(&task_notification(), t0 + secs(162));
     assert!(
         out.iter()
-            .any(|x| matches!(x, Action::Note(n) if n.contains("finished (idle, provisional)")))
+            .any(|x| matches!(x, Action::Note(n) if n.contains("finished (notification)")))
     );
     assert_eq!(
         updates_for(&out, "A")[0]["params"]["update"]["status"],
         "completed"
     );
-    assert!(e.tick(t0 + secs(190)).is_empty(), "heartbeat stops");
+    // The next tick sends the changed roster; then the card is quiet.
+    assert!(!e.tick(t0 + secs(190)).iter().any(is_finish_note));
+    assert!(e.tick(t0 + secs(191)).is_empty(), "heartbeat stops");
 }

@@ -371,6 +371,7 @@ fn a_monitor_holds_the_card_until_its_timeout_and_grace() {
     let monitor = monitor_call("m1", &json!({"timeout_ms": 300_000}));
     folds.child_update("s", "P", &monitor, t0 + secs(1));
     folds.child_update("s", "P", &tool_done("m1"), t0 + secs(2));
+    folds.child_update("s", "P", &text_chunk("Watching."), t0 + secs(3));
     assert!(
         folds.poll(t0 + secs(330)).is_empty(),
         "monitor runs until 331s"
@@ -403,6 +404,7 @@ fn a_monitor_without_a_timeout_holds_the_card_for_thirty_minutes() {
     let monitor = monitor_call("m1", &json!({"description": "watch the log"}));
     folds.child_update("s", "P", &monitor, t0 + secs(1));
     folds.child_update("s", "P", &tool_done("m1"), t0 + secs(2));
+    folds.child_update("s", "P", &text_chunk("Watching."), t0 + secs(3));
     assert!(
         folds.poll(t0 + secs(1_830)).is_empty(),
         "monitor runs until 1831s"
@@ -423,6 +425,7 @@ fn a_timeout_in_a_later_monitor_update_sets_the_deadline() {
         "rawInput": {"timeout_ms": 60_000}});
     folds.child_update("s", "P", &later, t0 + secs(2));
     folds.child_update("s", "P", &tool_done("m1"), t0 + secs(3));
+    folds.child_update("s", "P", &text_chunk("Watching."), t0 + secs(4));
     // Start 1s, plus the 60s timeout and the 30s grace: not the 30 min fallback.
     assert!(
         folds.poll(t0 + secs(90)).is_empty(),

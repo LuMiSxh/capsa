@@ -38,6 +38,9 @@ impl FoldEntry {
     }
 
     /// Returns why the silence rule would finish this card now, if it would.
+    /// Only the subagent's own text counts: it thinks or runs a long tool
+    /// silently, so any other last event, and a tool result in particular,
+    /// cannot tell a finished subagent from a running one.
     pub(super) fn silent_finish(
         &self,
         now: Instant,
@@ -50,12 +53,10 @@ impl FoldEntry {
         }
         let silent = self.silence(now);
         if text_visible {
-            let needed = match self.last_kind {
-                Kind::Text => idle,
-                Kind::ToolResult => idle.max(TOOL_RESULT_IDLE),
-                _ => return None,
-            };
-            (!idle.is_zero() && silent >= needed).then_some("idle")
+            if self.last_kind != Kind::Text || idle.is_zero() {
+                return None;
+            }
+            (silent >= idle).then_some("idle")
         } else {
             (!cap.is_zero() && silent >= cap).then_some("quiet-cap")
         }

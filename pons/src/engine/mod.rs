@@ -81,7 +81,8 @@ pub struct Config {
     /// `None`: steer when the adapter advertised steering, else queue.
     pub interrupt: Option<InterruptMode>,
     pub stop_window: Duration,
-    /// Silence after which a background subagent is shown as done; zero: never.
+    /// Silence after which a background subagent whose last event was its own
+    /// text is shown as done; zero: never.
     pub subagent_idle: Duration,
     /// Safety cap used instead of the idle rule when the adapter's subagent
     /// text is not visible (`--no-subagent-text`); zero: never.
