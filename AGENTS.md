@@ -11,6 +11,7 @@ AGENTS.md before working in its directory.
 | `acus/`   | `acus`  | Code search, outline, patch, build output (`ctx`) and the PreToolUse guard |
 | `pons/`   | `pons`  | ACP proxy between Zed and the Claude ACP adapter |
 | `census/` | `census` | Usage analytics, limits and context awareness for the main agent |
+| `vicarius/` | `vicarius` | Local proxy that routes `-ds` subagents to DeepSeek while credit lasts |
 | `core/`   | `capsa-core` | Shared library. Modules: `render`, `cli` (feature `clap`), `log`, `skill`, `claude_settings`, `update` (feature `update`), `exit`, `format`, `hint`, `paths`, `pkg`, `which`, `census_snapshot` |
 
 `PLAN.md` holds the current architecture and the open questions.
@@ -27,7 +28,7 @@ AGENTS.md before working in its directory.
   health: `update` and `uninstall` always; `doctor` and `setup` where a tool
   installs something (acus and census: the skill and hooks; pons: the Claude
   ACP adapter); `skill` where a tool ships an agent skill (acus, census);
-  `config` for a tool's own configuration (census). A rename is hard, with no
+  `config` for a tool's own configuration (census, vicarius). A rename is hard, with no
   aliases.
 - **Output contract, every tool:** a result is a value that implements
   `capsa_core::render::Render`, and `render::emit` prints it: the agent format

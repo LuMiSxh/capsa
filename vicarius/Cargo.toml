@@ -1,0 +1,33 @@
+[package]
+name = "vicarius"
+description = "Routes Claude Code subagents to DeepSeek while credit lasts."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = ["cmd-update"]
+# `vicarius self update` and `vicarius self uninstall`; network only when called.
+cmd-update = ["capsa-core/update"]
+
+[dependencies]
+anyhow.workspace = true
+capsa-core = { workspace = true, features = ["clap"] }
+clap.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["http1", "server"] }
+hyper-util = { workspace = true, features = ["tokio", "server-graceful"] }
+reqwest = { workspace = true, features = ["rustls", "http2"] }
+serde.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "net", "signal", "time", "macros", "sync"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
