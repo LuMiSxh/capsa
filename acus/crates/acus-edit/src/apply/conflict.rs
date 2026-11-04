@@ -7,10 +7,10 @@ use crate::parse::{Op, ResolveMode};
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
-/// Whether `text` holds the start or end marker of a conflict section.
+/// Whether `text` holds a complete git conflict section.
 pub(super) fn has_markers(text: &str) -> bool {
-    text.lines()
-        .any(|l| l.starts_with("<<<<<<<") || l.starts_with(">>>>>>>"))
+    let lines: Vec<&str> = text.lines().collect();
+    !scan(&lines).0.is_empty()
 }
 
 /// One conflict section: its marker lines and the content ranges between them, 0-based and
@@ -138,67 +138,104 @@ impl State {
     }
 }
 
-/// The conflict sections of `lines`, or the error naming an unterminated one.
-fn sections(path: &str, lines: &[String]) -> Result<Vec<Section>> {
-    let unterminated = |line: usize| EditError::UnterminatedConflict {
-        path: path.into(),
-        line: line + 1,
-    };
+/// The complete conflict sections of `lines`, and the first opener that never closes.
+fn scan(lines: &[&str]) -> (Vec<Section>, Option<usize>) {
     let mut out = Vec::new();
+    let mut unterminated = None;
     let mut i = 0;
     while i < lines.len() {
-        if !lines[i].starts_with("<<<<<<<") {
+        if !is_open(lines[i]) {
             i += 1;
             continue;
         }
-        let start = i;
-        let mut j = start + 1;
-        let ours_start = j;
-        while j < lines.len() && !is_base(&lines[j]) && !is_separator(&lines[j]) {
-            if lines[j].starts_with(">>>>>>>") {
-                return Err(unterminated(start));
+        match section_at(lines, i) {
+            Some((section, next)) => {
+                out.push(section);
+                i = next;
             }
-            j += 1;
-        }
-        if j == lines.len() {
-            return Err(unterminated(start));
-        }
-        let ours = (ours_start, j);
-        let mut base = None;
-        if is_base(&lines[j]) {
-            let base_start = j + 1;
-            j = base_start;
-            while j < lines.len() && !is_separator(&lines[j]) {
-                if lines[j].starts_with(">>>>>>>") {
-                    return Err(unterminated(start));
+            None => {
+                if unterminated.is_none() {
+                    unterminated = Some(i);
                 }
-                j += 1;
+                i += 1;
             }
-            if j == lines.len() {
-                return Err(unterminated(start));
-            }
-            base = Some((base_start, j));
         }
-        // `lines[j]` is the `=======` separator.
+    }
+    (out, unterminated)
+}
+
+/// The conflict sections of `lines`, or the error naming an unterminated one.
+fn sections(path: &str, lines: &[String]) -> Result<Vec<Section>> {
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let (sections, unterminated) = scan(&refs);
+    match unterminated {
+        Some(line) => Err(EditError::UnterminatedConflict {
+            path: path.into(),
+            line: line + 1,
+        }),
+        None => Ok(sections),
+    }
+}
+
+/// The section that opens at `start`, with the index after its closing marker.
+fn section_at(lines: &[&str], start: usize) -> Option<(Section, usize)> {
+    let mut j = start + 1;
+    let ours_start = j;
+    while j < lines.len() && !is_base(lines[j]) && !is_separator(lines[j]) {
+        if is_close(lines[j]) {
+            return None;
+        }
         j += 1;
-        let theirs_start = j;
-        while j < lines.len() && !lines[j].starts_with(">>>>>>>") {
+    }
+    if j == lines.len() {
+        return None;
+    }
+    let ours = (ours_start, j);
+    let mut base = None;
+    if is_base(lines[j]) {
+        let base_start = j + 1;
+        j = base_start;
+        while j < lines.len() && !is_separator(lines[j]) {
+            if is_close(lines[j]) {
+                return None;
+            }
             j += 1;
         }
         if j == lines.len() {
-            return Err(unterminated(start));
+            return None;
         }
-        let end = j;
-        out.push(Section {
+        base = Some((base_start, j));
+    }
+    // `lines[j]` is the `=======` separator.
+    j += 1;
+    let theirs_start = j;
+    while j < lines.len() && !is_close(lines[j]) {
+        j += 1;
+    }
+    if j == lines.len() {
+        return None;
+    }
+    let end = j;
+    Some((
+        Section {
             start,
             end,
             ours,
             base,
             theirs: (theirs_start, end),
-        });
-        i = end + 1;
-    }
-    Ok(out)
+        },
+        end + 1,
+    ))
+}
+
+fn is_open(line: &str) -> bool {
+    line.strip_prefix("<<<<<<<")
+        .is_some_and(|label| label.trim() != "SEARCH")
+}
+
+fn is_close(line: &str) -> bool {
+    line.strip_prefix(">>>>>>>")
+        .is_some_and(|label| label.trim() != "REPLACE")
 }
 
 fn is_separator(line: &str) -> bool {

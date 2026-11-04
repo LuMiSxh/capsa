@@ -161,6 +161,66 @@ fn a_file_without_markers_fails_and_writes_nothing() {
 }
 
 #[test]
+fn search_replace_examples_are_not_conflict_markers() {
+    let before = "<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n";
+    let d = dir(&[("a.md", before)]);
+    let applied = apply(
+        &parse("*** Update File: a.md\n<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n")
+            .unwrap(),
+        d.path(),
+        false,
+    )
+    .unwrap();
+    assert!(applied.unchecked.is_empty(), "{:?}", applied.unchecked);
+}
+
+#[test]
+fn rust_with_a_quoted_patch_example_is_still_syntax_checked() {
+    let before = concat!(
+        "const DOC: &str = r#\"\n",
+        "<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n",
+        "\"#;\nfn f() {}\n",
+    );
+    let d = dir(&[("a.rs", before)]);
+    let e = run(
+        d.path(),
+        "*** Update File: a.rs\n<<<<<<< SEARCH\nfn f() {}\n=======\nfn f() {\n>>>>>>> REPLACE\n",
+    )
+    .unwrap_err()
+    .shown();
+    assert!(e.contains("patch would break the syntax of a.rs"), "{e}");
+    assert_eq!(read(d.path(), "a.rs"), before);
+}
+
+#[test]
+fn a_real_conflict_still_skips_the_syntax_check() {
+    let before = "fn f() {\n<<<<<<< HEAD\n    1\n=======\n    2\n>>>>>>> branch\n}\nfn g() {\n<<<<<<< HEAD\n    3\n=======\n    4\n>>>>>>> branch\n}\n";
+    let d = dir(&[("a.rs", before)]);
+    let applied = apply(
+        &parse("*** Resolve Conflict: a.rs:2 --ours\n").unwrap(),
+        d.path(),
+        false,
+    )
+    .unwrap();
+    assert_eq!(applied.unchecked, ["a.rs"]);
+    assert_eq!(
+        read(d.path(), "a.rs"),
+        "fn f() {\n    1\n}\nfn g() {\n<<<<<<< HEAD\n    3\n=======\n    4\n>>>>>>> branch\n}\n"
+    );
+}
+
+#[test]
+fn resolve_conflict_refuses_a_file_with_only_search_replace_blocks() {
+    let before = "<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n";
+    let d = dir(&[("a.md", before)]);
+    let e = run(d.path(), "*** Resolve Conflict: a.md --ours\n")
+        .unwrap_err()
+        .shown();
+    assert!(e.contains("a.md: no conflict markers"), "{e}");
+    assert_eq!(read(d.path(), "a.md"), before);
+}
+
+#[test]
 fn an_unterminated_section_fails_and_writes_nothing() {
     let before = "a\n<<<<<<< HEAD\nours\n=======\ntheirs\n";
     let d = dir(&[("a.txt", before)]);
