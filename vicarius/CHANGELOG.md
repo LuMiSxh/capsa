@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `vicarius self start` no longer reads the DeepSeek balance twice when its refresh request
+  overlaps the service's own startup refresh; overlapping refreshes share one balance request
+  and one `balance.refresh` log line.
+
 ### Added
 
 - `vicarius self config agent add` accepts `--effort keep|low|high|max`; `keep` preserves

@@ -198,6 +198,58 @@ async fn a_read_that_started_before_a_402_cannot_reopen_the_gate() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_refresh_that_overlaps_another_runs_once() {
+    let release = Arc::new(Notify::new());
+    let held = release.clone();
+    let mock = Mock::start(move |_| {
+        Reply::steps(
+            200,
+            &[("content-type", b"application/json")],
+            vec![
+                Step::Wait(held.clone()),
+                Step::Data(balance_body(true, "5.00").into_bytes()),
+            ],
+        )
+    })
+    .await;
+    let rig = rig(&mock.url(), Some(KEY));
+    let first = tokio::spawn({
+        let refresher = rig.refresher.clone();
+        async move { refresher.refresh().await }
+    });
+    while mock.seen().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let second = tokio::spawn({
+        let refresher = rig.refresher.clone();
+        async move { refresher.refresh().await }
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    release.notify_one();
+    first.await.unwrap();
+    second.await.unwrap();
+
+    assert_eq!(mock.seen().len(), 1);
+    let log = std::fs::read_to_string(&rig.log).unwrap();
+    assert_eq!(
+        log.matches(r#""event":"balance.refresh""#).count(),
+        1,
+        "{log}"
+    );
+    assert!(rig.gate.snapshot().is_open());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repeat_refresh_reuses_a_recent_success() {
+    let mock = balance_mock(200, balance_body(true, "5.00")).await;
+    let rig = rig(&mock.url(), Some(KEY));
+    rig.refresher.refresh().await;
+    rig.refresher.refresh().await;
+
+    assert_eq!(mock.seen().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn without_a_key_nothing_is_requested() {
     let mock = balance_mock(200, balance_body(true, "5.00")).await;
     let rig = rig(&mock.url(), None);

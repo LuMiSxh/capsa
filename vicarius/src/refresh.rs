@@ -12,8 +12,8 @@ use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
-use tokio::sync::watch;
+use std::time::{Duration, Instant};
+use tokio::sync::{Mutex as AsyncMutex, watch};
 
 /// The base URL of the DeepSeek API, which serves `/user/balance`.
 pub const DEEPSEEK_API_URL: &str = "https://api.deepseek.com";
@@ -26,6 +26,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The shortest wait between two checks of the refresh schedule.
 const MIN_WAIT: Duration = Duration::from_millis(200);
+
+/// How long a successful refresh keeps a second call from asking DeepSeek again.
+const COALESCE_WINDOW: Duration = Duration::from_secs(2);
 
 /// Configures a [`Refresher`].
 #[derive(Clone, Debug)]
@@ -93,6 +96,16 @@ pub enum RefreshError {
 struct Inner {
     view: RefreshView,
     report: Option<SyncReport>,
+    /// Counts finished balance requests, including failed ones.
+    completed: u64,
+    /// The start of the last successful balance request and the gate generation it saw.
+    last_success: Option<LastSuccess>,
+}
+
+#[derive(Clone, Copy)]
+struct LastSuccess {
+    at: Instant,
+    generation: u64,
 }
 
 /// What one balance request found.
@@ -122,6 +135,7 @@ pub struct Refresher {
     sync_every: Duration,
     config: Mutex<Config>,
     inner: Mutex<Inner>,
+    refresh_lock: AsyncMutex<()>,
 }
 
 impl Refresher {
@@ -157,6 +171,7 @@ impl Refresher {
             sync_every: config.sync_every,
             config: Mutex::new(initial),
             inner: Mutex::new(Inner::default()),
+            refresh_lock: AsyncMutex::new(()),
         })
     }
 
@@ -167,12 +182,29 @@ impl Refresher {
     }
 
     /// Reads the balance once and sets the gate. Without a key it does nothing.
+    ///
+    /// A call that overlaps a running refresh, or repeats a successful one within
+    /// [`COALESCE_WINDOW`] on the same gate generation, waits for that refresh and returns.
+    /// `vicarius self start` asks for a refresh right after launching the service, whose own
+    /// startup refresh usually still runs; both would otherwise read the same balance twice.
     pub async fn refresh(&self) {
         let Some(bearer) = &self.bearer else {
             return;
         };
-        let config = self.current_config();
+        let seen = self.inner().completed;
+        let _running = self.refresh_lock.lock().await;
         let generation = self.gate.generation();
+        {
+            let inner = self.inner();
+            let recent = inner.last_success.is_some_and(|last| {
+                last.generation == generation && last.at.elapsed() < COALESCE_WINDOW
+            });
+            if inner.completed != seen || recent {
+                return;
+            }
+        }
+        let started = Instant::now();
+        let config = self.current_config();
         let result = self.fetch(bearer, config.min_balance_usd).await;
         let now = unix_now();
         let next = now + u64::from(config.balance_refresh_minutes) * 60;
@@ -181,8 +213,13 @@ impl Refresher {
             Err(error) => self.record_error(error),
         }
         let mut inner = self.inner();
+        inner.completed += 1;
         inner.view.next_at = Some(next);
         if result.is_ok() {
+            inner.last_success = Some(LastSuccess {
+                at: started,
+                generation,
+            });
             inner.view.last_ok_at = Some(now);
             inner.view.last_error = None;
         }
