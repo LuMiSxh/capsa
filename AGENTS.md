@@ -164,6 +164,17 @@ and the [Agent Skills spec](https://agentskills.io/specification).
   near-misses that should not) and at least three task prompts with their expected commands. Run
   them before and after a rewrite and note the result in the CHANGELOG entry.
 
+### Evals
+
+`scripts/skill-evals.py` runs `skill/evals/{triggers,tasks}.json` for every tool against Claude
+Code headless (`claude -p`, Haiku, low effort) in a fresh Rust fixture with one commit, one branch
+and one modified file. `--dry-run` prints the commands, `--repeat N` repeats each case, and
+`--parallel` stays at 3 or less to spare rate limits. Results and a summary table go to `--out`;
+`--direct` uses the Anthropic OAuth login instead of an `ANTHROPIC_BASE_URL` proxy.
+`--mode no-hooks` loads only project settings and links the repository skill into the fixture,
+which tests the description alone; `--mode all` runs both. Claude Code's `--bare` cannot run these
+evals: it skips user skills and never reads OAuth.
+
 ## Commands
 
 - Run builds and tests through `acus ctx 'COMMAND'`.

@@ -1,6 +1,6 @@
 {
   "skill": "acus",
-  "note": "No runner exists; these tasks have not been run.",
+  "note": "Run scripts/skill-evals.py; see AGENTS.md, Skills, Evals.",
   "tasks": [
     {
       "prompt": "Find where parse_config is defined and show the function.",

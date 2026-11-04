@@ -1,6 +1,6 @@
 {
   "skill": "census",
-  "note": "No runner exists yet; these queries have not been run.",
+  "note": "Run scripts/skill-evals.py; see AGENTS.md, Skills, Evals.",
   "should_trigger": [
     {
       "query": "census: context 250k of 400k (compaction at 400k).",

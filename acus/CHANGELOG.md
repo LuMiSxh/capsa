@@ -19,8 +19,9 @@
   prints. `CORE.md` is a line subset of `SKILL.md`: 34 lines, 1,365 bytes and 247 words, under
   the 250-word test (from 31 lines, 1,447 bytes and 247 words). Added `skill/evals/` with 12
   trigger queries, 12 near-misses and 6 task prompts, and a drift test that checks every command
-  and flag named in the skill against the clap definition. The evals have no runner and have not
-  been run.
+  and flag named in the skill against the clap definition. The evals run through
+  `scripts/skill-evals.py`; on Haiku, the CORE hook drove 9/12 triggers and the description
+  alone 0/12, with 11/12 and 12/12 near-misses and 2/6 and 1/6 tasks.
 - `acus diff --json` is an object, `{"header": …, "files": […]}`: the header is present for the working tree and absent for `REV..REV`, and an empty diff is `{"files": []}` where it was `null`. Breaking for scripts that read the old top-level array.
 - `acus diff -p` summarises a moved symbol once (`  moved kind name ← path:range (unchanged|edited)`), prints the body diff only when it was edited, outlines an added file (or its first 20 lines without an outline), hides blank changed lines and caps each file at 80 changed lines (`--full` restores the old view). `acus diff -p 7049404..1862ade -- acus/crates/acus-cli/src/cmd_find` went from 8,994 to 3,952 chars (−56%).
 - `acus show`: a whole file over 400 lines shows its outline and first 60 lines with pointers instead of every line, and a call stops near 24k characters naming the address that shows the rest; `--full` prints everything; `--json` is never capped (it also ignores `--max-lines`). A 500-line file prints 114 lines instead of 500.

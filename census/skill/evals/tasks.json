@@ -1,6 +1,6 @@
 {
   "skill": "census",
-  "note": "No runner exists yet; these prompts have not been run.",
+  "note": "Run scripts/skill-evals.py; see AGENTS.md, Skills, Evals.",
   "tasks": [
     {
       "task": "Should this session hand off before I start the refactor?",

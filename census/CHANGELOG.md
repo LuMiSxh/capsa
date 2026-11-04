@@ -41,7 +41,8 @@
   mistakes, a description that carries every trigger, and `skill/evals/` with trigger and task
   cases. It grows from 41 lines / 2,528 bytes to 58 lines / 3,493 bytes. A test checks every
   command and flag it names against the clap definition and that its name matches the install
-  directory. The evals have not been run: no runner exists yet.
+  directory. The evals run through `scripts/skill-evals.py`; on Haiku, trigger recall was 3/10
+  with the user's hooks and 8/10 with project settings only, and tasks 2/8 and 4/8.
 - `census usage --by cycle` prints only the note when fewer than two weeks of weekly snapshots
   map the reset, instead of the 168 zero buckets. `--json` keeps its rows.
 - `census session` labels its cost row `subscription` in the agent and human formats. `--json`

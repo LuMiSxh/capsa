@@ -1,6 +1,6 @@
 {
   "skill": "acus",
-  "note": "No runner exists; these queries have not been run.",
+  "note": "Run scripts/skill-evals.py; see AGENTS.md, Skills, Evals.",
   "should_trigger": [
     "Find every place that calls parse_config.",
     "Show me the Parser::parse function in src/parser.rs.",
