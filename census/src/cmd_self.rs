@@ -159,3 +159,117 @@ fn uninstall(a: &UninstallArgs, format: Format) -> Result<Outcome> {
     }
     Ok(outcome)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SKILL;
+    use capsa_core::skill::Target;
+    use clap::CommandFactory;
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    /// Returns the value of a frontmatter field.
+    fn frontmatter(key: &str) -> Option<&'static str> {
+        SKILL
+            .text
+            .lines()
+            .skip(1)
+            .take_while(|line| *line != "---")
+            .find_map(|line| line.strip_prefix(key)?.strip_prefix(": "))
+    }
+
+    /// Returns the `census <subcommand> <flags>` calls the skill writes in backticks.
+    fn invocations() -> Vec<(String, Vec<String>)> {
+        SKILL
+            .text
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .filter_map(|span| {
+                let mut words = span.split_whitespace();
+                if words.next() != Some("census") {
+                    return None;
+                }
+                let cmd = words.next()?.to_owned();
+                let flags: Vec<String> = words
+                    .filter(|word| word.starts_with("--"))
+                    .map(str::to_owned)
+                    .collect();
+                Some((cmd, flags))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn skill_commands_and_flags_exist_in_the_cli() {
+        let root = crate::Cli::command();
+        let mut commands: BTreeMap<String, Vec<String>> = root
+            .get_subcommands()
+            .map(|cmd| {
+                let flags = cmd
+                    .get_arguments()
+                    .filter_map(|arg| arg.get_long().map(|long| format!("--{long}")))
+                    .collect();
+                (cmd.get_name().to_owned(), flags)
+            })
+            .collect();
+        let global: Vec<String> = root
+            .get_arguments()
+            .filter_map(|arg| arg.get_long().map(|long| format!("--{long}")))
+            .collect();
+        for flags in commands.values_mut() {
+            flags.extend(global.iter().cloned());
+            flags.push("--help".to_owned());
+        }
+
+        let calls = invocations();
+        assert!(!calls.is_empty(), "the skill names no census command");
+        for (cmd, flags) in calls {
+            let Some(known) = commands.get(&cmd) else {
+                panic!("the skill names `census {cmd}`, which the CLI does not define");
+            };
+            for flag in flags {
+                assert!(
+                    known.contains(&flag),
+                    "the skill names `census {cmd} {flag}`, which the CLI does not define"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_skill_name_is_the_installed_directory_name() {
+        let name = frontmatter("name").expect("the skill has a name");
+        assert_eq!(name, SKILL.tool);
+        assert!(
+            name.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+            "the name must be lowercase a-z, 0-9 and -"
+        );
+        let dir = Target::Claude
+            .dirs(Path::new("/home/test"), SKILL.tool)
+            .into_iter()
+            .next()
+            .expect("the Claude target has a directory");
+        assert_eq!(dir.file_name().and_then(|n| n.to_str()), Some(name));
+    }
+
+    #[test]
+    fn the_frontmatter_holds_only_a_short_name_and_description() {
+        let mut lines = SKILL.text.lines();
+        assert_eq!(lines.next(), Some("---"));
+        let fields: Vec<(&str, &str)> = lines
+            .by_ref()
+            .take_while(|line| *line != "---")
+            .map(|line| line.split_once(": ").expect("a `key: value` line"))
+            .collect();
+        let keys: Vec<&str> = fields.iter().map(|(key, _)| *key).collect();
+        assert_eq!(keys, ["name", "description"]);
+        let description = fields[1].1;
+        assert!(
+            description.chars().count() <= 1024,
+            "the description is {} characters, over 1024",
+            description.chars().count()
+        );
+    }
+}

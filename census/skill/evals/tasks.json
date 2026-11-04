@@ -1,0 +1,38 @@
+{
+  "skill": "census",
+  "note": "No runner exists yet; these prompts have not been run.",
+  "tasks": [
+    {
+      "task": "Should this session hand off before I start the refactor?",
+      "expected": ["census context"]
+    },
+    {
+      "task": "I'm about to launch eight parallel workers; is the subscription limit safe?",
+      "expected": ["census limits"]
+    },
+    {
+      "task": "Which roles spawned subagents in this session, and what did they cost?",
+      "expected": ["census session"]
+    },
+    {
+      "task": "Show how my agents searched and edited files over the last two weeks.",
+      "expected": ["census usage --tools --days 14"]
+    },
+    {
+      "task": "Which rule blocked the most tool calls in the last month?",
+      "expected": ["census usage --guard --days 30"]
+    },
+    {
+      "task": "How many senior workers were spawned after a worker ended this week?",
+      "expected": ["census usage --handbacks --days 7"]
+    },
+    {
+      "task": "Compare my cost before and after 2026-10-01.",
+      "expected": ["census usage --compare 2026-10-01"]
+    },
+    {
+      "task": "When does my usage peak during the week?",
+      "expected": ["census usage --by weekday"]
+    }
+  ]
+}

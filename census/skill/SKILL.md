@@ -1,41 +1,58 @@
 ---
 name: census
-description: Context size, subscription limits and usage of the running Claude Code session via the census CLI. For the main agent only; use when a "census:" hook message appears, before large parallel agent batches, or when asked about context, limits or cost.
+description: Reports the running Claude Code session's context size, subscription limits, cost and usage through the census CLI. For the main agent only; subagents do not run it. Use when a `census:` hook line appears, before large parallel agent batches, when deciding whether to hand off or compact, and for questions about context, limits, cost or usage.
 ---
 
 # census
 
-census reads the transcripts and the status line of Claude Code and reports how full the context is,
-how much of the subscription limits is used, and what sessions cost. It is for the main agent.
-Subagents do not need it and should not run it.
+census reads the transcripts and the status line that Claude Code already writes. It reports the
+context against the compaction threshold, the subscription limit windows, and what sessions and
+subagents cost. For the main agent only; subagents do not run it.
 
 ## Commands
 
-| Command | Use it to |
+| Task | Command |
 |---|---|
-| `census context` | See the context tokens against the compaction threshold, with the share and tokens left. Run it before a long task or when a handoff is in question. |
-| `census limits` | See the 5h and weekly windows: share used, reset time, when each fills at the current rate, the weekly forecast. Run it before launching many parallel agents. |
-| `census session` | See duration, requests, cost, subagents per role, context and compactions of this session. |
-| `census usage` | Token, cost and tool-call statistics over all transcripts (`--days N`, `--agents`, `--tools`). Rarely needed in a task. |
+| Check the context against the compaction threshold | `census context` |
+| Check the 5h and weekly windows, forecast, reset | `census limits` |
+| Summarize this session: requests, cost, subagents, context | `census session` |
+| Totals, cost, providers, top models, sessions, tools | `census usage` |
+| Spawns per role, models, cache hit rate, cache rewrites | `census usage --agents` |
+| How agents search, read, edit and build | `census usage --tools` |
+| acus guard decisions per rule and calls that escaped it | `census usage --guard` |
+| Senior-worker spawns after a worker spawn ended | `census usage --handbacks` |
+| Requests before and after a UTC date, with the change | `census usage --compare 2026-10-01` |
+| Expected cost by weekday, hour or reset cycle | `census usage --by weekday` |
+| Only recent days or one working directory | `census usage --days 7 --project capsa` |
+| Fewer rows or stable JSON | `census usage --top 5 --json` |
 
-All take `--json`. Exit 1 means no data yet, not an error.
+Every command takes `--json`. Exit 1 means no data yet, not an error.
 
-## Hook messages
+## Examples
 
-A hook adds a line starting with `census:` to your context when a level is crossed. Each appears once
-per session or window. Times are those of `census limits`.
+- This week in one project: `census usage --days 7 --project capsa --top 5`.
+- Reset-relative pattern after two weeks of snapshots: `census usage --days 30 --by cycle`.
+- Guard decisions and escapes this month: `census usage --days 30 --guard`.
 
-- `context 245k of 400k`: information only. Plan work so it finishes cleanly.
-- `context 325k of 400k ... suggest a handoff`: at the next stable task boundary (not mid-edit,
-  not with a failing build), suggest a handoff to Luca and use the session-handoff skill if he agrees.
-- `5h limit 82%` or `7d limit 91%` (also "full around" or "runs out around"): avoid large parallel
-  agent batches, prefer fewer and smaller agents, and tell Luca the reset time in your next reply.
-- `weekly limit resets in 9 h with 40% left`: tell Luca, so he can use the unused share.
-- `census: status: context 48k of 400k (compaction at 400k); 5h 8% (reset ...).`: not a level. It comes
-  with the first prompt of a session and after an hour without one. Information only.
+## Reading the numbers
 
-Before you say the context is full or suggest a handoff for context reasons, run `census context`.
-Statements about context size in a compaction summary are outdated.
+- **Context.** `census context` prints the tokens against the compaction threshold and the tokens
+  left. The hook writes `census: context ...` at 60% and suggests a handoff at 80%. Near or over
+  80%, at a stable task boundary, suggest a handoff to Luca with the session-handoff skill. Run
+  `census context` before calling the context full: a compaction summary is stale.
+- **Limits.** The hook warns at 75% and 90% of a window and adds "full around" or "runs out around"
+  when a window is half used and a forecast has a basis. At 75% or more, avoid large parallel agent
+  batches, prefer fewer and smaller agents, and tell Luca the reset time in your next reply. A
+  weekly reset within 12 h with at least 30% left is worth telling Luca.
+- **Estimates.** A figure marked `(estimated)` comes from cost; say so when you relay it.
+- A hook message is information. Do not stop work for it; change how you spend.
 
-A figure marked `(estimated)` is computed from cost, not read from the status line; say so when you
-relay it. Do not stop work because of a message; adapt how you spend.
+## Common mistakes
+
+- **Piping into `grep`.** Use `--top N` and `--json`; grep drops the labels and units.
+- **Forgetting `--days`.** The scan reads all history, slow and mixes prices; use `--days 7`.
+- **`--by cycle` too early.** It needs two weeks of snapshots; use `--by weekday` until then.
+- **Adding providers to the limits.** Only `anthropic` counts toward the 5h and weekly windows and
+  `--by`; DeepSeek and OpenAI spend is API money.
+- **Reading costs as a bill.** Prices are list prices; `subscription` is flat-rate usage, not an
+  amount owed, and `api` is real API spend.

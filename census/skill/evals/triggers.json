@@ -1,0 +1,88 @@
+{
+  "skill": "census",
+  "note": "No runner exists yet; these queries have not been run.",
+  "should_trigger": [
+    {
+      "query": "census: context 250k of 400k (compaction at 400k).",
+      "why": "a census hook line appeared"
+    },
+    {
+      "query": "Are we near the context limit?",
+      "why": "question about context"
+    },
+    {
+      "query": "Should I hand off before this refactor?",
+      "why": "deciding whether to hand off"
+    },
+    {
+      "query": "How much of the five-hour limit is left?",
+      "why": "question about subscription limits"
+    },
+    {
+      "query": "Will the weekly limit run out today?",
+      "why": "question about subscription limits and forecast"
+    },
+    {
+      "query": "How much has this session cost so far?",
+      "why": "question about cost"
+    },
+    {
+      "query": "Which providers did my subagents spend on?",
+      "why": "question about usage and providers"
+    },
+    {
+      "query": "How many hand-backs happened this week?",
+      "why": "question about usage"
+    },
+    {
+      "query": "Check the limits before I start eight parallel agents.",
+      "why": "before a large parallel agent batch"
+    },
+    {
+      "query": "What did the guard block last month?",
+      "why": "question about usage and guard decisions"
+    }
+  ],
+  "should_not_trigger": [
+    {
+      "query": "How many tokens is this file?",
+      "why": "counts file tokens, not session context"
+    },
+    {
+      "query": "Summarize this git diff.",
+      "why": "a diff summary, not usage analytics"
+    },
+    {
+      "query": "What is the context of this function name?",
+      "why": "code context, not the session transcript"
+    },
+    {
+      "query": "How much does a Claude Pro subscription cost per month?",
+      "why": "a pricing question, not session usage"
+    },
+    {
+      "query": "Which model should I use for this task?",
+      "why": "model choice, not usage analytics"
+    },
+    {
+      "query": "Run the tests and show the failures.",
+      "why": "build and test output, not usage"
+    },
+    {
+      "query": "How large is this repository?",
+      "why": "file and line counts, not session usage"
+    },
+    {
+      "query": "What are Anthropic's API rate limits?",
+      "why": "external documentation, not the subscription windows"
+    },
+    {
+      "query": "How much disk space does ~/.claude use?",
+      "why": "filesystem use, not transcript analytics"
+    },
+    {
+      "query": "Who last changed this function?",
+      "why": "git blame, not usage"
+    }
+  ]
+}
