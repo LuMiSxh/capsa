@@ -124,7 +124,7 @@ fn run_cuts_lines_fairly_and_names_the_rerun() {
     }
     assert!(out.len() < 26_000, "{}", out.len());
     assert_eq!(
-        out.matches("chars: show big.rs --head ").count(),
+        out.matches("chars: acus show big.rs --head ").count(),
         3,
         "{out}"
     );

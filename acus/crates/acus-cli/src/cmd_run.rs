@@ -212,7 +212,8 @@ fn budget_cut(body: &str, share: usize, args: &[String], shown: &str) -> String 
         .first()
         .is_some_and(|c| HEAD_COMMANDS.contains(&c.as_str()))
     {
-        format!("{shown} --head {total}")
+        let shown = shown.strip_prefix("acus ").unwrap_or(shown);
+        format!("acus {shown} --head {total}")
     } else {
         "acus run --full".to_owned()
     };
