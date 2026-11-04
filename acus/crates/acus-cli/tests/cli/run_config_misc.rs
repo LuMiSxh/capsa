@@ -134,7 +134,11 @@ fn run_cuts_lines_fairly_and_names_the_rerun() {
 fn run_full_lifts_the_budget() {
     let d = tempfile::tempdir().unwrap();
     big_file(d.path());
-    let (code, out, _) = acus_in(d.path(), &["run", "--full"], "show big.rs\nshow big.rs\n");
+    let (code, out, _) = acus_in(
+        d.path(),
+        &["run", "--full"],
+        "show big.rs:1-1000\nshow big.rs:1-1000\nshow big.rs:1-1000\n",
+    );
     assert_eq!(code, 0);
     assert!(!out.contains("… cut at "), "{out}");
     assert!(out.len() > 60_000, "{}", out.len());

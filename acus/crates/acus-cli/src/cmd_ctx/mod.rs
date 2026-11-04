@@ -8,6 +8,7 @@ mod print;
 mod refs;
 
 use crate::config::Config;
+use crate::fmt::Budget;
 use crate::fmt::Out;
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
@@ -76,6 +77,9 @@ pub struct Args {
     /// and footers stay whole.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
     cut: Option<u64>,
+    /// Stop after N printed lines, headers and footers included; the rest is counted in a footer.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    head: Option<u64>,
 }
 
 /// Exit code of a command killed by `--timeout`, as in timeout(1).
@@ -228,15 +232,13 @@ pub fn run(a: Args, out: &Out, cfg: &Config) -> Result<Outcome> {
     } else {
         refs(&text, &cwd)
     };
+    let mut budget = Budget::new(a.head.map(|n| n as usize));
     // A saved log opens with its header, before any of its lines, so the first line says what
     // was read.
     if let Some(path) = &a.log {
-        outln!(
-            "{}",
-            out.header(&format!("== log {} ({} lines)", path.display(), all.len()))
-        );
+        budget.emit(&out.header(&format!("== log {} ({} lines)", path.display(), all.len())));
     }
-    let omitted = print_lines(&a, &narrowed.lines);
+    let omitted = print_lines(&a, &narrowed.lines, &mut budget);
     // Whatever is not printed stays readable without running the command again.
     // Dropped noise matters only when looking into a failure.
     let keep_log = omitted > 0
@@ -255,21 +257,22 @@ pub fn run(a: Args, out: &Out, cfg: &Config) -> Result<Outcome> {
         narrowed.grep_dropped,
         nothing_matched,
         log_note,
+        &mut budget,
     );
     if let (true, Some(secs)) = (timed_out, a.timeout) {
-        outln!(
-            "{}",
-            out.dim(&format!(
-                "… killed after {secs}s (--timeout); output above is what it printed until then. Raise --timeout, or --grep/--tail a narrower command"
-            ))
-        );
+        budget.emit(&out.dim(&format!(
+            "… killed after {secs}s (--timeout); output above is what it printed until then. Raise --timeout, or --grep/--tail a narrower command"
+        )));
     }
     if a.log.is_none() {
-        outln!("{}", out.header(&format!("== exit {code}")));
+        budget.emit(&out.header(&format!("== exit {code}")));
     }
-    print_snippets(out, &a, &refs);
+    print_snippets(out, &a, &refs, &mut budget);
     if let Some(path) = &a.log {
-        print_growing(out, path);
+        print_growing(out, path, &mut budget);
+    }
+    if let Some(f) = budget.footer() {
+        outln!("{f}");
     }
     Ok(Outcome::Code(code.clamp(0, 255) as u8))
 }

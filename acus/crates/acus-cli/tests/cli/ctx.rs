@@ -24,6 +24,17 @@ fn ctx_log_is_readable_with_show() {
 
 #[cfg(unix)]
 #[test]
+fn ctx_head_cuts_and_names_the_rerun() {
+    let (code, out, _) = acus(&["ctx", "echo l1; echo l2; echo l3", "--head", "2"]);
+    assert_eq!(code, 0);
+    assert_eq!(
+        out,
+        "l1\nl2\n… output cut at --head 2; 2 more lines (rerun with --head 4)\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn ctx_tail_and_grep_keep_failures_and_their_code() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("a.rs"), "fn f() {\n    boom()\n}\n").unwrap();

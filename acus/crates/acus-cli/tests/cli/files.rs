@@ -133,6 +133,44 @@ fn files_follow_symlinked_directories_with_l() {
 }
 
 #[test]
+fn files_depth_limits_the_walk() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("sub/deep")).unwrap();
+    std::fs::write(d.path().join("a.txt"), "").unwrap();
+    std::fs::write(d.path().join("sub/b.txt"), "").unwrap();
+    std::fs::write(d.path().join("sub/deep/c.txt"), "").unwrap();
+    let files = |args: &[&str]| acus_in(d.path(), args, "").1;
+    assert_eq!(files(&["files"]), "a.txt\nsub/b.txt\nsub/deep/c.txt\n");
+    assert_eq!(files(&["files", "--depth", "1"]), "a.txt\n");
+    assert_eq!(files(&["files", "--max-depth", "1"]), "a.txt\n");
+    assert_eq!(files(&["files", "--depth", "2"]), "a.txt\nsub/b.txt\n");
+    assert_eq!(files(&["files", "sub", "--depth", "1"]), "sub/b.txt\n");
+    assert_eq!(
+        files(&["files", "sub", "--depth", "2"]),
+        "sub/b.txt\nsub/deep/c.txt\n"
+    );
+}
+
+#[test]
+fn files_head_and_cut_limit_the_listing() {
+    let d = tempfile::tempdir().unwrap();
+    for i in 0..5 {
+        std::fs::write(d.path().join(format!("f{i}.txt")), "").unwrap();
+    }
+    let (code, out, _) = acus_in(d.path(), &["files", "--head", "2"], "");
+    assert_eq!(code, 0);
+    assert_eq!(out.lines().count(), 3, "{out}");
+    assert!(
+        out.ends_with("… output cut at --head 2; 3 more lines (rerun with --head 5)\n"),
+        "{out}"
+    );
+    let long = format!("{}.txt", "a".repeat(20));
+    std::fs::write(d.path().join(&long), "").unwrap();
+    let (_, out, _) = acus_in(d.path(), &["files", "-g", &long, "--cut", "5"], "");
+    assert!(out.contains("… (+"), "{out}");
+}
+
+#[test]
 fn files_caps_the_listing_and_names_the_narrowing() {
     let d = tempfile::tempdir().unwrap();
     for i in 0..201 {

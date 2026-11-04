@@ -35,6 +35,20 @@ fn callers_follow_sure_edges_and_indent_by_level() {
 }
 
 #[test]
+fn follow_takes_head_and_cut() {
+    let d = fixture(&[("lib.rs", LIB), ("main.rs", MAIN)]);
+    let (code, out, _) = acus_in(d.path(), &["follow", "lib.rs#parse", "--head", "2"], "");
+    assert_eq!(code, 0);
+    assert_eq!(out.lines().count(), 3, "{out}");
+    assert!(
+        out.ends_with("… output cut at --head 2; 1 more lines (rerun with --head 3)\n"),
+        "{out}"
+    );
+    let (_, out, _) = acus_in(d.path(), &["follow", "lib.rs#parse", "--cut", "10"], "");
+    assert!(out.lines().nth(1).unwrap().contains("… (+"), "{out}");
+}
+
+#[test]
 fn json_lists_edges_with_from_to_and_depth() {
     let d = fixture(&[("lib.rs", LIB), ("main.rs", MAIN)]);
     let (code, out, _) = acus_in(d.path(), &["follow", "lib.rs#parse", "--json"], "");

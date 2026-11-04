@@ -95,6 +95,22 @@ fn grep_context_explicit_flags_win_and_the_last_repeat_wins() {
 }
 
 #[test]
+fn find_grep_compatibility_aliases_match_their_flags() {
+    assert_eq!(
+        acus(&["find", "needle", "-b", "-g", "*.rs"]),
+        acus(&["find", "needle", "--block", "-g", "*.rs"])
+    );
+    assert_eq!(
+        acus(&["find", "needle", "--max-columns", "6", "-g", "*.rs"]),
+        acus(&["find", "needle", "--cut", "6", "-g", "*.rs"])
+    );
+    assert_eq!(
+        acus(&["find", "needle", "--max-count", "1", "src/lib.rs"]),
+        acus(&["find", "needle", "-m", "1", "src/lib.rs"])
+    );
+}
+
+#[test]
 fn grep_context_conflicts_with_block() {
     let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
     let (code, out, err) = acus_in(dir, &["find", "hit", "--block", "-C1", "-"], HITS);

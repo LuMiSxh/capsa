@@ -11,6 +11,7 @@ mod files;
 mod find;
 mod follow;
 mod guard;
+mod map;
 mod patch;
 mod rev;
 mod run_config_misc;

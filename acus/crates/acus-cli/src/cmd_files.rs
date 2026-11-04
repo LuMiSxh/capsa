@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus files`: lists files under a path, with optional line counts.
 
-use crate::fmt::Out;
+use crate::fmt::{Budget, Out, clip};
 use crate::globs::{add_type_globs, searched_globs};
 use acus_walk::{WalkOpts, display_path, walk};
 use anyhow::Result;
@@ -39,6 +39,15 @@ pub struct Args {
     /// Counts newlines, as `wc -l` does.
     #[arg(long)]
     lines: bool,
+    /// Do not descend more than N levels below each path (alias --max-depth).
+    #[arg(long, visible_alias = "max-depth", value_name = "N")]
+    depth: Option<usize>,
+    /// Stop after N printed lines, headers and footers included; the rest is counted in a footer.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    head: Option<u64>,
+    /// Clip each printed line to N characters; a clipped line ends with `… (+N chars)`.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    cut: Option<u64>,
 }
 
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
@@ -62,6 +71,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         hidden: a.hidden,
         no_ignore: a.no_ignore,
         follow: a.follow,
+        max_depth: a.depth,
     };
     let found = Mutex::new(Vec::new());
     walk(&opts, |p| {
@@ -90,6 +100,8 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     let total: usize = counts.iter().flatten().flatten().sum();
     let shown = files.len().min(MAX_FILES);
     let rest = files.len() - shown;
+    let mut budget = Budget::new(a.head.map(|n| n as usize));
+    let cut = a.cut.map(|n| n as usize);
     if out.format == Format::Json {
         let json = match &counts {
             Some(c) => {
@@ -105,20 +117,33 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         };
         outln!("{json}");
     } else if out.format == Format::Human {
-        print_human(&files[..shown], counts.as_deref(), total, rest, out)?;
+        print_human(
+            &files[..shown],
+            counts.as_deref(),
+            total,
+            rest,
+            out,
+            &mut budget,
+            cut,
+        )?;
     } else {
         for (i, f) in files[..shown].iter().enumerate() {
-            match &counts {
-                Some(c) => outln!("{f}  {}", c[i].map_or("-".to_owned(), |n| n.to_string())),
-                None => outln!("{f}"),
-            }
+            let line = match &counts {
+                Some(c) => format!("{f}  {}", c[i].map_or("-".to_owned(), |n| n.to_string())),
+                None => f.clone(),
+            };
+            let line = cut.map_or(line.clone(), |n| clip(&line, 0, n));
+            budget.emit(&line);
         }
         if rest > 0 {
-            outln!("… {rest} more; narrow with -g or a path");
+            budget.emit(&format!("… {rest} more; narrow with -g or a path"));
         }
         if counts.is_some() {
-            outln!("total  {total}");
+            budget.emit(&format!("total  {total}"));
         }
+    }
+    if let Some(f) = budget.footer() {
+        outln!("{f}");
     }
     Ok(Outcome::Found)
 }
@@ -131,10 +156,13 @@ fn print_human(
     total: usize,
     rest: usize,
     out: &Out,
+    budget: &mut Budget,
+    cut: Option<usize>,
 ) -> std::io::Result<()> {
     let mut head = vec!["path".to_owned()];
     let mut align = vec![Align::Left];
-    let mut rows: Vec<Vec<String>> = shown.iter().map(|f| vec![f.clone()]).collect();
+    let clip_cell = |s: &str| cut.map_or_else(|| s.to_owned(), |n| clip(s, 0, n));
+    let mut rows: Vec<Vec<String>> = shown.iter().map(|f| vec![clip_cell(f)]).collect();
     if let Some(counts) = counts {
         head.push("lines".to_owned());
         align.push(Align::Right);
@@ -148,7 +176,7 @@ fn print_human(
     if rest > 0 {
         doc.more(rest, "acus files -g GLOB or PATH");
     }
-    out.doc(&doc)
+    out.doc_budget(&doc, budget)
 }
 
 /// Line counts of `files`, in order, counted on all cores. Workers take the next file from a

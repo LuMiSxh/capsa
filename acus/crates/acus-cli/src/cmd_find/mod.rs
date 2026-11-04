@@ -90,7 +90,7 @@ pub struct Args {
     #[arg(short = 'H', hide = true)]
     _with_filename: bool,
     /// Print enclosing symbol bodies instead of single lines.
-    #[arg(long)]
+    #[arg(short = 'b', long)]
     block: bool,
     /// Lines of context after each hit, as grep -A. Context lines print as `N-<TAB>text`
     /// (hits stay `N<TAB>text`); non-adjacent groups are split by `--`.
@@ -112,8 +112,8 @@ pub struct Args {
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
     last: Option<u64>,
     /// Clip each printed line to N characters (default 200), keeping the match in view; a clipped
-    /// line ends with `… (+N chars)`.
-    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    /// line ends with `… (+N chars)`. Alias --max-columns (rg).
+    #[arg(long, visible_alias = "max-columns", value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
     cut: Option<u64>,
     /// Stop after N printed lines, headers and footers included; the rest is counted in a footer.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
@@ -288,6 +288,7 @@ fn find_opts(a: &Args, patterns: Vec<String>, roots: Vec<PathBuf>) -> FindOpts {
             hidden: a.hidden,
             no_ignore: a.no_ignore,
             follow: a.follow,
+            max_depth: None,
         },
         ignore_case: a.ignore_case,
         fixed: a.fixed_strings,

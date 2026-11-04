@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus log`: a compact git log, with the changed lines of each commit.
 
-use crate::fmt::Out;
+use crate::fmt::{Budget, Out, clip};
 use crate::git::git;
 use anyhow::Result;
 use capsa_core::exit::Outcome;
@@ -18,6 +18,12 @@ pub struct Args {
     /// Number of commits.
     #[arg(short = 'n', long, default_value_t = 15)]
     max_count: usize,
+    /// Stop after N printed lines, headers and footers included; the rest is counted in a footer.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    head: Option<u64>,
+    /// Clip each printed line to N characters; a clipped line ends with `… (+N chars)`.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    cut: Option<u64>,
     /// Accepted for git habits: one line per commit is the only format.
     #[arg(long = "oneline", hide = true)]
     _oneline: bool,
@@ -25,6 +31,7 @@ pub struct Args {
 
 struct Commit {
     hash: String,
+    at: i64,
     date: String,
     author: String,
     subject: String,
@@ -53,7 +60,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         "--no-ext-diff",
         "--numstat",
         "--date=short",
-        "--format=%x01%h%x02%ad%x02%an%x02%s",
+        "--format=%x01%h%x02%at%x02%ad%x02%an%x02%s",
         &max,
     ];
     cmd.extend(rev);
@@ -79,37 +86,62 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         outln!("{}", serde_json::to_string(&rows)?);
         return Ok(Outcome::Found);
     }
+    let mut budget = Budget::new(a.head.map(|n| n as usize));
+    let cut = a.cut.map(|n| n as usize);
     if out.format == Format::Human {
-        print_human(&commits, out)?;
-        return Ok(Outcome::Found);
-    }
-    for c in &commits {
-        let stat = match c.files {
-            0 => String::new(),
-            n => format!(" {} {n}f", changed(c.add, c.del)),
-        };
-        outln!(
-            "{} {} {} {}{}",
-            out.header(&c.hash),
-            c.date,
-            c.author,
-            c.subject,
-            out.dim(&stat)
-        );
-    }
-    outln!(
-        "{}",
-        out.header(&format!(
+        print_human(&commits, out, &mut budget, cut)?;
+    } else {
+        let now = now();
+        for c in &commits {
+            let line = format!(
+                "{} {} {}",
+                out.header(&c.hash),
+                c.subject,
+                out.dim(&format!("({})", age(now, c.at)))
+            );
+            let line = cut.map_or_else(|| line.clone(), |n| clip(&line, 0, n));
+            budget.emit(&line);
+        }
+        budget.emit(&out.header(&format!(
             "== {} commit{} (more: -n N, one commit's changes: acus diff REV^..REV)",
             commits.len(),
             if commits.len() == 1 { "" } else { "s" }
-        ))
-    );
+        )));
+    }
+    if let Some(f) = budget.footer() {
+        outln!("{f}");
+    }
     Ok(Outcome::Found)
 }
 
+/// Seconds since the Unix epoch, as git reports them.
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// A compact age for a commit timestamp: `3d ago`, `2h ago`, `just now`.
+fn age(now: i64, at: i64) -> String {
+    let secs = now.saturating_sub(at).max(0) as u64;
+    let (n, unit) = match secs {
+        0..=59 => return "just now".to_owned(),
+        60..=3599 => (secs / 60, "m"),
+        3600..=86_399 => (secs / 3600, "h"),
+        86_400..=2_591_999 => (secs / 86_400, "d"),
+        2_592_000..=31_535_999 => (secs / 2_592_000, "mo"),
+        _ => (secs / 31_536_000, "y"),
+    };
+    format!("{n}{unit} ago")
+}
+
 /// The human view: a titled table of commits with aligned columns, then the follow-up commands.
-fn print_human(commits: &[Commit], out: &Out) -> io::Result<()> {
+fn print_human(
+    commits: &[Commit],
+    out: &Out,
+    budget: &mut Budget,
+    cut: Option<usize>,
+) -> io::Result<()> {
     let mut doc = Doc::default();
     doc.title(format!(
         "{} commit{}",
@@ -123,13 +155,10 @@ fn print_human(commits: &[Commit], out: &Out) -> io::Result<()> {
                 0 => String::new(),
                 n => format!("{} {n}f", changed(c.add, c.del)),
             };
-            vec![
-                c.hash.clone(),
-                c.date.clone(),
-                c.author.clone(),
-                stat,
-                c.subject.clone(),
-            ]
+            [&c.hash, &c.date, &c.author, &stat, &c.subject]
+                .into_iter()
+                .map(|cell| cut.map_or_else(|| cell.clone(), |n| clip(cell, 0, n)))
+                .collect()
         })
         .collect();
     doc.table(Table {
@@ -146,7 +175,7 @@ fn print_human(commits: &[Commit], out: &Out) -> io::Result<()> {
         rows,
     });
     doc.line("more: -n N; one commit's changes: acus diff REV^..REV");
-    out.doc(&doc)
+    out.doc_budget(&doc, budget)
 }
 
 fn changed(add: usize, del: usize) -> String {
@@ -159,9 +188,10 @@ fn parse(log: &str) -> Vec<Commit> {
         .filter(|r| !r.trim().is_empty())
         .filter_map(|r| {
             let (head, stats) = r.split_once('\n').unwrap_or((r, ""));
-            let mut f = head.splitn(4, '\x02');
+            let mut f = head.splitn(5, '\x02');
             let mut c = Commit {
                 hash: f.next()?.into(),
+                at: f.next()?.parse().unwrap_or(0),
                 date: f.next()?.into(),
                 author: f.next()?.into(),
                 subject: f.next()?.into(),
@@ -190,7 +220,7 @@ mod tests {
 
     #[test]
     fn sums_numstat_per_commit_and_keeps_merges_empty() {
-        let log = "\x01abc1234\x022026-01-02\x02Ada\x02Fix: a\tb\n1\t2\ta.rs\n-\t-\timg.png\n\n\x01def5678\x022026-01-01\x02Bob\x02Merge\n";
+        let log = "\x01abc1234\x021700000000\x022026-01-02\x02Ada\x02Fix: a\tb\n1\t2\ta.rs\n-\t-\timg.png\n\n\x01def5678\x021700000000\x022026-01-01\x02Bob\x02Merge\n";
         let c = parse(log);
         assert_eq!(c.len(), 2);
         assert_eq!(
@@ -204,5 +234,15 @@ mod tests {
             ("abc1234", "Fix: a\tb", 2, 1, 2)
         );
         assert_eq!((c[1].files, c[1].add, c[1].del), (0, 0, 0));
+    }
+
+    #[test]
+    fn age_is_compact() {
+        assert_eq!(age(1000, 1000), "just now");
+        assert_eq!(age(1120, 1000), "2m ago");
+        assert_eq!(age(8200, 1000), "2h ago");
+        assert_eq!(age(1000 + 2 * 86_400, 1000), "2d ago");
+        assert_eq!(age(1000 + 40 * 86_400, 1000), "1mo ago");
+        assert_eq!(age(1000 + 400 * 86_400, 1000), "1y ago");
     }
 }

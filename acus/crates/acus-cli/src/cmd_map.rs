@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus map`: the repository tree with line counts and top-level symbols, within a budget.
 
+use crate::fmt::{Budget, clip};
 use acus_syntax::{Lang, outline};
 use acus_walk::{WalkOpts, display_path, walk};
 use anyhow::Result;
@@ -11,9 +12,9 @@ use std::sync::Mutex;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// Directory to map.
-    #[arg(default_value = ".", value_parser = crate::home::<PathBuf>)]
-    path: PathBuf,
+    /// Directories to map (default: the current directory).
+    #[arg(value_name = "PATH", value_parser = crate::home::<PathBuf>)]
+    paths: Vec<PathBuf>,
     /// Output budget in tokens (about 4 characters each); the largest directories are opened
     /// first until it is spent.
     #[arg(long, default_value_t = 400)]
@@ -23,6 +24,12 @@ pub struct Args {
     depth: Option<usize>,
     #[arg(long)]
     hidden: bool,
+    /// Stop after N printed lines, headers and footers included; the rest is counted in a footer.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    head: Option<u64>,
+    /// Clip each printed line to N characters; a clipped line ends with `… (+N chars)`.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    cut: Option<u64>,
 }
 
 /// Generated or vendored text that would only inflate the counts.
@@ -100,13 +107,14 @@ struct File {
     symbols: Vec<String>,
 }
 
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "execute hands over the parsed arguments"
-)]
 pub fn run(a: Args) -> Result<Outcome> {
-    if a.path.is_file() {
-        let shown = display_path(&a.path);
+    let paths = if a.paths.is_empty() {
+        vec![PathBuf::from(".")]
+    } else {
+        a.paths
+    };
+    if let Some(p) = paths.iter().find(|p| p.is_file()) {
+        let shown = display_path(p);
         return Err(capsa_core::hint::Hinted::new(
             format!("{shown} is a file"),
             format!("acus outline {shown} lists its symbols"),
@@ -115,7 +123,7 @@ pub fn run(a: Args) -> Result<Outcome> {
     }
     let found = Mutex::new(Vec::new());
     let opts = WalkOpts {
-        roots: vec![a.path.clone()],
+        roots: paths.clone(),
         include: vec![],
         exclude: SKIP_DIRS.iter().map(|e| format!("*.{e}")).collect(),
         hidden: a.hidden,
@@ -130,12 +138,15 @@ pub fn run(a: Args) -> Result<Outcome> {
                 .push((f.to_path_buf(), n));
         }
     })?;
-    let mut root = Dir::default();
-    for (f, n) in found
+    let mut found = found
         .into_inner()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-    {
-        let rel = f.strip_prefix(&a.path).unwrap_or(&f);
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    found.sort();
+    found.dedup_by(|a, b| a.0 == b.0);
+    let base = base_of(&paths);
+    let mut root = Dir::default();
+    for (f, n) in found {
+        let rel = f.strip_prefix(&base).unwrap_or(&f);
         let parts: Vec<String> = rel
             .components()
             .map(|c| c.as_os_str().to_string_lossy().into_owned())
@@ -148,21 +159,47 @@ pub fn run(a: Args) -> Result<Outcome> {
     roll_up(&mut root);
     load_symbols(&mut root);
     plan(&mut root, a.budget * 4, a.depth.unwrap_or(usize::MAX));
-    outln!(
+    let mut budget = Budget::new(a.head.map(|n| n as usize));
+    let cut = a.cut.map(|n| n as usize);
+    let clip_row = |s: &str| cut.map_or_else(|| s.to_owned(), |n| clip(s, 0, n));
+    budget.emit(&clip_row(&format!(
         "== {}{}  {}",
-        display_path(&a.path),
+        display_path(&base),
         tags(&root),
         summary(&root)
-    );
+    )));
     let mut rows = Vec::new();
     render(&root, 1, &mut rows);
     for r in &rows {
-        outln!("{r}");
+        budget.emit(&clip_row(r));
     }
     if has_closed(&root) {
-        outln!("… deeper: acus map DIR; symbols: acus outline DIR --depth 1");
+        budget.emit(&clip_row(
+            "… deeper: acus map DIR; symbols: acus outline DIR --depth 1",
+        ));
+    }
+    if let Some(f) = budget.footer() {
+        outln!("{f}");
     }
     Ok(Outcome::Found)
+}
+
+/// The deepest path shared by every root, so rows are relative to what they have in common.
+fn base_of(paths: &[PathBuf]) -> PathBuf {
+    let mut base = paths.first().map_or_else(PathBuf::new, Clone::clone);
+    for p in &paths[1..] {
+        base = base
+            .components()
+            .zip(p.components())
+            .take_while(|(a, b)| a == b)
+            .map(|(a, _)| a.as_os_str())
+            .collect();
+    }
+    if base.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        base
+    }
 }
 
 /// Line count of a text file; binaries, lockfiles and large data files give `None`.

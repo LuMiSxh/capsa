@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus follow`: the callers or callees of a symbol, as a tree of call edges.
 
-use crate::fmt::Out;
+use crate::fmt::{Budget, Out, clip};
 use acus_search::follow::{CALLABLE, Edge, Node, addr_of, callees, callers, container_of};
 use acus_syntax::calls;
 use acus_syntax::{Address, Lang, Resolve, Target, resolve};
@@ -26,6 +26,12 @@ pub struct Args {
     /// Lift the output caps: every edge and every unsure call is printed.
     #[arg(long)]
     all: bool,
+    /// Stop after N printed lines, headers and footers included; the rest is counted in a footer.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    head: Option<u64>,
+    /// Clip each printed line to N characters; a clipped line ends with `… (+N chars)`.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    cut: Option<u64>,
 }
 
 /// Sure edges printed per node, and unsure ones; more than this collapse unless `--all`.
@@ -108,9 +114,15 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
             "{}  {} {}-{}  {dir} depth {max}",
             root.addr, root.sym.kind, root.sym.start_line, root.sym.end_line
         );
-        outln!("{}", out.header(&header));
+        let mut budget = Budget::new(a.head.map(|n| n as usize));
+        let cut = a.cut.map(|n| n as usize);
+        budget.emit(&out.header(&header));
         for l in &tree.lines {
-            outln!("{l}");
+            let line = cut.map_or_else(|| l.clone(), |n| clip(l, 0, n));
+            budget.emit(&line);
+        }
+        if let Some(f) = budget.footer() {
+            outln!("{f}");
         }
     }
     Ok(if edges.is_empty() {

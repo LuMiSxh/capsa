@@ -185,6 +185,57 @@ fn log_human_view_aligns_commits_in_a_table() {
     );
 }
 
+/// Commits `c1`-`c3`, dated 3, 2 and 1 days before now, so the compact age is stable.
+fn aged_commits(dir: &std::path::Path) -> (String, String, String) {
+    git(dir, &["init", "-q"]);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    for n in 1..=3 {
+        std::fs::write(dir.join("a.rs"), format!("fn f() {{\n    {n}\n}}\n")).unwrap();
+        let date = format!("@{} +0000", now - n * 86_400);
+        git_at(dir, &date, &["add", "."]);
+        git_at(dir, &date, &["commit", "-qm", &format!("c{n}")]);
+    }
+    let hash = |rev: &str| git(dir, &["rev-parse", "--short=7", rev]).trim().to_owned();
+    (hash("HEAD"), hash("HEAD~1"), hash("HEAD~2"))
+}
+
+#[test]
+fn log_default_is_compact_with_age_and_takes_n() {
+    let d = tempfile::tempdir().unwrap();
+    let (h3, h2, h1) = aged_commits(d.path());
+    let (code, out, err) = acus_in(d.path(), &["log"], "");
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert_eq!(
+        out,
+        format!(
+            "{h3} c3 (3d ago)\n{h2} c2 (2d ago)\n{h1} c1 (1d ago)\n== 3 commits (more: -n N, one commit's changes: acus diff REV^..REV)\n"
+        )
+    );
+    let (_, out, _) = acus_in(d.path(), &["log", "-n", "2"], "");
+    assert!(out.contains(&format!("{h3} c3 (3d ago)")), "{out}");
+    assert!(out.contains(&format!("{h2} c2 (2d ago)")), "{out}");
+    assert!(!out.contains("c1"), "{out}");
+    assert!(out.contains("== 2 commits"), "{out}");
+}
+
+#[test]
+fn log_takes_head_and_cut() {
+    let d = tempfile::tempdir().unwrap();
+    aged_commits(d.path());
+    let (code, out, _) = acus_in(d.path(), &["log", "--head", "1"], "");
+    assert_eq!(code, 0);
+    assert_eq!(out.lines().count(), 2, "{out}");
+    assert!(
+        out.ends_with("… output cut at --head 1; 3 more lines (rerun with --head 4)\n"),
+        "{out}"
+    );
+    let (_, out, _) = acus_in(d.path(), &["log", "--cut", "4"], "");
+    assert!(out.lines().next().unwrap().contains("… (+"), "{out}");
+}
+
 #[test]
 fn human_views_print_no_ansi_under_no_color() {
     let d = tempfile::tempdir().unwrap();

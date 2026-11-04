@@ -91,6 +91,87 @@ fn show_caps_whole_files() {
     );
 }
 
+/// Writes a 500-line Rust file to `dir` and returns its text.
+fn long_rust(dir: &std::path::Path) -> String {
+    let src: String = (1..=500)
+        .map(|i| match i % 10 {
+            1 => format!("fn f{i}() {{\n"),
+            0 => "}\n".to_owned(),
+            _ => format!("    let x{i} = {i};\n"),
+        })
+        .collect();
+    std::fs::write(dir.join("big.rs"), &src).unwrap();
+    src
+}
+
+#[test]
+fn show_caps_a_long_whole_file_with_its_outline() {
+    let d = tempfile::tempdir().unwrap();
+    long_rust(d.path());
+    let (code, out, err) = acus_in(d.path(), &["show", "big.rs"], "");
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert!(out.starts_with("== big.rs 1-500\n"), "{out}");
+    assert!(out.contains("big.rs rust 500\n"), "{out}");
+    assert!(out.contains("fn f1 1-10\n"), "{out}");
+    assert!(out.contains("\n60\t"), "{out}");
+    assert!(!out.contains("\n61\t"), "{out}");
+    assert!(
+        out.contains("… 440 more lines: acus show big.rs:61-500"),
+        "{out}"
+    );
+    assert!(out.contains("or acus show big.rs#Symbol"), "{out}");
+}
+
+#[test]
+fn show_json_is_never_capped() {
+    let d = tempfile::tempdir().unwrap();
+    long_rust(d.path());
+    let (code, out, err) = acus_in(d.path(), &["show", "big.rs", "--json"], "");
+    assert_eq!((code, err.as_str()), (0, ""));
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v[0]["start"], 1);
+    assert_eq!(v[0]["end"], 500);
+    assert_eq!(v[0]["text"].as_str().unwrap().lines().count(), 500);
+}
+
+#[test]
+fn show_full_prints_every_line_of_a_long_file() {
+    let d = tempfile::tempdir().unwrap();
+    long_rust(d.path());
+    let (code, out, _) = acus_in(d.path(), &["show", "big.rs", "--full"], "");
+    assert_eq!(code, 0);
+    assert!(out.contains("\n500\t"), "{out}");
+    assert!(!out.contains("more lines"), "{out}");
+    assert!(!out.contains("big.rs rust"), "{out}");
+}
+
+#[test]
+fn show_does_not_cap_an_explicit_range() {
+    let d = tempfile::tempdir().unwrap();
+    long_rust(d.path());
+    let (code, out, _) = acus_in(d.path(), &["show", "big.rs:1-400"], "");
+    assert_eq!(code, 0);
+    assert!(out.contains("\n400\t"), "{out}");
+    assert!(!out.contains("more lines"), "{out}");
+    assert!(!out.contains("big.rs rust"), "{out}");
+}
+
+#[test]
+fn show_cuts_a_multi_address_call_at_the_character_budget() {
+    let d = tempfile::tempdir().unwrap();
+    let text = format!("{}\n", "x".repeat(100)).repeat(600);
+    std::fs::write(d.path().join("a.txt"), &text).unwrap();
+    std::fs::write(d.path().join("b.txt"), &text).unwrap();
+    let (code, out, err) = acus_in(d.path(), &["show", "a.txt:1-600", "b.txt:1-600"], "");
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert!(
+        out.contains("output budget spent (24000 chars); the rest: acus show a.txt:"),
+        "{out}"
+    );
+    assert!(out.contains("-600 b.txt:1-600"), "{out}");
+    assert!(out.chars().count() < 25_000, "{}", out.chars().count());
+}
+
 #[test]
 fn show_json() {
     let _dropguard = snapshot_settings().bind_to_scope();

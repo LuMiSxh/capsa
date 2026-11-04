@@ -3,7 +3,7 @@
 
 use super::Args;
 use super::refs::{refs, snippet};
-use crate::fmt::{Out, clip};
+use crate::fmt::{Budget, Out, clip};
 use capsa_core::exit::Outcome;
 use std::path::{Path, PathBuf};
 
@@ -30,7 +30,7 @@ fn cut_line(line: &str, cut: Option<u64>) -> String {
 
 /// Prints the lines, or their head and tail with the gap noted. `--tail` already bounds the
 /// output, and a cut must not hide the failures it keeps. Returns the number of lines left out.
-pub(super) fn print_lines(a: &Args, lines: &[String]) -> usize {
+pub(super) fn print_lines(a: &Args, lines: &[String], budget: &mut Budget) -> usize {
     let half = a.max_output.max(2) / 2;
     let cut = |l: &String| cut_line(l, a.cut);
     let omitted = if a.tail.is_some() {
@@ -39,14 +39,14 @@ pub(super) fn print_lines(a: &Args, lines: &[String]) -> usize {
         lines.len().saturating_sub(half * 2)
     };
     if omitted > 0 {
-        lines[..half].iter().map(cut).for_each(|l| outln!("{l}"));
-        outln!("… {omitted} output lines omitted");
+        lines[..half].iter().map(cut).for_each(|l| budget.emit(&l));
+        budget.emit(&format!("… {omitted} output lines omitted"));
         lines[lines.len() - half..]
             .iter()
             .map(cut)
-            .for_each(|l| outln!("{l}"));
+            .for_each(|l| budget.emit(&l));
     } else {
-        lines.iter().map(cut).for_each(|l| outln!("{l}"));
+        lines.iter().map(cut).for_each(|l| budget.emit(&l));
     }
     omitted
 }
@@ -60,6 +60,7 @@ pub(super) fn print_notes(
     grep_dropped: usize,
     nothing_matched: bool,
     log: Option<(&Path, usize)>,
+    budget: &mut Budget,
 ) {
     if dropped > 0 {
         let tests = if passed > 0 {
@@ -67,12 +68,9 @@ pub(super) fn print_notes(
         } else {
             String::new()
         };
-        outln!(
-            "{}",
-            out.dim(&format!(
-                "… {dropped} noise lines dropped{tests} (--raw keeps them)"
-            ))
-        );
+        budget.emit(&out.dim(&format!(
+            "… {dropped} noise lines dropped{tests} (--raw keeps them)"
+        )));
     }
     if grep_dropped > 0 {
         let why = if nothing_matched && dropped > 0 {
@@ -82,27 +80,21 @@ pub(super) fn print_notes(
         } else {
             ""
         };
-        outln!(
-            "{}",
-            out.dim(&format!(
-                "… {grep_dropped} lines not matching --grep dropped{why}"
-            ))
-        );
+        budget.emit(&out.dim(&format!(
+            "… {grep_dropped} lines not matching --grep dropped{why}"
+        )));
     }
     if let Some((log, n)) = log {
         let p = log.display();
-        outln!(
-            "{}",
-            out.dim(&format!(
-                "… full output ({n} lines): acus find 'PAT' {p}, or acus show {p}:A-B"
-            ))
-        );
+        budget.emit(&out.dim(&format!(
+            "… full output ({n} lines): acus find 'PAT' {p}, or acus show {p}:A-B"
+        )));
     }
 }
 
 /// The code at each reference: the enclosing symbol, or a few lines around it. References into
 /// the same snippet print it once, with every referenced line marked.
-pub(super) fn print_snippets(out: &Out, a: &Args, refs: &[(PathBuf, usize)]) {
+pub(super) fn print_snippets(out: &Out, a: &Args, refs: &[(PathBuf, usize)], budget: &mut Budget) {
     let mut shown: Vec<(String, usize, Vec<String>, Vec<usize>)> = Vec::new();
     let mut more = 0;
     for (p, l) in refs {
@@ -120,24 +112,25 @@ pub(super) fn print_snippets(out: &Out, a: &Args, refs: &[(PathBuf, usize)]) {
     for (label, start, body, marks) in &shown {
         let ls: Vec<String> = marks.iter().map(ToString::to_string).collect();
         let word = if marks.len() > 1 { "lines" } else { "line" };
-        outln!(
-            "{}",
-            out.header(&format!("== {label} ({word} {})", ls.join(", ")))
-        );
+        budget.emit(&out.header(&format!("== {label} ({word} {})", ls.join(", "))));
         for (i, t) in body.iter().enumerate() {
-            outln!(
-                "{}",
-                out.numbered(start + i, &cut_line(t, a.cut), marks.contains(&(start + i)))
-            );
+            budget.emit(&out.numbered(
+                start + i,
+                &cut_line(t, a.cut),
+                marks.contains(&(start + i)),
+            ));
         }
     }
     if more > 0 {
-        outln!("… {more} more locations (--max-refs {})", a.max_refs + more);
+        budget.emit(&format!(
+            "… {more} more locations (--max-refs {})",
+            a.max_refs + more
+        ));
     }
 }
 
 /// A saved log last written under 10 s ago may still be growing; the note says so.
-pub(super) fn print_growing(out: &Out, path: &Path) {
+pub(super) fn print_growing(out: &Out, path: &Path, budget: &mut Budget) {
     let Some(age) = std::fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
@@ -147,11 +140,8 @@ pub(super) fn print_growing(out: &Out, path: &Path) {
         return;
     };
     let p = path.display();
-    outln!(
-        "{}",
-        out.dim(&format!(
-            "{p} was written to {}s ago and may still be growing; rerun acus ctx --log {p} for newer lines",
-            age.as_secs()
-        ))
-    );
+    budget.emit(&out.dim(&format!(
+        "{p} was written to {}s ago and may still be growing; rerun acus ctx --log {p} for newer lines",
+        age.as_secs()
+    )));
 }

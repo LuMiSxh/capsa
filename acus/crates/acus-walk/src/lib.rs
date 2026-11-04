@@ -34,6 +34,8 @@ pub struct WalkOpts {
     pub exclude: Vec<String>,
     /// Visit hidden files and directories too.
     pub hidden: bool,
+    /// Do not descend below this many levels; `None` visits every level.
+    pub max_depth: Option<usize>,
     /// Also visit files excluded by .gitignore/.ignore.
     pub no_ignore: bool,
     /// Follow symbolic links to files and directories, as rg -L (not grep -L).
@@ -92,6 +94,7 @@ pub fn walk<F: Fn(&Path) + Sync>(opts: &WalkOpts, visit: F) -> Result<(), WalkEr
     b.standard_filters(!opts.no_ignore)
         .hidden(!opts.hidden)
         .follow_links(opts.follow)
+        .max_depth(opts.max_depth)
         .require_git(false);
     if let Some(ex) = exclude {
         // Like rg: `!dist` drops any file or directory named `dist`, `!src/gen` that path;

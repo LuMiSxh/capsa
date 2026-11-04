@@ -37,6 +37,22 @@ fn follow_visits_files_under_symlinked_directories() {
     );
 }
 
+#[test]
+fn max_depth_stops_the_walk_at_that_level() {
+    let d = tree();
+    let at = |n| {
+        collect(
+            WalkOpts {
+                max_depth: Some(n),
+                ..Default::default()
+            },
+            d.path(),
+        )
+    };
+    assert_eq!(at(1), ["a.rs", "b.md"]);
+    assert_eq!(at(2), ["a.rs", "b.md", "sub/c.rs"]);
+}
+
 fn collect(opts: WalkOpts, root: &Path) -> Vec<String> {
     let out = Mutex::new(Vec::new());
     let opts = WalkOpts {

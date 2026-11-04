@@ -57,8 +57,8 @@ impl Out {
         self.tint(Tone::Dim, s)
     }
 
-    /// Writes a human-view `Doc` to stdout in the rich layout, coloured when colour is on.
-    pub fn doc(&self, doc: &Doc) -> io::Result<()> {
+    /// Writes a human-view `Doc` within `budget`, line by line.
+    pub fn doc_budget(&self, doc: &Doc, budget: &mut Budget) -> io::Result<()> {
         let mut rendered = Vec::new();
         doc.write(
             &mut rendered,
@@ -67,7 +67,7 @@ impl Out {
                 rich: true,
             },
         )?;
-        out(&String::from_utf8_lossy(&rendered));
+        budget.emit(String::from_utf8_lossy(&rendered).trim_end_matches('\n'));
         Ok(())
     }
 

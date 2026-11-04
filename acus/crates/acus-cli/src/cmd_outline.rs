@@ -152,7 +152,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     Ok(Outcome::Found)
 }
 
-fn render(
+pub(crate) fn render(
     path: &str,
     o: Option<&Outline>,
     depth: usize,
