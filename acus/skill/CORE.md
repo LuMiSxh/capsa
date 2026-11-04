@@ -11,7 +11,7 @@ Use acus instead of shell tools. A hook rewrites or refuses grep, rg, find, cat,
 | ls -R, tree | `acus map [DIR…]` |
 | sed -i, Edit | `acus patch` (below) |
 | `cargo test \| tail` | `acus ctx 'CMD' [--tail N] [--grep RE]`; `acus ctx --log FILE` for a saved log |
-| git status/diff/log | `acus diff [-p] [--stat|--name-only|--conflicts]`, `acus log` |
+| git status/diff/log | `acus diff [-p]` (`--stat`, `--name-only`, `--conflicts`), `acus log` |
 
 Batch independent lookups: several tool calls, or one `acus run`.
 
