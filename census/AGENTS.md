@@ -5,9 +5,9 @@
 census reads agent transcripts and the state of a running Claude Code session: usage analytics, the
 context size against the compaction threshold, a session summary, the limit snapshots that the status
 line records, and the limit windows and the budget month (`census limits`). `census hook` tells the
-main agent when a context, limit or daily-budget level is crossed. `census self` installs the skill
-and wires `settings.json` (`self setup`), edits the config (`self config`), and updates and
-uninstalls the binary.
+main agent when a context, limit or daily-budget level is crossed, and at `SessionStart` points it
+at the report commands for usage history. `census self` installs the skill and wires `settings.json`
+(`self setup`), edits the config (`self config`), and updates and uninstalls the binary.
 
 ## Layout
 

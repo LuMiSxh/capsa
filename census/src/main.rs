@@ -47,7 +47,9 @@ enum Cmd {
     Statusline(cmd_statusline::Args),
     /// Deletes hourly aggregates and snapshots older than a date; raw ledger rows are kept.
     Prune(cmd_prune::Args),
-    /// Claude Code hook for UserPromptSubmit and PostToolUse: prints context and limit levels the main agent has not heard yet. Always exits 0.
+    /// Claude Code hook for SessionStart, UserPromptSubmit and PostToolUse: points at the report
+    /// commands once per session and prints context and limit levels the main agent has not heard
+    /// yet. Always exits 0.
     Hook,
     /// Installation and health of census: `self skill|setup|config|doctor|update|uninstall`.
     #[command(name = "self")]

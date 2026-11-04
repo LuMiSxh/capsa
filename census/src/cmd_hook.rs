@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! `census hook`: the UserPromptSubmit and PostToolUse hook. Exits 0 and prints nothing unless the
-//! main agent has a new context or limit level to hear about; any error also prints nothing.
+//! `census hook`: the SessionStart, UserPromptSubmit and PostToolUse hook. Exits 0 and prints
+//! nothing unless the main agent has a new context or limit level to hear about, or a SessionStart
+//! can point it at the report commands; any error also prints nothing.
 
 use crate::now_secs;
 use capsa_core::exit::Outcome;

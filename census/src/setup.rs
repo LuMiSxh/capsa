@@ -17,7 +17,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 /// The events that get census's hook, in the order they are reported.
-const EVENTS: [&str; 2] = ["UserPromptSubmit", "PostToolUse"];
+const EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "PostToolUse"];
 /// The binary's name, as the commands in settings.json name it.
 const TOOL: &str = "census";
 /// The commands written into settings.json: bare names, which Claude Code resolves on PATH.

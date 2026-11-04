@@ -34,6 +34,10 @@
   session` counts requests by it, so `openai` set to `subscription` moves its history from API
   spend to the subscription. The limits, the budget month and `census usage --by` still count
   `anthropic` only, whatever `billing` says, so the windows keep tracking Claude's own limits.
+- `census hook` also runs at `SessionStart` and points the main agent at the usage history once
+  per session: hand-backs, guard blocks, tool use and cost by day or role come from `census
+  usage` (`--handbacks`, `--guard`, `--tools`, `--days`) or `census session`, not from reading
+  `~/.claude` transcripts. `census self setup` adds the hook to `SessionStart`.
 
 ### Changed
 
@@ -42,7 +46,10 @@
   cases. It grows from 41 lines / 2,528 bytes to 58 lines / 3,493 bytes. A test checks every
   command and flag it names against the clap definition and that its name matches the install
   directory. The evals run through `scripts/skill-evals.py`; on Haiku, trigger recall was 3/10
-  with the user's hooks and 8/10 with project settings only, and tasks 2/8 and 4/8.
+  with the user's hooks and 8/10 with project settings only, and tasks 2/8 and 4/8. With
+  hand-back and guard triggers in the description, and a pass for an answer that quotes the
+  status hook's figures without a tool call, trigger recall is 7/10 and 10/10 and tasks 4/8
+  and 7/8.
 - `census usage --by cycle` prints only the note when fewer than two weeks of weekly snapshots
   map the reset, instead of the 168 zero buckets. `--json` keeps its rows.
 - `census session` labels its cost row `subscription` in the agent and human formats. `--json`

@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const SKILL: &str = include_str!("../skill/SKILL.md");
-const ITEMS: [&str; 4] = [
+const ITEMS: [&str; 5] = [
     "skill",
     "statusLine",
+    "hook SessionStart",
     "hook UserPromptSubmit",
     "hook PostToolUse",
 ];
@@ -151,6 +152,7 @@ fn missing_settings_get_every_item_and_valid_json() {
         settings["statusLine"]["command"],
         "census statusline --line"
     );
+    assert_eq!(hook_command(&settings, "SessionStart"), "census hook");
     assert_eq!(hook_command(&settings, "UserPromptSubmit"), "census hook");
     assert_eq!(hook_command(&settings, "PostToolUse"), "census hook");
     assert_eq!(read(&skill_path(&home)), SKILL);
@@ -181,6 +183,7 @@ fn census_entries_in_the_bare_form_are_left_alone() {
     let original = json!({
         "statusLine": {"type": "command", "command": MACSET_LINE},
         "hooks": {
+            "SessionStart": [{"hooks": [{"type": "command", "command": "census hook"}]}],
             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "census hook"}]}],
             "PostToolUse": [{"hooks": [{"type": "command", "command": "census hook"}]}]
         }
@@ -206,6 +209,7 @@ fn an_entry_with_an_absolute_or_quoted_path_that_runs_census_is_replaced() {
     let original = json!({
         "statusLine": {"type": "command", "command": r#""C:/Users/u/.cargo/bin/census.exe" statusline --line"#},
         "hooks": {
+            "SessionStart": [{"hooks": [{"type": "command", "command": "/home/u/.cargo/bin/census hook"}]}],
             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/home/u/.cargo/bin/census hook"}]}],
             "PostToolUse": [{"hooks": [{"type": "command", "command": MACSET_HOOK}]}]
         }
@@ -224,6 +228,7 @@ fn an_entry_with_an_absolute_or_quoted_path_that_runs_census_is_replaced() {
         settings["statusLine"]["command"],
         "census statusline --line"
     );
+    assert_eq!(hook_command(&settings, "SessionStart"), "census hook");
     assert_eq!(hook_command(&settings, "UserPromptSubmit"), "census hook");
     assert_eq!(hook_command(&settings, "PostToolUse"), "census hook");
     assert_eq!(read(&backup_path(&home)), original);
@@ -290,7 +295,7 @@ fn unrelated_keys_and_hooks_keep_their_order() {
     assert_eq!(keys(&settings), ["theme", "hooks", "env", "statusLine"]);
     assert_eq!(
         keys(&settings["hooks"]),
-        ["Stop", "PostToolUse", "UserPromptSubmit"]
+        ["Stop", "PostToolUse", "SessionStart", "UserPromptSubmit"]
     );
     assert_eq!(
         settings["hooks"]["Stop"],
@@ -365,6 +370,7 @@ fn json_output_has_the_same_items() {
         json!([
             {"name": "skill", "status": "installed"},
             {"name": "statusLine", "status": "installed"},
+            {"name": "hook SessionStart", "status": "installed"},
             {"name": "hook UserPromptSubmit", "status": "installed"},
             {"name": "hook PostToolUse", "status": "installed"}
         ])
@@ -385,6 +391,7 @@ fn the_commands_are_bare_names_whatever_the_binary_path() {
         settings["statusLine"]["command"],
         "census statusline --line"
     );
+    assert_eq!(hook_command(&settings, "SessionStart"), "census hook");
     assert_eq!(hook_command(&settings, "UserPromptSubmit"), "census hook");
     let first = read(&settings_path(&home));
 

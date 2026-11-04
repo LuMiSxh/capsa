@@ -4,11 +4,11 @@
   "tasks": [
     {
       "task": "Should this session hand off before I start the refactor?",
-      "expected": ["census context"]
+      "expected": ["census context"], "hook_answer": "\\d+\\s?(%|k)"
     },
     {
       "task": "I'm about to launch eight parallel workers; is the subscription limit safe?",
-      "expected": ["census limits"]
+      "expected": ["census limits"], "hook_answer": "\\d+\\s?%"
     },
     {
       "task": "Which roles spawned subagents in this session, and what did they cost?",

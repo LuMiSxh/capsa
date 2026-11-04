@@ -142,7 +142,32 @@ fn subagent_input_prints_nothing() {
 #[test]
 fn other_events_print_nothing() {
     let h = Hook::new("hook-event");
-    assert_eq!(h.hook(h.input("SessionStart", 330_000).as_bytes()), None);
+    assert_eq!(h.hook(h.input("Stop", 330_000).as_bytes()), None);
+}
+
+#[test]
+fn a_session_start_points_at_the_report_commands_once() {
+    let h = Hook::new("hook-usage");
+    let hint = h
+        .hook(h.input("SessionStart", 48_000).as_bytes())
+        .expect("the usage hint");
+    assert_eq!(
+        hint,
+        "census: for usage history (hand-backs, guard blocks, tool use, cost by day or role) run \
+         `census usage` (`--handbacks`, `--guard`, `--tools`, `--days N`) or `census session`; \
+         do not read ~/.claude transcripts."
+    );
+    assert_eq!(h.hook(h.input("SessionStart", 48_000).as_bytes()), None);
+}
+
+#[test]
+fn a_prompt_does_not_repeat_the_usage_hint() {
+    let h = Hook::new("hook-usage-prompt");
+    h.hook(h.input("SessionStart", 48_000).as_bytes());
+    let text = h
+        .hook(h.input("UserPromptSubmit", 48_000).as_bytes())
+        .unwrap_or_default();
+    assert!(!text.contains("census usage"), "{text}");
 }
 
 #[test]

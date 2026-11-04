@@ -4,23 +4,28 @@
   "should_trigger": [
     {
       "query": "census: context 250k of 400k (compaction at 400k).",
-      "why": "a census hook line appeared"
+      "why": "a census hook line appeared",
+      "hook_answer": "\\d+\\s?(%|k)"
     },
     {
       "query": "Are we near the context limit?",
-      "why": "question about context"
+      "why": "question about context",
+      "hook_answer": "\\d+\\s?(%|k)"
     },
     {
       "query": "Should I hand off before this refactor?",
-      "why": "deciding whether to hand off"
+      "why": "deciding whether to hand off",
+      "hook_answer": "\\d+\\s?(%|k)"
     },
     {
       "query": "How much of the five-hour limit is left?",
-      "why": "question about subscription limits"
+      "why": "question about subscription limits",
+      "hook_answer": "\\d+\\s?%"
     },
     {
       "query": "Will the weekly limit run out today?",
-      "why": "question about subscription limits and forecast"
+      "why": "question about subscription limits and forecast",
+      "hook_answer": "\\d+\\s?%"
     },
     {
       "query": "How much has this session cost so far?",
@@ -36,7 +41,8 @@
     },
     {
       "query": "Check the limits before I start eight parallel agents.",
-      "why": "before a large parallel agent batch"
+      "why": "before a large parallel agent batch",
+      "hook_answer": "\\d+\\s?%"
     },
     {
       "query": "What did the guard block last month?",

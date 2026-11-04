@@ -1,6 +1,6 @@
 ---
 name: census
-description: Reports the running Claude Code session's context size, subscription limits, cost and usage through the census CLI. For the main agent only; subagents do not run it. Use when a `census:` hook line appears, before large parallel agent batches, when deciding whether to hand off or compact, and for questions about context, limits, cost or usage.
+description: Reports the running Claude Code session's context size, subscription limits, cost and usage through the census CLI. For the main agent only; subagents do not run it. Use when a `census:` hook line appears; before large parallel agent batches; when deciding whether to hand off or compact; for questions about context, the five-hour or weekly limit, cost, providers or usage; and for history questions about subagent hand-backs, guard blocks and tool use over past days.
 ---
 
 # census

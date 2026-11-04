@@ -39,6 +39,12 @@ const PROJECTION_MIN_ELAPSED_S: u64 = 3 * 86_400;
 /// The status line comes back after this long without a prompt: the main agent's cache TTL.
 const STATUS_GAP_S: u64 = 3600;
 const PROMPT_KEY: &str = "prompt:";
+/// Marks a session that has seen the usage-history hint.
+const USAGE_HINT_KEY: &str = "usage:";
+/// Points a history question at the report commands instead of the transcripts.
+const USAGE_HINT: &str = "census: for usage history (hand-backs, guard blocks, tool use, cost by \
+day or role) run `census usage` (`--handbacks`, `--guard`, `--tools`, `--days N`) or `census \
+session`; do not read ~/.claude transcripts.";
 
 /// Returns the messages for the levels crossed and not yet in `shown`, and records them there.
 /// A context below the re-arm share clears the context levels; when one was shown, the message
@@ -219,6 +225,13 @@ pub(super) fn prompt_due(shown: &mut Shown, now: u64) -> bool {
     shown.retain(|k| !k.starts_with(PROMPT_KEY));
     shown.insert(format!("{PROMPT_KEY}{now}"));
     last.is_none_or(|t| now.saturating_sub(t) > STATUS_GAP_S)
+}
+
+/// Records the usage-history hint in `shown` and returns it the first time a session sees it.
+pub(super) fn usage_hint(shown: &mut Shown) -> Option<String> {
+    shown
+        .insert(USAGE_HINT_KEY.to_owned())
+        .then(|| USAGE_HINT.to_owned())
 }
 
 fn tokens(n: u64) -> String {

@@ -36,13 +36,25 @@ struct Input {
 }
 
 /// Reads, decides and records the shown levels under the session's lock, so two concurrent calls
-/// never print the same level. A call that cannot get the lock prints nothing.
+/// never print the same level. A call that cannot get the lock prints nothing. `Opening::Session`
+/// adds the usage-history hint the first time the session sees it.
 /// The budget the hook announces from: the month, today's daily limit when one applies, and the
 /// daily thresholds in percent.
 pub(super) struct Budget<'a> {
     pub month: &'a MonthStatus,
     pub daily: Option<DailyStatus>,
     pub thresholds: &'a [u32],
+}
+
+/// What a call adds besides the level messages.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Opening {
+    /// The first prompt of a session may add the status line.
+    Prompt,
+    /// A session start adds the usage-history hint.
+    Session,
+    /// A tool call adds only the level messages.
+    Tool,
 }
 
 fn announce(
@@ -52,7 +64,7 @@ fn announce(
     budget: Option<&Budget>,
     compacted: Option<(u64, u64)>,
     now: u64,
-    prompt: bool,
+    opening: Opening,
 ) -> Result<Vec<String>, HookError> {
     let Some(_guard) = state::lock(file)? else {
         return Ok(Vec::new());
@@ -60,7 +72,10 @@ fn announce(
     let mut shown = state::load(file)?;
     let before = shown.clone();
     let mut messages = Vec::new();
-    if prompt {
+    if opening == Opening::Session {
+        messages.extend(levels::usage_hint(&mut shown));
+    }
+    if opening == Opening::Prompt {
         let due = levels::prompt_due(&mut shown, now);
         if due {
             messages.extend(levels::status_message(
@@ -82,8 +97,9 @@ fn announce(
 /// Returns the hook output for `input`, the JSON text of `hookSpecificOutput`, or `None` when
 /// there is nothing new to say: a subagent, another event, or no level crossed.
 ///
-/// `limits` and `month` run only when the main agent is addressed, so the caller can bound their
-/// time. The caller supplies the one that the mode needs and `None` from the other.
+/// `SessionStart` points at the report commands once per session. `limits` and `month` run only
+/// for the other events, so the caller can bound their time. The caller supplies the one that the
+/// mode needs and `None` from the other.
 ///
 /// # Errors
 /// Fails when the input is not JSON or the hint state cannot be read or written; the levels shown
@@ -97,12 +113,20 @@ pub fn run(
 ) -> Result<Option<String>, HookError> {
     let input: Input = serde_json::from_str(input)?;
     let event = match input.hook_event_name.as_deref() {
-        Some(e @ ("UserPromptSubmit" | "PostToolUse")) if input.agent_id.is_none() => e,
+        Some(e @ ("SessionStart" | "UserPromptSubmit" | "PostToolUse"))
+            if input.agent_id.is_none() =>
+        {
+            e
+        }
         _ => return Ok(None),
     };
     let Some(file) = input.session_id.as_deref().and_then(state::hints_file) else {
         return Ok(None);
     };
+    if event == "SessionStart" {
+        let messages = announce(&file, None, None, None, None, now, Opening::Session)?;
+        return Ok(output(event, &messages));
+    }
     let ends = input
         .transcript_path
         .as_deref()
@@ -121,6 +145,11 @@ pub fn run(
         daily: DailyStatus::of(m, config.daily_limit_usd),
         thresholds: &config.daily_thresholds,
     });
+    let opening = if event == "UserPromptSubmit" {
+        Opening::Prompt
+    } else {
+        Opening::Tool
+    };
     let messages = announce(
         &file,
         context.as_ref(),
@@ -128,14 +157,19 @@ pub fn run(
         budget.as_ref(),
         compacted,
         now,
-        event == "UserPromptSubmit",
+        opening,
     )?;
+    Ok(output(event, &messages))
+}
+
+/// Returns the hook output for `messages`, or `None` when there is nothing to say.
+fn output(event: &str, messages: &[String]) -> Option<String> {
     if messages.is_empty() {
-        return Ok(None);
+        return None;
     }
     let text: String = messages.join(" ").chars().take(MAX_CHARS).collect();
     let out = json!({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}});
-    Ok(Some(out.to_string()))
+    Some(out.to_string())
 }
 
 #[cfg(test)]
@@ -161,7 +195,7 @@ mod tests {
                     .map(|_| {
                         s.spawn(|| {
                             barrier.wait();
-                            announce(&file, Some(&context), None, None, None, 1, false)
+                            announce(&file, Some(&context), None, None, None, 1, Opening::Tool)
                                 .unwrap()
                                 .len()
                         })
