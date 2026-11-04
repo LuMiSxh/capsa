@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0]
+
 ### Added
 
 - Prices come from LiteLLM's price file (`model_prices_and_context_window.json`) instead of seven
@@ -45,7 +47,6 @@
 - `census session` labels its cost row `subscription` in the agent and human formats. `--json`
   keeps `cost`, which now means the requests billed as subscription under `billing`.
 - `census usage` gains a `billing` column in the models table; its `--json` is unchanged.
-
 - Models without a price in the old table now have one: `claude-haiku-4-5-20251001`, and the OpenAI
   and DeepSeek models of Codex transcripts, which showed `n/a`. On this machine's full history,
   `census usage --json` moves from $756.92 with 29,596 unpriced requests to $1,925.44 with none.
