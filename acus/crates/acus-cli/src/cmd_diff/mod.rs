@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus diff`: changed lines, summarised per enclosing symbol.
 
+mod moves;
+mod new_files;
+
 use crate::fmt::{Budget, Out, clip};
 use crate::git::git;
 use acus_syntax::{Lang, Outline, outline};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use moves::{Move, MoveIndex, find_moves, moved_line};
 use std::path::Path;
 
-/// Changed lines printed per symbol with `-p`.
-const GROUP_LINES: usize = 40;
+/// Printed changed lines per file with `-p`; `--full` lifts the cap.
+const FILE_LINES: usize = 80;
 /// Label for changed lines outside any symbol.
 const TOP: &str = "(top level)";
 /// The `git diff` flags every view shares.
@@ -39,6 +43,9 @@ pub struct Args {
     /// Also print the changed lines under each symbol.
     #[arg(short = 'p', long)]
     lines: bool,
+    /// Print full bodies, blank lines and every changed line: no move summary, outline or cap.
+    #[arg(long)]
+    full: bool,
     /// Cap on printed lines.
     #[arg(long, default_value_t = 300)]
     max_lines: usize,
@@ -72,6 +79,19 @@ struct Group {
     add: usize,
     del: usize,
     lines: Vec<(bool, usize, String)>,
+    /// The move this group belongs to and whether it is the destination side.
+    moved: Option<(usize, bool)>,
+}
+
+/// A changed file with the sources and outlines the text view needs beyond its diff lines.
+struct View<'a> {
+    f: &'a FileDiff,
+    old_src: Option<String>,
+    new_src: Option<String>,
+    old_o: Option<Outline>,
+    new_o: Option<Outline>,
+    /// The new-side outline as `acus outline` prints it, without attached comments.
+    display_o: Option<Outline>,
 }
 
 /// `git diff` summarised per enclosing symbol, plus untracked files.
@@ -122,7 +142,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         print_json_files(&a, &rendered);
         return Ok(Outcome::Found);
     }
-    print_text_files(&a, out, &files, &rendered, staged);
+    print_text_files(&a, out, &files, &rendered, staged, rev);
     Ok(Outcome::Found)
 }
 
@@ -176,56 +196,71 @@ fn changed_files(
     Ok(files)
 }
 
-/// Each changed file with its symbol groups, read from the working tree or the compared
-/// revisions.
+/// Each changed file with the sources and outlines the text view needs.
 fn render<'a>(
     a: &Args,
     files: &'a [FileDiff],
     rev: Option<&str>,
     old_rev: &str,
     new_rev: Option<&str>,
-) -> Vec<(&'a FileDiff, Vec<Group>)> {
+) -> Vec<View<'a>> {
     // An empty revision reads the index.
     let show = |rev: &str, p: &str| git(&["show", &format!("{rev}:./{p}")]).ok();
     files
         .iter()
         .map(|f| {
-            let modified = f.old.is_some() && f.new.is_some();
+            let new_src = match f.new.as_deref() {
+                Some(_) if f.old.is_none() => added_source(f),
+                Some(p) => match (a.staged, new_rev) {
+                    (_, Some(r)) => show(r, p),
+                    (true, None) => show("", p),
+                    (false, None) => std::fs::read_to_string(p).ok(),
+                },
+                None => None,
+            };
+            let old_src = f
+                .old
+                .as_deref()
+                .filter(|_| f.lines.iter().any(|l| !l.0))
+                // Unstaged changes are relative to the index, not HEAD.
+                .and_then(|p| match (a.staged, rev) {
+                    (false, None) => show("", p),
+                    _ => show(old_rev, p),
+                });
             // Decorators and doc comments count as part of the symbol below them.
             let parse = |p: &Option<String>, src: Option<String>| {
                 let p = p.as_deref()?;
                 let s = src?;
                 Some(outline(Lang::from_path(Path::new(p))?, &s)?.with_attached(&s, p))
             };
-            let new_src =
-                f.new
-                    .as_deref()
-                    .filter(|_| modified)
-                    .and_then(|p| match (a.staged, new_rev) {
-                        (_, Some(r)) => show(r, p),
-                        (true, None) => show("", p),
-                        (false, None) => std::fs::read_to_string(p).ok(),
-                    });
-            let old_src = f
-                .old
-                .as_deref()
-                .filter(|_| modified && f.lines.iter().any(|l| !l.0))
-                // Unstaged changes are relative to the index, not HEAD.
-                .and_then(|p| match (a.staged, rev) {
-                    (false, None) => show("", p),
-                    _ => show(old_rev, p),
-                });
-            let (new_o, old_o) = (parse(&f.new, new_src), parse(&f.old, old_src));
-            (f, groups(f, new_o.as_ref(), old_o.as_ref()))
+            // `acus outline` prints a symbol without its attached comments.
+            let display_o = f.new.as_deref().filter(|_| f.old.is_none()).and_then(|p| {
+                let src = new_src.as_deref()?;
+                outline(Lang::from_path(Path::new(p))?, src)
+            });
+            let old_o = parse(&f.old, old_src.clone());
+            let new_o = parse(&f.new, new_src.clone());
+            View {
+                f,
+                old_src,
+                new_src,
+                old_o,
+                new_o,
+                display_o,
+            }
         })
         .collect()
 }
 
 /// The JSON array: one object per changed file, with its symbol groups.
-fn print_json_files(a: &Args, rendered: &[(&FileDiff, Vec<Group>)]) {
-    let v: Vec<_> = rendered
+fn print_json_files(a: &Args, views: &[View<'_>]) {
+    let none = MoveIndex::default();
+    let v: Vec<_> = views
         .iter()
-        .map(|(f, gs)| {
+        .enumerate()
+        .map(|(i, view)| {
+            let f = view.f;
+            let gs = groups(f, view.new_o.as_ref(), view.old_o.as_ref(), i, &none);
             let syms: Vec<_> = gs
                 .iter()
                 .map(|g| {
@@ -249,30 +284,62 @@ fn print_json_files(a: &Args, rendered: &[(&FileDiff, Vec<Group>)]) {
     outln!("{}", serde_json::Value::Array(v));
 }
 
+/// Output style for the text view.
+struct Style<'a> {
+    out: &'a Out,
+    lines: bool,
+    compact: bool,
+    cut: Option<usize>,
+}
+
+impl Style<'_> {
+    fn line(&self, add: bool, n: usize, t: &str) -> String {
+        let t = self.cut.map_or_else(|| t.to_owned(), |c| clip(t, 0, c));
+        if add {
+            self.out.numbered(n, &format!("+{t}"), false)
+        } else {
+            format!("\t-{t}")
+        }
+    }
+}
+
 /// The text view: one block per file, cut at `--max-lines` and `--head`, then a total and the
 /// footer.
 fn print_text_files(
     a: &Args,
     out: &Out,
     files: &[FileDiff],
-    rendered: &[(&FileDiff, Vec<Group>)],
+    views: &[View<'_>],
     staged: Option<String>,
+    rev: Option<&str>,
 ) {
     let mut budget = Budget::new(a.head.map(|n| n as usize));
-    let cut = a.cut.map(|n| n as usize);
+    let style = Style {
+        out,
+        lines: a.lines,
+        compact: a.lines && !a.full,
+        cut: a.cut.map(|n| n as usize),
+    };
+    let moves = if style.compact {
+        find_moves(views)
+    } else {
+        Vec::new()
+    };
+    let index = MoveIndex::new(&moves);
     let mut printed = 0;
     // The human view lines up the paths and the counts of the file headers.
-    let path_w = rendered
+    let path_w = views
         .iter()
-        .map(|(f, _)| file_path(f).chars().count())
+        .map(|v| file_path(v.f).chars().count())
         .max()
         .unwrap_or(0);
-    let count_w = rendered
+    let count_w = views
         .iter()
-        .map(|(f, _)| counts(total(f, true), total(f, false)).chars().count())
+        .map(|v| counts(total(v.f, true), total(v.f, false)).chars().count())
         .max()
         .unwrap_or(0);
-    for (i, (f, gs)) in rendered.iter().enumerate() {
+    for (i, view) in views.iter().enumerate() {
+        let f = view.f;
         let path = file_path(f);
         let count = counts(total(f, true), total(f, false));
         let head = if out.format == Format::Human {
@@ -283,36 +350,21 @@ fn print_text_files(
             format!("{} {path} {count}{binary}", status(f))
         };
         let mut block = vec![out.header(&head).trim_end().to_owned()];
-        for g in gs {
-            if !g.label.is_empty() {
-                let range = match g.range {
-                    Some((s, e)) => format!(" {s}-{e}"),
-                    None if g.label == TOP => String::new(),
-                    None => " (removed)".into(),
-                };
-                block.push(format!("  {}{range} {}", g.label, counts(g.add, g.del)));
-            }
-            if a.lines {
-                for (add, n, t) in g.lines.iter().take(GROUP_LINES) {
-                    let t = cut.map_or_else(|| t.to_owned(), |c| clip(t, 0, c));
-                    block.push(if *add {
-                        out.numbered(*n, &format!("+{t}"), false)
-                    } else {
-                        format!("\t-{t}")
-                    });
-                }
-                if g.lines.len() > GROUP_LINES {
-                    block.push(out.dim(&format!(
-                        "… {} more changed lines",
-                        g.lines.len() - GROUP_LINES
-                    )));
-                }
-            }
+        let dropped = if style.compact && f.old.is_none() && f.new.is_some() && !f.binary {
+            new_files::render(&mut block, &style, view, i, &moves, &index)
+        } else {
+            text_groups(&mut block, &style, view, i, &moves, &index)
+        };
+        if dropped > 0 {
+            block.push(out.dim(&format!(
+                "… {dropped} more changed lines: {}",
+                rerun(a, rev, f)
+            )));
         }
         if printed > 0 && printed + block.len() > a.max_lines {
             budget.emit(&format!(
                 "… {} more files (limit with -- PATH, or drop -p)",
-                rendered.len() - i
+                views.len() - i
             ));
             break;
         }
@@ -334,6 +386,84 @@ fn print_text_files(
     if let Some(f) = budget.footer() {
         outln!("{f}");
     }
+}
+
+/// Appends the symbol groups of a modified or deleted file, honouring the per-file cap.
+/// Returns the changed lines dropped by the cap.
+fn text_groups(
+    block: &mut Vec<String>,
+    style: &Style<'_>,
+    view: &View<'_>,
+    file: usize,
+    moves: &[Move],
+    index: &MoveIndex,
+) -> usize {
+    let mut printed = 0;
+    let mut dropped = 0;
+    for g in groups(
+        view.f,
+        view.new_o.as_ref(),
+        view.old_o.as_ref(),
+        file,
+        index,
+    ) {
+        let header = match g.moved {
+            Some((m, true)) => Some(moved_line(&moves[m], &g.label)),
+            Some((m, false)) => summary(&g).map(|s| format!("{s} moved → {}", moves[m].to_path)),
+            None => summary(&g),
+        };
+        if let Some(line) = header {
+            block.push(line);
+        }
+        if !style.lines {
+            continue;
+        }
+        let lines: &[(bool, usize, String)] = match g.moved {
+            Some((m, true)) => &moves[m].lines,
+            Some(_) => &[],
+            None => &g.lines,
+        };
+        for (add, n, t) in lines {
+            if style.compact && t.trim().is_empty() {
+                continue;
+            }
+            if style.compact && printed >= FILE_LINES {
+                dropped += 1;
+                continue;
+            }
+            block.push(style.line(*add, *n, t));
+            printed += 1;
+        }
+    }
+    dropped
+}
+
+/// The symbol summary line, or None for whole-file groups.
+fn summary(g: &Group) -> Option<String> {
+    if g.label.is_empty() {
+        return None;
+    }
+    let range = match g.range {
+        Some((s, e)) => format!(" {s}-{e}"),
+        None if g.label == TOP => String::new(),
+        None => " (removed)".into(),
+    };
+    Some(format!("  {}{range} {}", g.label, counts(g.add, g.del)))
+}
+
+/// The rerun that shows every changed line of a file; `--full` lifts the per-file cap.
+fn rerun(a: &Args, rev: Option<&str>, f: &FileDiff) -> String {
+    let mut cmd = String::from("acus diff -p --full");
+    if let Some(r) = rev {
+        cmd.push(' ');
+        cmd.push_str(r);
+    }
+    if a.staged {
+        cmd.push_str(" --staged");
+    }
+    cmd.push_str(" -- ");
+    cmd.push_str(f.new.as_deref().or(f.old.as_deref()).unwrap_or_default());
+    cmd
 }
 
 /// The changed lines of `f`: the added ones when `add`, else the removed ones.
@@ -390,34 +520,47 @@ fn counts(add: usize, del: usize) -> String {
 }
 
 /// Changed lines bucketed by innermost enclosing symbol, in diff order. Whole-file adds and
-/// deletes form one unlabelled group.
-fn groups(f: &FileDiff, new: Option<&Outline>, old: Option<&Outline>) -> Vec<Group> {
+/// deletes form one unlabelled group; the two sides of a move stay apart.
+fn groups(
+    f: &FileDiff,
+    new: Option<&Outline>,
+    old: Option<&Outline>,
+    file: usize,
+    moves: &MoveIndex,
+) -> Vec<Group> {
     let mut v: Vec<Group> = Vec::new();
     let whole = f.old.is_none() || f.new.is_none();
     for (add, n, t) in &f.lines {
         let o = if *add { new } else { old };
-        let sym = o.filter(|_| !whole).and_then(|o| o.enclosing(*n));
+        let idx = o.filter(|_| !whole).and_then(|o| enclosing_index(o, *n));
+        let sym = idx.and_then(|i| o.and_then(|o| o.symbols.get(i)));
         let label = match sym {
             Some(s) => format!("{} {}", s.kind, s.qual),
             None if whole => String::new(),
             None => TOP.into(),
         };
-        let i = match v.iter().position(|g| g.label == label) {
+        let moved = idx.and_then(|i| moves.at(file, *add, i)).map(|m| (m, *add));
+        let i = match v.iter().position(|g| g.label == label && g.moved == moved) {
             Some(i) => i,
             None => {
                 // Range in the new file, so `acus show path:A-B` works; None if the symbol is gone.
-                let range = sym.and_then(|s| {
-                    new?.symbols
-                        .iter()
-                        .find(|x| x.qual == s.qual && x.kind == s.kind)
-                        .map(|x| (x.start_line, x.end_line))
-                });
+                let range = if matches!(moved, Some((_, false))) {
+                    None
+                } else {
+                    sym.and_then(|s| {
+                        new?.symbols
+                            .iter()
+                            .find(|x| x.qual == s.qual && x.kind == s.kind)
+                            .map(|x| (x.start_line, x.end_line))
+                    })
+                };
                 v.push(Group {
                     label,
                     range,
                     add: 0,
                     del: 0,
                     lines: Vec::new(),
+                    moved,
                 });
                 v.len() - 1
             }
@@ -431,6 +574,33 @@ fn groups(f: &FileDiff, new: Option<&Outline>, old: Option<&Outline>) -> Vec<Gro
         g.lines.push((*add, *n, t.clone()));
     }
     v
+}
+
+/// The source of an added or untracked file, rebuilt from its added diff lines.
+fn added_source(f: &FileDiff) -> Option<String> {
+    if f.binary {
+        return None;
+    }
+    let mut src = f
+        .lines
+        .iter()
+        .filter(|(add, _, _)| *add)
+        .map(|(_, _, t)| t.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !src.is_empty() {
+        src.push('\n');
+    }
+    Some(src)
+}
+
+fn enclosing_index(o: &Outline, line: usize) -> Option<usize> {
+    o.symbols
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.start_line <= line && line <= s.end_line)
+        .max_by_key(|(_, s)| s.depth)
+        .map(|(i, _)| i)
 }
 
 /// Parses `git diff -U0` with `a/` and `b/` prefixes.

@@ -18,6 +18,12 @@ fn diff_groups_changes_by_symbol() {
     assert_eq!(code, 0, "{out}");
     assert_eq!(
         out,
+        "M a.rs +1 -3\n  fn f 1-3 +1 -1\n\t-    one()\n2\t+    two()\n  (top level) -1\n  fn gone (removed) -1\n\t-fn gone() {}\n? new.md +1\n  h1 Hi 1-1\n… body: acus show new.md\n== 2 files +2 -3\n"
+    );
+    // `--full` keeps the old view: bodies, blank lines and no pointer.
+    let (_, full, _) = acus_in(d.path(), &["diff", "-p", "--full"], "");
+    assert_eq!(
+        full,
         "M a.rs +1 -3\n  fn f 1-3 +1 -1\n\t-    one()\n2\t+    two()\n  (top level) -1\n\t-\n  fn gone (removed) -1\n\t-fn gone() {}\n? new.md +1\n1\t+# Hi\n== 2 files +2 -3\n"
     );
     git(d.path(), &["add", "."]);
