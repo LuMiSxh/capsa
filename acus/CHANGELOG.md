@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.21.0]
+
 ### Added
 
 - `acus patch`: `*** Append File: PATH` appends `+` lines after the file's last line, with one newline between them; a missing file still needs `*** Add File:`.
