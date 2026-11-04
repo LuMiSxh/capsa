@@ -1,6 +1,6 @@
 # Guard
 
-`acus guard` is the PreToolUse hook that keeps agents on acus. Claude Code calls it before each Bash, PowerShell, Read, Grep and Glob call. It lets the call through, rewrites it into an acus call, or refuses it and names the acus command to use. Setup is in the [README](../README.md#agent-setup).
+`acus hook` is the Claude Code hook. On `PreToolUse` the guard keeps agents on acus: Claude Code calls it before each Bash, PowerShell, Read, Grep and Glob call, and it lets the call through, rewrites it into an acus call, or refuses it and names the acus command to use. On `SessionStart` it prints the core skill. Setup is in the [README](../README.md#guard-and-agent-setup).
 
 ## Outcomes
 
@@ -30,6 +30,7 @@
 | `acus ctx 'CMD' \| tail -N`, `\| head -N`, `\| grep RE` | the same call with `--tail N` (the smaller of N and an existing `--tail M`), `--max-output N` or `--grep RE`; a filter with no exact flag is refused |
 | `BUILD \| tail -N; echo "…${PIPESTATUS[0]}"` (or `${pipestatus[1]}`), the echo directly after the pipeline | the same `acus ctx` call, with `$?` in the echo |
 | `git diff [REV\|A..B] [-- PATH…]`, with `--staged` or `--cached` | `acus diff -p [REV] [PATH…]`; `git diff --stat …` becomes `acus diff …`. `A...B`, several revisions and other flags keep the hint |
+| `git log [-N\|-n N\|--max-count=N] [--oneline] [--stat] [--pretty=oneline\|short\|medium\|full] [--format=oneline\|short\|medium\|full] [--date=…] [REV] [-- PATH…]` | `acus log -n N [--oneline] [REV] [PATH…]`; paths alone get `HEAD`, the revision `git log` defaults to. Other flags, `-p`, several revisions and a format string (`--format=%H`, `--pretty=format:…`) run as written |
 | `acus show\|outline\|find\|diff … \| head -N` | the same call with `--head N` |
 | `acus patch … \| head -N` or `\| tail -N` as the last stage, or `acus patch … >/dev/null` (also `2>&1`, `&>`) | `acus patch -q …` with the pipe or redirect dropped. `-q` prints the summary and errors, not the written lines. A redirect to a file, or a pipe into anything else, is left as it is |
 | `cat FILE`, `tail -N FILE` or `grep` of a background task's `tasks/*.output` file | `acus ctx --log FILE` with the matching flags (`--tail N`, `--grep RE`) |
@@ -49,13 +50,13 @@ These are refused, because there is no exact equivalent: `-P`, `-z`, `-h`, grep'
 
 - `find DIR -name GLOB` and `rg --files` become `acus files`, unless `&&` or `||` follows (`acus files` exits 1 when nothing matches, `find` exits 0). `rg --files` with an include glob (`-g GLOB`, which overrides ignore rules in ripgrep) or `-t TYPE` (ripgrep's own type table) is not converted. `find` without `-type f` also lists matching directories; `acus files` lists files only. `find` without filters, `tree`, `ls -R` and `Get-ChildItem -Recurse` run with a hint at `acus map`.
 - The Read tool, without `offset` or `limit`, is refused for a source or Markdown file over 300 lines, and the refusal carries the file's outline.
-- `git status` and `git show` run with a hint at `acus diff` or `acus log`. `git diff` becomes `acus diff` as in the Rewrites table, unless `&&` or `||` follows it, its output is piped, or its arguments are not ones `acus diff` takes; then it gets the hint. Flags that compact the output (`--short`, `--name-only`, `--format`) and `git show REV:path` pass without a hint. `git log` runs as written in any form, with no hint.
+- `git status` and `git show` run with a hint at `acus diff` or `acus log`. `git diff` becomes `acus diff` as in the Rewrites table, unless `&&` or `||` follows it, its output is piped, or its arguments are not ones `acus diff` takes; then it gets the hint. Flags that compact the output (`--short`, `--name-only`, `--format`) and `git show REV:path` pass without a hint. `git log` becomes `acus log` as in the Rewrites table unless `&&` or `||` follows it, its output is piped, or its arguments are ones `acus log` does not take (`-p`, `--grep`, `-S`, `--author`, `--all`, `--graph`, `--follow`, several revisions, a format string such as `--format=%H`); those run as written, with no hint.
 - `sed -i 's/OLD/NEW/g' FILE` with literal text on one regular file is rewritten to an `acus patch` Replace All, left to the agent's permission prompt. Unlike sed, the patch fails and writes nothing when OLD is not found. Other `sed -i` forms (directories, symlinks, regex characters, other flags, several files) and `perl -i` are refused with a hint to use `acus patch`. `acus ctx ... | tail`, `| head` and `| grep` become ctx's own flags when one matches exactly. Any other filter on `acus ctx` output is refused, because the output was already filtered.
 - PowerShell and Windows: the same rules apply to `Select-String` (`sls`), `findstr`, `Get-Content` (`gc`, `type`, `cat`, with `-Raw`, `-TotalCount` or `-Tail`), `Get-ChildItem … | Select-String`, `Select-Object -Last` after a build, `-replace` and `.Replace()` edits written with `Set-Content`, `sc`, `Out-File`, `>` or `WriteAllText`, and `ReadAllText` reads. PowerShell calls are refused, not rewritten. `;`, `&&` and `||` split commands in both PowerShell 5.1 and 7.
 
 ## Rule names
 
-`grep`, `grep-tool`, `read-shell`, `read-tool`, `build-pipe`, `ctx-pipe`, `sed-i`, `tree`, `glob-tool`, `ps-replace`, `edit-script`, `git-status`, `git-diff`, `git-show`, `patch-quiet`.
+`grep`, `grep-tool`, `read-shell`, `read-tool`, `build-pipe`, `ctx-pipe`, `sed-i`, `tree`, `glob-tool`, `ps-replace`, `edit-script`, `git-status`, `git-diff`, `git-log`, `git-show`, `patch-quiet`.
 
 These names are written to `guard.jsonl` and read by `census usage --guard`, so renaming one breaks the history.
 
@@ -63,4 +64,4 @@ These names are written to `guard.jsonl` and read by `census usage --guard`, so 
 
 - A refused command runs anyway with a `command ` prefix (Bash) or a trailing `# acus-skip` comment (both shells).
 - Every decision, escapes included, is logged to `guard.jsonl` next to the config file. `census usage --guard` counts rewrites, refusals, hints and escapes per rule and lists the escaped calls. An escape usually marks a refusal that acus could not replace.
-- The hook command ends in `|| true`, so calls pass when acus is missing. `guard` can also be disabled in the configuration.
+- The hook command ends in `|| true`, so calls pass when acus is missing. `hook` can also be disabled in the configuration.

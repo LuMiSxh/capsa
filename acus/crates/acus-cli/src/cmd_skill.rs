@@ -5,13 +5,12 @@ use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
 use capsa_core::hint::ResultExt;
 use capsa_core::skill::{Skill, Target};
-use serde_json::Value;
 
 /// The skill shipped with this binary, so hook output and installed copies match its version.
 const SKILL: &str = include_str!("../../../skill/SKILL.md");
 /// What the SessionStart hook injects into every session: the routing table and the patch
 /// skeleton. The full SKILL.md stays one `acus self skill --full` away.
-const CORE: &str = include_str!("../../../skill/CORE.md");
+pub(crate) const CORE: &str = include_str!("../../../skill/CORE.md");
 
 /// A long-form reference topic, so flag lists stay out of the skill an agent preloads.
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -71,20 +70,12 @@ pub struct Args {
     clippy::needless_pass_by_value,
     reason = "execute hands over the parsed arguments"
 )]
-pub fn run(a: Args, cfg: &crate::config::Config) -> Result<Outcome> {
+pub fn run(a: Args) -> Result<Outcome> {
     if let Some(topic) = a.topic {
         outprint!("{}", topic.text());
         return Ok(Outcome::Found);
     }
     if !a.install {
-        // A compaction or /clear ends the context the guard hints were shown in, so they show again.
-        let hook = hook_input();
-        if matches!(hook["source"].as_str(), Some("compact" | "clear")) {
-            acus_guard::hints::reset(
-                &crate::cmd_guard::guard_config(cfg),
-                hook["session_id"].as_str().unwrap_or_default(),
-            );
-        }
         outprint!("{}", if a.full { body(SKILL) } else { CORE });
         return Ok(Outcome::Found);
     }
@@ -94,26 +85,6 @@ pub fn run(a: Args, cfg: &crate::config::Config) -> Result<Outcome> {
         outln!("{}", file.display());
     }
     Ok(Outcome::Found)
-}
-
-/// The SessionStart hook's JSON on stdin (`session_id`, `source`). Null when stdin is a
-/// terminal,
-/// empty, not JSON or still open after a second, so the skill prints as before.
-fn hook_input() -> Value {
-    use std::io::{IsTerminal, Read};
-    if std::io::stdin().is_terminal() {
-        return Value::Null;
-    }
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = std::io::stdin().read_to_string(&mut text);
-        let _ = tx.send(text);
-    });
-    rx.recv_timeout(std::time::Duration::from_secs(1))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or(Value::Null)
 }
 
 /// The skill without its YAML frontmatter, for injecting as session context.

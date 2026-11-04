@@ -25,6 +25,7 @@ pub enum Rule {
     EditScript,
     GitStatus,
     GitDiff,
+    GitLog,
     GitShow,
     AcusPipe,
     TaskLog,
@@ -33,7 +34,7 @@ pub enum Rule {
 
 impl Rule {
     #[cfg(test)]
-    pub(super) const ALL: [Rule; 17] = [
+    pub(super) const ALL: [Rule; 18] = [
         Rule::Grep,
         Rule::GrepTool,
         Rule::ReadShell,
@@ -47,6 +48,7 @@ impl Rule {
         Rule::EditScript,
         Rule::GitStatus,
         Rule::GitDiff,
+        Rule::GitLog,
         Rule::GitShow,
         Rule::AcusPipe,
         Rule::TaskLog,
@@ -68,6 +70,7 @@ impl Rule {
             Rule::EditScript => "edit-script",
             Rule::GitStatus => "git-status",
             Rule::GitDiff => "git-diff",
+            Rule::GitLog => "git-log",
             Rule::GitShow => "git-show",
             Rule::AcusPipe => "acus-pipe",
             Rule::TaskLog => "task-log",
@@ -404,6 +407,7 @@ mod rule_names {
                 "edit-script",
                 "git-status",
                 "git-diff",
+                "git-log",
                 "git-show",
                 "acus-pipe",
                 "task-log",

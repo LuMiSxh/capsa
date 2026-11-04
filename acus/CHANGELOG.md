@@ -12,6 +12,27 @@
 
 ### Changed
 
+- `acus guard` is now `acus hook` (hard rename, no alias), and `acus hook` dispatches on the
+  input's `hook_event_name`: `SessionStart` prints `CORE.md` and resets the hint counts after a
+  compaction or `/clear`, `PreToolUse` (or an input without an event, as Codex sends) runs the
+  guard as before, and any other event, empty input or invalid input prints nothing and exits 0.
+  `acus self skill` stays as the manual command (`--full`, `--topic`, `--install`).
+  `acus self setup` writes `acus hook 2>/dev/null || true` for both events and replaces the old
+  `acus self skill` and `acus guard` entries in place; `acus self doctor` reports them as
+  outdated. Breaking for existing `settings.json` entries and scripts that call `acus guard`:
+  rerun `acus self setup`. Guard latency on a passing `PreToolUse` payload, median of 60
+  (`hyperfine -N --warmup 20 --runs 60`, release), before → after: 2.73 → 2.77 ms; on a
+  `SessionStart` payload 2.73 → 2.70 ms (`acus self skill` 2.73 → 2.70 ms). The dispatch reads
+  one field from the JSON the guard already parses.
+- Guard: `git log` with a count (`-N`, `-n N`, `--max-count=N`), `--oneline`, `--stat`, a built-in
+  `--pretty`/`--format` layout (`oneline`, `short`, `medium`, `full`), `--date=…`, one revision
+  and `-- PATH…` is rewritten into the `acus log` call that lists the same commits and paths, with
+  `HEAD` named when only paths are given. A format string (`--format=%H`, `--pretty=format:…`),
+  `-p`, `--grep`, `-S`, `--author`, `--all`, `--graph`, `--follow`, several revisions, a pipe, `&&`
+  and command substitution keep the command as it is. Guard latency: a rewritten `git log` call
+  4.7 → 5.1 ms, a `git log --format=%H` that passes 4.8 → 4.8 ms and an unrelated call
+  4.7 → 4.7 ms (`hyperfine -N --warmup 20 --runs 60`, release build); the startup path of a
+  passing call is unchanged.
 - The agent skill follows the skill spec. `SKILL.md` is 107 lines and 6,023 bytes (about 1.5k
   tokens) with a 507-character description, down from 130 lines and 11,223 bytes (about 3k
   tokens); long flag lists moved to `skill/reference/{find,read,patch,git,ctx}.md`, which
@@ -21,7 +42,9 @@
   trigger queries, 12 near-misses and 6 task prompts, and a drift test that checks every command
   and flag named in the skill against the clap definition. The evals run through
   `scripts/skill-evals.py`; on Haiku, the CORE hook drove 9/12 triggers and the description
-  alone 0/12, with 11/12 and 12/12 near-misses and 2/6 and 1/6 tasks.
+  alone 0/12, with 11/12 and 12/12 near-misses and 2/6 and 1/6 tasks. A description that names
+  the Grep, Glob, Read and Edit calls it replaces raised the description alone to 5/12, with the
+  hook at 9/12, near-misses unchanged and tasks 3/6 and 1/6.
 - `acus diff --json` is an object, `{"header": …, "files": […]}`: the header is present for the working tree and absent for `REV..REV`, and an empty diff is `{"files": []}` where it was `null`. Breaking for scripts that read the old top-level array.
 - `acus diff -p` summarises a moved symbol once (`  moved kind name ← path:range (unchanged|edited)`), prints the body diff only when it was edited, outlines an added file (or its first 20 lines without an outline), hides blank changed lines and caps each file at 80 changed lines (`--full` restores the old view). `acus diff -p 7049404..1862ade -- acus/crates/acus-cli/src/cmd_find` went from 8,994 to 3,952 chars (−56%).
 - `acus show`: a whole file over 400 lines shows its outline and first 60 lines with pointers instead of every line, and a call stops near 24k characters naming the address that shows the rest; `--full` prints everything; `--json` is never capped (it also ignores `--max-lines`). A 500-line file prints 114 lines instead of 500.

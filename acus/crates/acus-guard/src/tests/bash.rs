@@ -109,7 +109,7 @@ fn git_status_and_pinned_formats_get_no_hint() {
 }
 
 #[test]
-fn git_log_in_any_form_gets_no_hint_and_runs_as_written() {
+fn git_log_gets_no_hint() {
     for cmd in [
         "git log",
         "git log -p",

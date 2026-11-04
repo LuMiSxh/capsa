@@ -13,7 +13,7 @@
     "List every Rust file under crates with its line count.",
     "Inspect the last ten commits that touch src/search.",
     "Add a reset method to Parser right after parse.",
-    "Search this log for ERROR and keep the last 30 hits."
+    "Search app.log for ERROR and keep the last 30 hits."
   ],
   "near_miss": [
     "Explain how the Rust borrow checker works.",
@@ -26,7 +26,7 @@
     "Create a .gitignore for a Node project.",
     "What does grep stand for?",
     "Open the README in my editor.",
-    "Which database index should I add for this query?",
+    "Which index should a Postgres orders table get for queries filtered by customer_id and created_at?",
     "Rename the branch feature/login to feature/auth."
   ]
 }

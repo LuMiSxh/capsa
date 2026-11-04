@@ -374,6 +374,76 @@ fn converts_git_diff_into_acus_diff() {
 }
 
 #[test]
+fn converts_git_log_into_acus_log() {
+    for (cmd, want) in [
+        ("git log", "acus log"),
+        ("git log -10", "acus log -n 10"),
+        ("git log -n 5", "acus log -n 5"),
+        ("git log -n5", "acus log -n 5"),
+        ("git log --max-count=3", "acus log -n 3"),
+        ("git log --max-count 3", "acus log -n 3"),
+        ("git log --oneline", "acus log --oneline"),
+        ("git log --oneline -5", "acus log -n 5 --oneline"),
+        ("git log -n 5 -- src", "acus log -n 5 HEAD src"),
+        ("git log --stat -- src/main.rs", "acus log HEAD src/main.rs"),
+        ("git log --format=oneline", "acus log"),
+        ("git log --format=medium -1", "acus log -n 1"),
+        ("git log --pretty=short --date=relative -2", "acus log -n 2"),
+        (
+            "git log --pretty=full -- src/lib.rs",
+            "acus log HEAD src/lib.rs",
+        ),
+        (
+            "git log main..HEAD -- src/lib.rs",
+            "acus log main..HEAD src/lib.rs",
+        ),
+        ("git log -3 HEAD", "acus log -n 3 HEAD"),
+        ("git log --pretty=oneline --date=iso -2", "acus log -n 2"),
+        ("cd repo && git log -5", "cd repo && acus log -n 5"),
+        ("git log -5; echo done", "acus log -n 5; echo done"),
+    ] {
+        let r = rewrite(cmd, None).unwrap_or_else(|| panic!("not rewritten: {cmd}"));
+        assert_eq!(r.command, want, "{cmd}");
+        assert_eq!(r.rule, Rule::GitLog, "{cmd}");
+        assert!(check(cmd).is_none(), "{cmd}");
+    }
+    // Arguments acus log cannot take change what is listed or how it is walked, so the command
+    // runs as written.
+    for cmd in [
+        "git log -p",
+        "git log --stat -p",
+        "git log -10 --stat --format='%h %ad %an%n %s' --date=short -- src/search",
+        "git log -1 --format=%H",
+        "git log --format=%s",
+        "git log --format=fuller",
+        "git log --pretty=format:%h",
+        "git log --pretty=tformat:%s",
+        "git log --pretty=email",
+        "git log --grep fix",
+        "git log -S foo",
+        "git log --author=me",
+        "git log --all",
+        "git log --graph",
+        "git log --follow src/a.rs",
+        "git log -p | head -20",
+        "git log --oneline | grep fix",
+        "git log -n",
+        "git log -n5 -n3",
+        "git log main HEAD",
+        "git log --oneline --decorate -5",
+        "git log --quiet",
+        "git -C ../x log",
+        // Captured output is data for the assignment or echo, not the agent's view.
+        "x=$(git log -1 --format=%H)",
+        "echo \"$(git log -3)\"",
+        "echo `git log -3`",
+    ] {
+        assert!(rewrite(cmd, None).is_none(), "{cmd}");
+        assert!(check(cmd).is_none(), "{cmd}");
+    }
+}
+
+#[test]
 fn folds_the_status_echo_after_a_pipeline_into_dollar_question() {
     for (cmd, want) in [
         (

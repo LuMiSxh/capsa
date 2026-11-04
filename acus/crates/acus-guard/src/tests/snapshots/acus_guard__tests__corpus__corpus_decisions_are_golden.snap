@@ -104,7 +104,7 @@ skipped 0 cases (grammar not built)
 0098 pass - ⇒
 0099 pass - ⇒
 0100 rewrite git-diff ⇒ acus diff -p HEAD~1 src/lib.rs
-0101 pass - ⇒
+0101 rewrite git-log ⇒ acus log -n 5 --oneline
 0102 rewrite build-pipe ⇒ acus ctx 'cargo test' --tail 20
 0103 rewrite ctx-pipe ⇒ acus ctx 'cargo test' --tail 5
 0104 pass - ⇒
@@ -172,7 +172,7 @@ skipped 0 cases (grammar not built)
 0166 rewrite task-log ⇒ acus ctx --log '/private/tmp/agent/proj/tasks/b7k2p9.output'
 0167 rewrite task-log ⇒ acus ctx --log '/private/tmp/agent/proj/tasks/b7k2p9.output' --tail 40
 0168 rewrite task-log ⇒ acus ctx --log '/private/tmp/agent/proj/tasks/b7k2p9.output' --grep 'error'
-0169 pass - ⇒
+0169 rewrite git-log ⇒ acus log -n 5 --oneline
 0170 rewrite build-pipe ⇒ acus ctx 'cargo test' --timeout 300 --tail 30
 0171 pass - ⇒
 0172 rewrite build-pipe ⇒ acus ctx 'gh run view 123 --log-failed' --grep 'error' --tail 20

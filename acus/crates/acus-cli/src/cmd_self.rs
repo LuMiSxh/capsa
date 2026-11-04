@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus self`: the commands about acus itself, as opposed to the work it does on code.
 
-use crate::config::Config;
 use crate::{cmd_doctor, cmd_setup, cmd_skill, cmd_uninstall, cmd_update};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
@@ -21,7 +20,7 @@ enum Action {
     Setup(cmd_setup::Args),
     /// Check the install, config, skill, hooks and guard files; exit 1 when a check fails.
     Doctor,
-    /// Print the agent skill (for a SessionStart hook) or install it with `--install`.
+    /// Print the agent skill or install it with `--install`.
     Skill(cmd_skill::Args),
     /// Remove this binary and the installed agent skill; hooks in Claude Code's settings stay.
     Uninstall(cmd_uninstall::Args),
@@ -45,12 +44,12 @@ impl Args {
     }
 }
 
-pub fn run(a: Args, cfg: &Config, format: Format) -> Result<Outcome> {
+pub fn run(a: Args, format: Format) -> Result<Outcome> {
     match a.action {
         Action::Update(a) => cmd_update::run(a, format),
         Action::Setup(a) => cmd_setup::run(&a, format),
         Action::Doctor => cmd_doctor::run(format),
-        Action::Skill(a) => cmd_skill::run(a, cfg),
+        Action::Skill(a) => cmd_skill::run(a),
         Action::Uninstall(a) => cmd_uninstall::run(&a, format),
     }
 }

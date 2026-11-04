@@ -95,8 +95,8 @@ skipped 0 cases (grammar not built)
 0090 hint git-diff ⇒
 0091 hint git-diff ⇒
 0092 hint git-diff ⇒
-0093 pass - ⇒
-0094 hint git-diff ⇒
+0093 rewrite git-log ⇒ acus log -n 3
+0094 rewrite git-log ⇒ git fetch origin 2>&1 | tail -2; acus log --oneline HEAD..origin/develop; git diff --stat HEAD...origin/develop | tail -15
 0095 hint git-show ⇒
 0096 hint git-show ⇒
 0097 hint git-show ⇒
@@ -155,7 +155,7 @@ skipped 0 cases (grammar not built)
 0150 rewrite acus-pipe ⇒ acus diff -p -- . ':!src/locales' ':!src-tauri/resources/data_a.json' ':!dir_a/raw' --head 1200; acus show 'src/lib/state/scroll-positions.svelte.ts'
 0151 rewrite read-shell ⇒ cd C:\repo && git diff --stat && git diff | head -400 && echo ---- && git log --oneline -3 perf && git log --oneline perf..origin/develop && wc -l tests/unit/test_a.py && acus show 'tests/unit/test_a.py:1-40'
 0152 rewrite read-shell ⇒ acus map . 2>&1 | head -60; git worktree list; acus show 'AGENTS.md:1-60'
-0153 rewrite read-shell ⇒ cd C:\repo && acus show 'pkg_a/mod_a/migrations/0063_alter_field_a_validator.py:1-50'; echo ======; acus show 'pkg_a/mod_b/migrations/0008_alter_field_b_choices.py:1-30'; git status --short | wc -l; git log --oneline -3
+0153 rewrite read-shell ⇒ cd C:\repo && acus show 'pkg_a/mod_a/migrations/0063_alter_field_a_validator.py:1-50'; echo ======; acus show 'pkg_a/mod_b/migrations/0008_alter_field_b_choices.py:1-30'; git status --short | wc -l; acus log -n 3 --oneline
 0154 rewrite read-shell ⇒ cd C:\repo/mod_a && acus show 'types.go' 'a.go' 'listener/b.go' 'c.go'
 0155 rewrite read-shell ⇒ cd C:\repo/mod_a && acus show client.go:401-1206 --cut 200 | grep -v '^\s*[0-9]*\s*//' ; acus show 'config.go:1-120'
 0156 rewrite read-shell ⇒ acus show 'pkg_a/mod_a/client.py' 'pkg_a/mod_a/types.py' 'pkg_a/mod_a/REFERENCE.md'

@@ -1,27 +1,27 @@
 ---
 name: acus
-description: Code search, read, patch and git-summary CLI for coding agents. Replaces grep, rg, find, Glob, cat, head, tail, Read, sed -i, perl -pi, Python replace scripts and Edit to search a codebase, read a file, symbol or line range, or edit files, and replaces git status, git diff, git log and git blame to review changes. Also runs builds and tests and shows only their failures. Results are line-numbered and grouped by enclosing symbol, every truncation names the next command, and patches apply all or nothing.
+description: Code search, read, patch and git-summary CLI for coding agents. Use it before any Grep, Glob, Read or Edit call and before a Bash grep, rg, find, cat, head, tail, sed, git status, git diff or git log: to find code or usages, list files, read a file, symbol, line range or log file, filter piped output, edit or rename across files, or review what changed on a branch. Also runs builds and tests (cargo test, npm test) and shows only their failures with the code they point at. Results are line-numbered and grouped by enclosing symbol, every truncation names the next command, and patches apply all or nothing.
 ---
 
 # acus
 
-One call answers what usually takes search → read → read. Output is line-numbered, grouped by enclosing symbol, and every truncation names the exact next command.
+One call replaces search → read → read: output is line-numbered, grouped by symbol, and every truncation names the next command.
 
 ## Instead of … run
 
 | Instead of | Run |
 |---|---|
-| grep, rg, find to locate code or usages | `acus find 'PAT' [PATH…]`; `--block` adds the code |
+| grep, rg, find | `acus find 'PAT' [PATH…]`; `--block` adds the code |
 | grep on a range | `acus find 'PAT' PATH:A-B` or `PATH#Sym` |
 | cat, head, tail, sed -n, Read | `acus show PATH#Sym PATH:A-B`; `acus outline PATH` |
 | ls -R, tree | `acus map [DIR…]` |
-| find -name, fd, git ls-files, Glob | `acus files [PATH…] [-g GLOB]`; `--lines` counts lines |
-| sed -i, perl -pi, Python replace, Edit | `acus patch` (below) |
+| Glob, find -name, ls, fd, git ls-files | `acus files [PATH…] [-g GLOB]`; `--lines` adds counts |
+| sed -i, perl -pi, Edit | `acus patch` (below) |
 | cargo test, npm test | `acus ctx 'CMD'`; failures plus the code they name |
 | git status, git diff | `acus diff [REV]`; `-p` adds the changed lines |
-| git log | `acus log [REV] [PATH…]` |
+| git log | `acus log [-n N] [REV] [PATH…]` |
 | git blame | `acus blame PATH#Sym` |
-| who calls, or what a symbol calls | `acus follow PATH#Sym`, `--down` for callees |
+| who calls, what it calls | `acus follow PATH#Sym`; `--down` for callees |
 
 Flags beyond each default: [find](reference/find.md), [read and addresses](reference/read.md),
 [patch](reference/patch.md), [diff and log](reference/git.md), [build output](reference/ctx.md).
@@ -29,7 +29,7 @@ Flags beyond each default: [find](reference/find.md), [read and addresses](refer
 
 ## Patch
 
-Edit with `acus patch`; it needs no prior read and applies all or nothing.
+Edit with `acus patch`; no prior read, all or nothing.
 
 The heredoc is the normal form, also after `cd DIR &&`.
 
@@ -52,10 +52,10 @@ acus patch <<'PATCH'
 PATCH
 ```
 
-- SEARCH is the exact old text, without the `acus show` line-number prefix; it must occur exactly once, so add a neighbouring line when it is ambiguous. A miss shows the nearest lines.
-- The whole patch is all or nothing and reports every failing block; fix all of them and resend once.
+- SEARCH is the exact text without the `acus show` line numbers; it must occur once, so add a line when ambiguous. A miss shows the nearest lines.
+- All or nothing: reports every failing block; fix all and resend once.
 - `acus patch --check` validates a large patch without writing, and `acus patch --check --diff` shows the result. `acus patch --fmt` formats the written files; add it only where the project requires it.
-- `acus patch -q` prints only the summary, so use it when the written lines are not needed.
+- `acus patch -q` prints only the summary.
 - `*** Append File`, `*** Delete Lines` and `*** Move Lines` (both with `*** Expect:`), `*** Resolve Conflict`, symbol moves and `*** Replace All` are in [patch](reference/patch.md).
 
 ## Addresses
@@ -73,7 +73,7 @@ acus blame src/parser.rs#Parser::parse
 
 ## Batch lookups
 
-Batch independent lookups in one `acus run`.
+Batch lookups in one `acus run`.
 
 ```bash
 acus run <<'EOF'
@@ -104,4 +104,4 @@ EOF
 - Patterns are Rust regex, so `foo(` fails; use `-F` for literal text.
 - Symbols exist for Rust, Swift, TS/JS, Svelte, Python, Shell, C, CSS, SCSS, HTML, XML/plist, Markdown and TOML/JSON/YAML keys; on other files use `find` and `show PATH:A-B`.
 
-More flags: `acus self skill --full` and `acus self skill --topic <topic>`.
+More flags: `acus self skill --full`, `--topic <topic>`.

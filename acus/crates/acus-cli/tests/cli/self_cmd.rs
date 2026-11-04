@@ -178,13 +178,13 @@ fn doctor_json_is_healthy_after_setup_and_fails_on_a_broken_config() {
 }
 
 #[test]
-fn doctor_warns_when_the_guard_matcher_misses_a_tool() {
+fn doctor_warns_when_the_hook_matcher_misses_a_tool() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let claude = dir.path().join("claude");
     std::fs::create_dir_all(&claude).unwrap();
     std::fs::create_dir(&home).unwrap();
-    let hooks = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"acus guard 2>/dev/null || true"}]}]}}"#;
+    let hooks = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"acus hook 2>/dev/null || true"}]}]}}"#;
     std::fs::write(claude.join("settings.json"), hooks).unwrap();
     let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
 
@@ -358,5 +358,80 @@ fn skill_topic_cannot_be_combined_with_full_or_install() {
     ] {
         let (code, _, err) = acus(args);
         assert_eq!(code, 2, "{args:?}: {err}");
+    }
+}
+
+#[test]
+fn setup_replaces_the_old_hook_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    let old = r#"{"hooks":{
+        "SessionStart":[{"matcher":"startup|clear|compact",
+            "hooks":[{"type":"command","command":"acus self skill 2>/dev/null || true"}]}],
+        "PreToolUse":[{"matcher":"Bash|Read|Grep|Glob|PowerShell",
+            "hooks":[{"type":"command","command":"acus guard 2>/dev/null || true"}]}]
+    }}"#;
+    std::fs::write(claude.join("settings.json"), old).unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+
+    let (code, _, err) = acus_env(&["self", "setup", "--json"], &env);
+    assert_eq!(code, 0, "{err}");
+    let text = std::fs::read_to_string(claude.join("settings.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let commands: Vec<&str> = v["hooks"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|groups| groups.as_array().unwrap())
+        .flat_map(|group| group["hooks"].as_array().unwrap())
+        .filter_map(|hook| hook["command"].as_str())
+        .collect();
+    assert_eq!(commands.len(), 2, "{text}");
+    assert!(
+        commands
+            .iter()
+            .all(|command| *command == "acus hook 2>/dev/null || true"),
+        "{text}"
+    );
+}
+
+#[test]
+fn doctor_flags_the_old_hook_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    let old = r#"{"hooks":{
+        "SessionStart":[{"matcher":"startup|clear|compact",
+            "hooks":[{"type":"command","command":"acus self skill 2>/dev/null || true"}]}],
+        "PreToolUse":[{"matcher":"Bash|Read|Grep|Glob|PowerShell",
+            "hooks":[{"type":"command","command":"acus guard 2>/dev/null || true"}]}]
+    }}"#;
+    std::fs::write(claude.join("settings.json"), old).unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+
+    let (code, out, err) = acus_env(&["self", "doctor", "--json"], &env);
+    assert_eq!(code, 0, "a warning is not a failure: {err}\n{out}");
+    let v = json_line(&out);
+    for name in ["SessionStart hook", "PreToolUse hook"] {
+        let check = v["groups"][3]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["name"] == name)
+            .unwrap();
+        assert_eq!(check["status"], "warn", "{check}");
+        assert!(
+            check["detail"].as_str().unwrap().contains("outdated"),
+            "{check}"
+        );
+        assert!(
+            check["hint"].as_str().unwrap().contains("self setup"),
+            "{check}"
+        );
     }
 }

@@ -9,7 +9,7 @@ fn guard_answers_hook_calls() {
     let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
     let guard = |input: serde_json::Value| {
         let mut child = bin()
-            .arg("guard")
+            .arg("hook")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .spawn()
@@ -104,7 +104,7 @@ fn guard_never_fails_on_malformed_input() {
     ] {
         let (code, out, _) = acus_in(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-            &["guard"],
+            &["hook"],
             input,
         );
         // Exit 0 with nothing to say, or with a verdict for what could be read.
@@ -122,7 +122,7 @@ fn guard_rewrite_quotes_every_copied_argument() {
     use std::io::Write;
     let run = |command: &str| {
         let mut child = bin()
-            .arg("guard")
+            .arg("hook")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .spawn()
@@ -183,17 +183,17 @@ fn guard_throttles_pure_hints_per_session() {
     let config = dir.path().join("config.toml");
     std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
     let shown: Vec<usize> = (1..=12)
-        .filter(|_| !run_hook(&config, &["guard"], bash_call("s1", "git status")).is_empty())
+        .filter(|_| !run_hook(&config, &["hook"], bash_call("s1", "git status")).is_empty())
         .collect();
     assert_eq!(shown, [1, 11]);
     // Another session counts on its own.
-    assert!(!run_hook(&config, &["guard"], bash_call("s2", "git status")).is_empty());
+    assert!(!run_hook(&config, &["hook"], bash_call("s2", "git status")).is_empty());
     for _ in 0..12 {
-        let rewrite = run_hook(&config, &["guard"], bash_call("s1", "tail -n 5 src/a.rs"));
+        let rewrite = run_hook(&config, &["hook"], bash_call("s1", "tail -n 5 src/a.rs"));
         assert!(rewrite.contains("updatedInput"), "{rewrite}");
         let deny = run_hook(
             &config,
-            &["guard"],
+            &["hook"],
             bash_call("s1", "cd app && cat a.rs; sed -i 's/a/b/' b.rs"),
         );
         assert!(deny.contains(r#""permissionDecision":"deny""#), "{deny}");
@@ -213,7 +213,7 @@ fn concurrent_guard_calls_count_exactly() {
         for _ in 0..8 {
             s.spawn(|| {
                 while next.fetch_add(1, Ordering::SeqCst) < 20 {
-                    let out = run_hook(&config, &["guard"], bash_call("par", "git status"));
+                    let out = run_hook(&config, &["hook"], bash_call("par", "git status"));
                     if !out.is_empty() {
                         shown.fetch_add(1, Ordering::SeqCst);
                     }
@@ -243,12 +243,16 @@ fn session_start_after_compaction_resets_hints() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config.toml");
     std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
-    let hint = || run_hook(&config, &["guard"], bash_call("s1", "git status"));
+    let hint = || run_hook(&config, &["hook"], bash_call("s1", "git status"));
     let start = |source: &str| {
         run_hook(
             &config,
-            &["self", "skill"],
-            serde_json::json!({"session_id": "s1", "source": source}),
+            &["hook"],
+            serde_json::json!({
+                "hook_event_name": "SessionStart",
+                "session_id": "s1",
+                "source": source,
+            }),
         )
     };
     assert!(!hint().is_empty());
@@ -261,7 +265,7 @@ fn session_start_after_compaction_resets_hints() {
 }
 
 #[test]
-fn skill_prints_without_valid_hook_input() {
+fn skill_prints_without_stdin() {
     let proj = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
     for input in ["", "not json"] {
         let (code, out, _) = acus_in_env(proj, &["self", "skill"], input, &[]);
@@ -278,7 +282,7 @@ fn hint_every_one_shows_every_hint() {
     for every in ["1", "0"] {
         std::fs::write(&config, format!("[guard]\nhint_every = {every}\n")).unwrap();
         for _ in 0..12 {
-            let out = run_hook(&config, &["guard"], bash_call("s1", "git status"));
+            let out = run_hook(&config, &["hook"], bash_call("s1", "git status"));
             assert!(!out.is_empty(), "hint_every = {every}");
         }
     }
@@ -293,7 +297,7 @@ fn unusable_hint_state_still_shows_hints() {
     std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
     std::fs::write(dir.path().join("guard-hints"), "not a directory").unwrap();
     for _ in 0..3 {
-        let out = run_hook(&config, &["guard"], bash_call("s1", "git status"));
+        let out = run_hook(&config, &["hook"], bash_call("s1", "git status"));
         assert!(!out.is_empty());
     }
 }
@@ -305,14 +309,53 @@ fn guard_answers_with_defaults_under_a_broken_config() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("acus.toml");
     std::fs::write(&config, "[guard]\nhint_every = \"ten\"\n").unwrap();
-    let first = run_hook(&config, &["guard"], bash_call("c1", "ls"));
+    let first = run_hook(&config, &["hook"], bash_call("c1", "ls"));
     assert!(
         first.contains("acus config error") && first.contains("acus.toml"),
         "{first}"
     );
-    let second = run_hook(&config, &["guard"], bash_call("c1", "ls"));
+    let second = run_hook(&config, &["hook"], bash_call("c1", "ls"));
     assert!(second.is_empty(), "{second}");
-    let rewrite = run_hook(&config, &["guard"], bash_call("c2", "tail -n 5 src/a.rs"));
+    let rewrite = run_hook(&config, &["hook"], bash_call("c2", "tail -n 5 src/a.rs"));
     assert!(rewrite.contains("updatedInput"), "{rewrite}");
     assert!(rewrite.contains("acus config error"), "{rewrite}");
+}
+
+/// `acus hook` dispatches on `hook_event_name`: `SessionStart` prints the skill, an event the
+/// guard does not handle prints nothing, and no event (Codex) still runs the guard.
+#[test]
+fn hook_dispatches_on_the_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let session = run_hook(
+        &config,
+        &["hook"],
+        serde_json::json!({
+            "hook_event_name": "SessionStart",
+            "session_id": "s1",
+            "source": "startup",
+        }),
+    );
+    assert!(session.starts_with("# acus"), "{session}");
+    let other = run_hook(
+        &config,
+        &["hook"],
+        serde_json::json!({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Grep",
+            "tool_input": {"pattern": "needle"},
+        }),
+    );
+    assert!(other.is_empty(), "{other}");
+    let codex = run_hook(
+        &config,
+        &["hook"],
+        serde_json::json!({
+            "turn_id": "t1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "grep -n foo src/a.rs"},
+        }),
+    );
+    assert!(codex.contains(r#""permissionDecision":"deny""#), "{codex}");
+    assert!(!codex.contains("updatedInput"), "{codex}");
 }

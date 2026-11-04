@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The `guard` hook: reads one tool call from stdin and prints the hook's answer. The decisions
-//! are in `acus_guard`; this file is the stdin/stdout protocol around them.
+//! `acus hook`: reads one hook event from stdin. `SessionStart` prints the core skill;
+//! `PreToolUse`, and a Codex payload without an event, runs the guard; another event does nothing.
 
 use crate::config::Config;
 use acus_guard::{BashDecision, GuardConfig, Scope, Verdict};
@@ -39,9 +39,31 @@ pub fn run(a: Args, cfg: &Config, config_problem: Option<&str>) -> Result<Outcom
         acus_guard::replay_file(file, a.repeat)?;
         return Ok(Outcome::Found);
     }
-    let mut input = String::new();
-    std::io::stdin().read_to_string(&mut input)?;
-    let v: Value = serde_json::from_str(&input).unwrap_or_default();
+    let mut text = String::new();
+    std::io::stdin().read_to_string(&mut text)?;
+    let v: Value = serde_json::from_str(&text).unwrap_or_default();
+    match v["hook_event_name"].as_str() {
+        Some("SessionStart") => session_start(&v, cfg),
+        Some("PreToolUse") | None => answer(&v, cfg, config_problem),
+        Some(_) => Ok(Outcome::Found),
+    }
+}
+
+/// Prints the core skill for a SessionStart, forgetting the hint counts after a compaction or
+/// `/clear`.
+fn session_start(v: &Value, cfg: &Config) -> Result<Outcome> {
+    if matches!(v["source"].as_str(), Some("compact" | "clear")) {
+        acus_guard::hints::reset(
+            &guard_config(cfg),
+            v["session_id"].as_str().unwrap_or_default(),
+        );
+    }
+    outprint!("{}", crate::cmd_skill::CORE);
+    Ok(Outcome::Found)
+}
+
+/// Answers a PreToolUse as the guard always has; a missing event (Codex) takes the same path.
+fn answer(v: &Value, cfg: &Config, config_problem: Option<&str>) -> Result<Outcome> {
     let input = &v["tool_input"];
     let cwd = v["cwd"].as_str();
     let command = input["command"].as_str().unwrap_or_default();
@@ -58,7 +80,7 @@ pub fn run(a: Args, cfg: &Config, config_problem: Option<&str>) -> Result<Outcom
         Some("PowerShell") => acus_guard::check_ps(command, scope.as_ref()),
         _ => match acus_guard::decide_bash(command, scope.as_ref(), can_rewrite) {
             BashDecision::Rewrite(rw) => {
-                acus_guard::log::append(&gcfg, &v, &Verdict::Rewrite(rw.rule));
+                acus_guard::log::append(&gcfg, v, &Verdict::Rewrite(rw.rule));
                 let mut updated = input.clone();
                 updated["command"] = rw.command.into();
                 let mut hook = serde_json::json!({
@@ -83,7 +105,7 @@ pub fn run(a: Args, cfg: &Config, config_problem: Option<&str>) -> Result<Outcom
     let Some(verdict) = verdict.filter(|v| shown(&gcfg, session, v)) else {
         return Ok(note_only(note));
     };
-    acus_guard::log::append(&gcfg, &v, &verdict);
+    acus_guard::log::append(&gcfg, v, &verdict);
     let fields = match verdict {
         Verdict::Deny(_, reason) => serde_json::json!({
             "hookEventName": "PreToolUse",

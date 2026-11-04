@@ -2,13 +2,13 @@
 
 ## Purpose
 
-acus is a Rust CLI for coding agents: code search, outlines and reads (`find`, `files`, `outline`, `show`, `map`), patches (`patch`), build and test output without the noise (`ctx`), git summaries (`diff`, `log`, `blame`, `follow`), and the PreToolUse guard (`guard`) that rewrites or refuses grep, cat and sed calls. The agent skill lives in `skill/` and is embedded in the binary with `include_str!`.
+acus is a Rust CLI for coding agents: code search, outlines and reads (`find`, `files`, `outline`, `show`, `map`), patches (`patch`), build and test output without the noise (`ctx`), git summaries (`diff`, `log`, `blame`, `follow`), and `hook`, which runs the PreToolUse guard that rewrites or refuses grep, cat and sed calls and prints the skill at SessionStart. The agent skill lives in `skill/` and is embedded in the binary with `include_str!`.
 
 ## Layout
 
 Paths are relative to `acus/`. Dependencies point down: `acus-cli` uses every other crate; `acus-search` and `acus-edit` use `acus-syntax` and `acus-walk`. `acus-syntax` and `acus-walk` use no workspace crate.
 
-- `crates/acus-cli`: the `acus` binary. One `src/cmd_<name>.rs` per subcommand; `src/cmd_ctx/`, `src/cmd_find/` and `src/cmd_patch/` are directory modules. `src/cmd_guard.rs` holds the guard hook protocol. `src/cmd_self.rs` is the `acus self` group (`update`, `setup`, `doctor`, `skill`, `uninstall`): `cmd_update.rs` and `cmd_uninstall.rs` call `capsa_core::update` with `TOOL` from `main.rs`; `cmd_setup.rs` installs the skill and registers the SessionStart and PreToolUse hooks; `cmd_doctor.rs` holds the `self doctor` checks; `cmd_skill.rs` prints, installs and removes the skill. Integration tests are in `tests/cli/`, the Criterion bench in `benches/core.rs`.
+- `crates/acus-cli`: the `acus` binary. One `src/cmd_<name>.rs` per subcommand; `src/cmd_ctx/`, `src/cmd_find/` and `src/cmd_patch/` are directory modules. `src/cmd_hook.rs` holds the hook protocol and dispatches on the event. `src/cmd_self.rs` is the `acus self` group (`update`, `setup`, `doctor`, `skill`, `uninstall`): `cmd_update.rs` and `cmd_uninstall.rs` call `capsa_core::update` with `TOOL` from `main.rs`; `cmd_setup.rs` installs the skill and registers `acus hook` for SessionStart and PreToolUse; `cmd_doctor.rs` holds the `self doctor` checks; `cmd_skill.rs` prints, installs and removes the skill. Integration tests are in `tests/cli/`, the Criterion bench in `benches/core.rs`.
 - `crates/acus-guard`: the guard rules (`src/read/`, `src/search/`, `src/git.rs`, ...) and the rule table in `src/rules/mod.rs`. Parsers are Cargo features (`bash`, `zsh`, `powershell`), enabled from `acus-cli` as `guard-bash`, `guard-zsh` and `guard-powershell` (all default). `src/ast/mod.rs` `choose` picks the backend at run time; without a grammar the guard falls back to `src/ast/legacy.rs`.
 - `crates/acus-syntax`: tree-sitter outlines and symbol addresses. `src/lang.rs` holds `Lang::ALL`; `src/rules/mod.rs` (and `src/rules/markup.rs`) maps syntax nodes to symbols.
 - `crates/acus-edit`: patch parsing (`src/parse.rs`) and atomic application (`src/apply/`).
@@ -60,4 +60,4 @@ Shared rules: see root AGENTS.md.
 - `docs/superpowers/` and `bench-local/` are ignored local notes (root `.gitignore`). Do not commit them.
 - Snapshot names come from `snapshot_settings` in `crates/acus-cli/tests/cli/common.rs`: snapshots go to `crates/acus-cli/tests/snapshots/` and are named `cli__<name>`, without a module prefix.
 - Guard tests that read Bash need the `bash` or `zsh` feature of `acus-guard`.
-- `acus self setup` registers the SessionStart (`acus self skill`) and PreToolUse (`acus guard`) hooks in `~/.claude/settings.json`. They are not in this repo, so they also apply to work here.
+- `acus self setup` registers `acus hook` for SessionStart and PreToolUse in `~/.claude/settings.json`. They are not in this repo, so they also apply to work here.

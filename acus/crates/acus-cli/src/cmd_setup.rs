@@ -30,25 +30,40 @@ const HOOKS: [(&str, &str, &str, Owns); 2] = [
     (
         "SessionStart",
         "startup|clear|compact",
-        "acus self skill 2>/dev/null || true",
-        owns_skill,
+        "acus hook 2>/dev/null || true",
+        owns_session,
     ),
     (
         "PreToolUse",
         "Bash|Read|Grep|Glob|PowerShell",
-        "acus guard 2>/dev/null || true",
-        owns_guard,
+        "acus hook 2>/dev/null || true",
+        owns_tool,
     ),
 ];
 
-/// Claims the skill hook, including the `acus skill` form of older releases.
-pub fn owns_skill(command: &str) -> bool {
+/// Claims the `acus hook` command.
+pub fn owns_hook(command: &str) -> bool {
+    runs(command, "acus", "hook")
+}
+
+/// Claims the old SessionStart hook, including the `acus skill` form of older releases.
+pub fn owns_old_skill(command: &str) -> bool {
     runs(command, "acus", "self skill") || runs(command, "acus", "skill")
 }
 
-/// Claims the guard hook.
-pub fn owns_guard(command: &str) -> bool {
+/// Claims the old PreToolUse hook.
+pub fn owns_old_guard(command: &str) -> bool {
     runs(command, "acus", "guard")
+}
+
+/// Claims a SessionStart entry that setup replaces, old or new.
+fn owns_session(command: &str) -> bool {
+    owns_hook(command) || owns_old_skill(command)
+}
+
+/// Claims a PreToolUse entry that setup replaces, old or new.
+fn owns_tool(command: &str) -> bool {
+    owns_hook(command) || owns_old_guard(command)
 }
 
 /// The steps of one setup run, one check per step.

@@ -131,15 +131,16 @@ pub(super) fn fold_plain(
             from_command: true,
         }));
     }
-    // `git diff` whose output the agent reads becomes `acus diff`, which groups it by function.
+    // `git diff` whose output the agent reads becomes `acus diff`, which groups it by function;
+    // `git log` becomes `acus log`, one compact line per commit.
     if seg.out == Out::Agent
         && !seg.piped()
         && !seg.gates
-        && let Some(new) = git::diff_acus(plain)
+        && let Some((rule, new)) = git::rewrite_acus(plain)
     {
         return Some(Step::Fold(Fold {
             last: i,
-            rule: Rule::GitDiff,
+            rule,
             new,
             from_command: true,
         }));

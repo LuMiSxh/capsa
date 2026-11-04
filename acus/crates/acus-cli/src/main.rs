@@ -23,7 +23,7 @@ mod cmd_doctor;
 mod cmd_files;
 mod cmd_find;
 mod cmd_follow;
-mod cmd_guard;
+mod cmd_hook;
 
 mod cmd_log;
 mod cmd_map;
@@ -102,9 +102,9 @@ enum Cmd {
     Log(cmd_log::Args),
     /// Run several commands from stdin, one per line, or as a JSON array of argument lists.
     Run(cmd_run::Args),
-    /// PreToolUse hook for Claude Code and Codex: rewrites Bash, PowerShell, Read, Grep and Glob calls
-    /// into the acus command that does the same work, or adds a hint or refusal that names it.
-    Guard(cmd_guard::Args),
+    /// Claude Code hook: `SessionStart` prints the skill; `PreToolUse` rewrites Bash, PowerShell,
+    /// Read, Grep and Glob calls into the acus command that does the same work, or names it.
+    Hook(cmd_hook::Args),
     /// Installation and health of acus itself: `self update`, `self setup`, `self doctor`, `self skill`, `self uninstall`.
     #[command(name = "self")]
     Itself(cmd_self::Args),
@@ -126,7 +126,7 @@ impl Cmd {
             Cmd::Ctx(_) => "ctx",
             Cmd::Diff(_) => "diff",
             Cmd::Log(_) => "log",
-            Cmd::Guard(_) => "guard",
+            Cmd::Hook(_) => "hook",
             Cmd::Itself(a) => a.name(),
         }
     }
@@ -152,16 +152,15 @@ impl App for Cli {
 
 /// Runs one parsed command line in `format`; `run` calls this for every batch entry.
 pub fn execute(cli: Cli, format: Format, nested: bool) -> Result<Outcome> {
-    // A broken config file must not stop guard, which answers every tool call: it runs with the
+    // A broken config file must not stop the hook, which answers every tool call: it runs with the
     // defaults and reports the problem to the agent.
     // `self doctor` reports a broken config itself, so it gets the same lenient load.
-    let (cfg, config_problem) = if matches!(cli.cmd, Cmd::Guard(_))
-        || matches!(&cli.cmd, Cmd::Itself(a) if a.is_doctor())
-    {
-        config::load_or_default()
-    } else {
-        (config::load()?, None)
-    };
+    let (cfg, config_problem) =
+        if matches!(cli.cmd, Cmd::Hook(_)) || matches!(&cli.cmd, Cmd::Itself(a) if a.is_doctor()) {
+            config::load_or_default()
+        } else {
+            (config::load()?, None)
+        };
     let name = cli.cmd.name();
     let null_on = cli.cmd.json_null_on();
     if cfg.commands.disabled.iter().any(|d| d == name) {
@@ -189,8 +188,8 @@ pub fn execute(cli: Cli, format: Format, nested: bool) -> Result<Outcome> {
         Cmd::Ctx(a) => cmd_ctx::run(a, &out, &cfg),
         Cmd::Diff(a) => cmd_diff::run(a, &out),
         Cmd::Log(a) => cmd_log::run(a, &out),
-        Cmd::Guard(a) => cmd_guard::run(a, &cfg, config_problem.as_deref()),
-        Cmd::Itself(a) => cmd_self::run(a, &cfg, format),
+        Cmd::Hook(a) => cmd_hook::run(a, &cfg, config_problem.as_deref()),
+        Cmd::Itself(a) => cmd_self::run(a, format),
     }?;
     if !nested && out.format == Format::Json && null_on.is_some_and(|o| o == result) {
         println!("null");

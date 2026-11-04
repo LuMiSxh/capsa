@@ -23,7 +23,7 @@
     {
       "prompt": "Show what changed on this branch compared with main, with the changed lines.",
       "expected": [
-        "acus diff main..HEAD -p"
+        "acus diff main..HEAD -p", "acus diff main -p"
       ]
     },
     {
@@ -36,7 +36,8 @@
     {
       "prompt": "Delete lines 40 to 44 of src/a.rs.",
       "expected": [
-        "acus patch <<'PATCH'\n*** Begin Patch\n*** Delete Lines: src/a.rs:40-44\n*** Expect: <the exact text of line 40>\n*** End Patch\nPATCH"
+        "acus patch <<'PATCH'\n*** Begin Patch\n*** Delete Lines: src/a.rs:40-44\n*** Expect: <the exact text of line 40>\n*** End Patch\nPATCH",
+        "acus patch <<'PATCH'\n*** Begin Patch\n*** Update File: src/a.rs\n<<<<<<< SEARCH\n<the lines to delete>\n=======\n>>>>>>> REPLACE\n*** End Patch\nPATCH"
       ]
     }
   ]

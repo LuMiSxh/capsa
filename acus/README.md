@@ -59,7 +59,7 @@ Everything is top-level except the management commands under `acus self` (see [S
 | `acus log [REV] [PATH...]`    | One line per commit, `hash subject (age)`; `-n` sets the count (default 15); `--head N` and `--cut N` cap the output; `REV` can be `A..B`                                                                                                                                                    |
 | `acus run`                    | Several of the above in one process: one command per stdin line, or a JSON list of argument lists                                                                                                                                                                                           |
 | `acus map [DIR...]`           | Directory tree with file and line counts within a token budget (`--budget 400`): the largest directories open first, chains roll up, small directories list their top-level symbols; tests and docs open last. Several paths map as one tree; `--head N` and `--cut N` cap the output |
-| `acus guard`                  | PreToolUse hook for Bash, PowerShell, Read, Grep and Glob: rewrites calls it can convert exactly into acus calls, refuses the rest and names the acus command to use. See [Guard and agent setup](#guard-and-agent-setup) and [docs/guard.md](docs/guard.md)                                    |
+| `acus hook`                   | Claude Code hook: `SessionStart` prints the skill, and `PreToolUse` (Bash, PowerShell, Read, Grep and Glob) rewrites calls it can convert exactly into acus calls, refuses the rest and names the acus command to use. See [Guard and agent setup](#guard-and-agent-setup) and [docs/guard.md](docs/guard.md) |
 
 `acus log --oneline` is accepted as a no-op.
 
@@ -105,10 +105,10 @@ Agents fall back to grep and cat when a skill is only listed by its description.
 
 **Claude Code.** `acus self setup` installs the skill and registers both hooks in `settings.json` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), keeping a `.bak` of the old file; a rerun changes nothing when they are current. `--target claude|codex|all` picks the skill directories (`codex` is refused, since the hooks are Claude Code's), and `--dry-run` prints what would change.
 
-- `SessionStart` prints the skill at every start, `/clear` and compaction. It has no project map, because [overviews in context files did not help agents find the relevant files and raised cost](https://arxiv.org/abs/2602.11988); agents run `acus map` for the layout.
-- `PreToolUse` runs `acus guard` on Bash, PowerShell, Read, Grep and Glob. It rewrites a command into an exact acus call when it can, and otherwise refuses it and names the acus command. Literal `sed -i` edits of one file become `acus patch`, `acus … | head -N` becomes `--head N`, and `cat`, `tail` and `grep` of a background task's output file become `acus ctx --log FILE`. The rules are in [docs/guard.md](docs/guard.md).
+- `SessionStart` (`acus hook`) prints the skill at every start, `/clear` and compaction. It has no project map, because [overviews in context files did not help agents find the relevant files and raised cost](https://arxiv.org/abs/2602.11988); agents run `acus map` for the layout.
+- `PreToolUse` runs the guard (`acus hook`) on Bash, PowerShell, Read, Grep and Glob. It rewrites a command into an exact acus call when it can, and otherwise refuses it and names the acus command. Literal `sed -i` edits of one file become `acus patch`, `acus … | head -N` becomes `--head N`, and `cat`, `tail` and `grep` of a background task's output file become `acus ctx --log FILE`. The rules are in [docs/guard.md](docs/guard.md).
 
-Escape hatches: a refused command runs anyway with a `command ` prefix (Bash) or a trailing `# acus-skip` comment (both shells). Every decision, escapes included, is logged to `guard.jsonl` next to the config file; `census usage --guard` counts them per rule. The hook command ends in `|| true`, so calls pass when acus is missing or when `guard` is listed under `[commands] disabled`.
+Escape hatches: a refused command runs anyway with a `command ` prefix (Bash) or a trailing `# acus-skip` comment (both shells). Every decision, escapes included, is logged to `guard.jsonl` next to the config file; `census usage --guard` counts them per rule. The hook command ends in `|| true`, so calls pass when acus is missing or when `hook` is listed under `[commands] disabled`.
 
 Hooks apply to subagents too, but subagents do not see SessionStart output. Preload the skill in each custom agent's frontmatter, and give read-only agents `Bash` so they can run it. The built-in Explore agent cannot preload skills; a custom agent with the same role can.
 
@@ -153,9 +153,9 @@ Languages are compiled in through the features `lang-rust`, `lang-swift`, `lang-
 
 | Command               | What it does                                                                                                                                                                                 |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `acus self setup`     | Installs the skill and registers the SessionStart and PreToolUse hooks in Claude Code's settings; `--target claude\|codex\|all`, `--dry-run`                                                 |
+| `acus self setup`     | Installs the skill and registers `acus hook` for SessionStart and PreToolUse in Claude Code's settings; `--target claude\|codex\|all`, `--dry-run`                                       |
 | `acus self doctor`    | Checks the install, config, skill, hooks and guard files, one line per check with a hint for each failure; `--json`. Exit 1 when a check fails, 0 when only warnings remain                    |
-| `acus self skill`     | Prints the bundled agent skill for a SessionStart hook (`--full` prints the whole skill); `--install --target claude\|codex\|all` writes it                                                  |
+| `acus self skill`     | Prints the bundled agent skill (`--full` prints the whole skill); `--install --target claude\|codex\|all` writes it                                                                          |
 | `acus self update`    | Replaces the binary with the latest GitHub release when newer, then reinstalls the skill; `--check` exits 0 when an update exists, 1 when current; `--force` reinstalls the latest release. Sends a token when one is available (`GITHUB_TOKEN`, else `gh auth token`). It only lifts GitHub's rate limit; none is required |
 | `acus self uninstall` | Removes the installed skill and the binary; `--dry-run` only lists them                                                                                                                      |
 

@@ -2,8 +2,8 @@
 //! `acus self doctor`: checks the install, config, skill, hooks and guard files. Exit 1 when a
 //! check fails; warnings do not change the exit code.
 
-use crate::cmd_guard;
-use crate::cmd_setup::{owns_guard, owns_skill};
+use crate::cmd_hook;
+use crate::cmd_setup::{owns_hook, owns_old_guard, owns_old_skill};
 use crate::cmd_skill::SKILL_DEF;
 use crate::config::{self, Config};
 use anyhow::{Context, Result};
@@ -211,48 +211,56 @@ fn hooks_group(settings: &Path) -> Group {
             };
         }
     };
-    let session = match has_hook(&read.value, "SessionStart", owns_skill) {
-        Some(matcher) => check(
-            "SessionStart hook",
-            Status::Ok,
-            format!("matcher {matcher:?}"),
-            None,
-        ),
-        None => check(
-            "SessionStart hook",
-            Status::Warn,
-            "not registered",
-            Some("run acus self setup"),
-        ),
-    };
-    let guard = match has_hook(&read.value, "PreToolUse", owns_guard) {
-        Some(matcher) => {
-            let missing: Vec<&str> = GUARDED
-                .into_iter()
-                .filter(|tool| !covers(matcher, tool))
-                .collect();
-            if missing.is_empty() {
-                check(
-                    "PreToolUse hook",
-                    Status::Ok,
-                    format!("matcher {matcher:?}"),
-                    None,
-                )
-            } else {
-                check(
-                    "PreToolUse hook",
-                    Status::Warn,
-                    format!("matcher {matcher:?} does not cover {}", missing.join(", ")),
-                    Some("run acus self setup"),
-                )
-            }
+    let session = if has_hook(&read.value, "SessionStart", owns_old_skill).is_some() {
+        outdated("SessionStart hook")
+    } else {
+        match has_hook(&read.value, "SessionStart", owns_hook) {
+            Some(matcher) => check(
+                "SessionStart hook",
+                Status::Ok,
+                format!("matcher {matcher:?}"),
+                None,
+            ),
+            None => check(
+                "SessionStart hook",
+                Status::Warn,
+                "not registered",
+                Some("run acus self setup"),
+            ),
         }
-        None => check(
-            "PreToolUse hook",
-            Status::Warn,
-            "not registered",
-            Some("run acus self setup"),
-        ),
+    };
+    let guard = if has_hook(&read.value, "PreToolUse", owns_old_guard).is_some() {
+        outdated("PreToolUse hook")
+    } else {
+        match has_hook(&read.value, "PreToolUse", owns_hook) {
+            Some(matcher) => {
+                let missing: Vec<&str> = GUARDED
+                    .into_iter()
+                    .filter(|tool| !covers(matcher, tool))
+                    .collect();
+                if missing.is_empty() {
+                    check(
+                        "PreToolUse hook",
+                        Status::Ok,
+                        format!("matcher {matcher:?}"),
+                        None,
+                    )
+                } else {
+                    check(
+                        "PreToolUse hook",
+                        Status::Warn,
+                        format!("matcher {matcher:?} does not cover {}", missing.join(", ")),
+                        Some("run acus self setup"),
+                    )
+                }
+            }
+            None => check(
+                "PreToolUse hook",
+                Status::Warn,
+                "not registered",
+                Some("run acus self setup"),
+            ),
+        }
     };
     Group {
         name: "hooks",
@@ -261,12 +269,22 @@ fn hooks_group(settings: &Path) -> Group {
 }
 
 /// Whether a `|`-separated matcher reaches `tool`. An empty matcher or `*` reaches every tool.
+/// The check for a hook entry from an older acus that setup replaces.
+fn outdated(name: &'static str) -> Check {
+    check(
+        name,
+        Status::Warn,
+        "outdated entry; acus hook replaces it",
+        Some("run acus self setup"),
+    )
+}
+
 fn covers(matcher: &str, tool: &str) -> bool {
     matcher.is_empty() || matcher == "*" || matcher.split('|').any(|m| m == tool)
 }
 
 fn guard_group(cfg: &Config) -> Group {
-    let guard = cmd_guard::guard_config(cfg);
+    let guard = cmd_hook::guard_config(cfg);
     let log_dir = guard
         .log_path
         .parent()
