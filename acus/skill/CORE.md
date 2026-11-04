@@ -5,13 +5,13 @@ Use acus instead of shell tools. A hook rewrites or refuses grep, rg, find, cat,
 | Instead of | Run |
 |---|---|
 | grep, rg | `acus find 'PAT' [PATH…]` (`--block`, `-l`, `-w`, `-i`, `-F`, `-g '*.rs'`, `-g '!dist'` excludes); `acus find 'PAT' a.rs#Sym b.rs:40-80` searches only there |
-| find -name, fd, git ls-files, Glob, wc -l | `acus files [PATH…] -g '*.rs' [--lines]` |
+| find -name, fd, git ls-files, Glob, wc -l | `acus files [PATH…] -g '*.rs' [--lines] [--depth=N] [--head=N] [--cut=N]` |
 | cat, sed -n, head, tail, Read, git show | `acus show a.rs#Sym b.rs:40-80 c.rs:-N c.rs:N- REV:a.rs#Sym`; `acus outline PATH` |
 | who calls / what it calls | `acus follow a.rs#Sym [--down]` |
-| ls -R, tree | `acus map [DIR]` |
+| ls -R, tree | `acus map [DIR…]` |
 | sed -i, Edit | `acus patch` (below) |
 | `cargo test \| tail` | `acus ctx 'CMD' [--tail N] [--grep RE]`; `acus ctx --log FILE` for a saved log |
-| git status/diff/log | `acus diff [-p]`, `acus log` |
+| git status/diff/log | `acus diff [-p] [--stat|--name-only|--conflicts]`, `acus log` |
 
 Batch independent lookups: several tool calls, or one `acus run`.
 

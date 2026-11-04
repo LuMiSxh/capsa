@@ -11,19 +11,19 @@ One call answers what usually takes search → read → read. Output is line-num
 
 | Instead of | Run |
 |---|---|
-| `grep`, `rg`, `find` to locate code or usages | `acus find 'PAT' [PATH…] [-g '*.rs']` (`-g '!dist'` excludes a path); `--block` adds the code around each hit; `-l`, `-w`, `-i`, `-c`, `-o`, `-v`, `-t py` work as in grep; `-A/-B/-C N` print N lines of context like grep (context lines are `N-`, hits `N`, groups split by `--`); `-x` whole lines, `-L` follows symlinks, `-U` multiline patterns; `-u --hidden` also searches ignored and hidden files; with no PATH, piped stdin is searched instead of `.` |
+| `grep`, `rg`, `find` to locate code or usages | `acus find 'PAT' [PATH…] [-g '*.rs']` (`-g '!dist'` excludes a path); `--block` adds the code around each hit; `-l`, `-w`, `-i`, `-c`, `-o`, `-v`, `-t py` work as in grep; `-A/-B/-C N` print N lines of context like grep (context lines are `N-`, hits `N`, groups split by `--`); `-x` whole lines, `-L` follows symlinks, `-U` multiline patterns; `-u --hidden` also searches ignored and hidden files; `-b` is short for `--block` and `--max-columns` for `--cut`; with no PATH a pipe or regular file on stdin is searched to EOF instead of `.` (a silent pipe notes the wait after 2 s; a terminal or empty stdin walks `.`) |
 | `sed -n A,Bp f \| grep 'x'` | `acus find 'x' f:A-B` (or `f#Sym`): searches only that range, with file-absolute line numbers; `f:-N` for the last N lines, `f:N-` from line N to the end |
 | `grep 'x' log \| cut -c1-200 \| tail -30` | `acus find 'x' log --cut 200 --last 30`: `--cut N` clips each hit line to N chars, `--last N` keeps the last N hits per file |
-| `ls -R`, `tree`, `find -type f` | `acus map [DIR]` |
-| `find -name`, `fd`, `git ls-files`, Glob | `acus files [PATH…] [-g GLOB] [--hidden] [-u] [-t TYPE] [-L]`, e.g. `acus files src -g '*.rs'` |
+| `ls -R`, `tree`, `find -type f` | `acus map [DIR…]`: several paths map as one tree; `--head N` and `--cut N` cap the output |
+| `find -name`, `fd`, `git ls-files`, Glob | `acus files [PATH…] [-g GLOB] [--hidden] [-u] [-t TYPE] [-L] [--depth N] [--head N] [--cut N]`, e.g. `acus files src -g '*.rs'`; `--depth` (alias `--max-depth`) limits the walk |
 | `wc -l` | `acus files --lines` (line count per file and a total; `--json` for scripts) |
-| `cat`, `head`, `tail`, `sed -n`, or Read to look something up | `acus show src/a.rs#Parser::parse src/b.rs:40-80 README.md` (several in one call; `src/a.rs:-20` prints the last 20 lines, for `tail -20`; `src/a.rs:150-` prints line 150 to the end, for `tail -n +150`); `acus outline PATH… [--depth 1] [-k fn,struct]` for what a file or directory contains; `acus show REV:path#Sym` reads it as of a git revision; `--head N` stops after N printed lines on `show`, `outline`, `diff` and `find`, and `--cut N` clips long lines on `show`, `outline`, `diff` and `find` |
+| `cat`, `head`, `tail`, `sed -n`, or Read to look something up | `acus show src/a.rs#Parser::parse src/b.rs:40-80 README.md` (several in one call; `src/a.rs:-20` prints the last 20 lines, for `tail -20`; `src/a.rs:150-` prints line 150 to the end, for `tail -n +150`); `acus outline PATH… [--depth 1] [-k fn,struct]` for what a file or directory contains; `acus show REV:path#Sym` reads it as of a git revision; a whole file over 400 lines shows its outline, its first 60 lines and pointers instead of every line, and one call stops near 24k characters naming the address that shows the rest; `--full` prints every line, while `--json` is never capped (it also ignores `--max-lines`); `--head N` stops after N printed lines and `--cut N` clips long lines on `show`, `outline`, `diff`, `find`, `files`, `map`, `log`, `ctx` and `follow` |
 | `sed -i`, `perl -pi`, Python replace scripts, Edit | `acus patch` (below) |
 | `cargo test \| tail`, `npm test 2>&1 \| grep …` | `acus ctx 'CMD'` with `--tail N` or `--grep RE` (`-A/-B/-C N` keep context lines, as in grep), `--cut N` clips long lines, and `--timeout SECS` (kills the command, keeps the output so far, exits 124); `acus ctx` alone runs the project's tests; `acus ctx --log FILE` reads a saved log, such as a background task's output file, through the same filters |
-| `git status`, `git diff` | `acus diff [REV] [-p]` |
+| `git status`, `git diff` | `acus diff [REV] [-p]`: without REV a header names the branch, upstream ahead/behind and staged, unstaged, untracked and conflict counts, plus a merge, rebase or cherry-pick in progress; `-p` prints a moved symbol once (`moved … ← path:range`), outlines new files, hides blank lines and caps each file at 80 changed lines (`--full` for the old view); `--stat`, `--name-only`, `--conflicts` (exit 1 when none) |
 | `git blame` | `acus blame path#Sym` (or `path:A-B`): who last changed each run of lines |
 | `grep` for who calls a function, or to see what it calls | `acus follow path#Sym [-d N] [--down] [--all]`: recursive callers, or callees with `--down`; only sure calls are followed, `?` lines are name matches to check by hand |
-| `git log` | `acus log [REV] [PATH…] [-n N]`; one commit's changes: `acus diff REV^..REV` |
+| `git log` | `acus log [REV] [PATH…] [-n N]`: one `hash subject (age)` line per commit; `--head N` and `--cut N` cap it; one commit's changes: `acus diff REV^..REV` |
 
 A hook catches the commands on the left: it rewrites those with an exact acus equivalent and refuses the rest, and a refused command costs a turn. Calling acus directly is also shorter, because line numbers and enclosing symbols come with the first result.
 
@@ -38,6 +38,8 @@ show src/a.rs#f src/b.rs:10-30
 outline src/lib.rs
 EOF
 ```
+
+`acus run` exits 0 when at least one line succeeded and lists the failures in a `failed: N of M lines` footer; it exits 2 only when every line failed or `--fail-fast` stopped at the first. Output is cut fairly within 24k characters, and a cut names `acus <cmd> --head N` (or `acus run --full`); `--head N` and `--cut N` cap every line.
 
 ## Patch
 
@@ -63,6 +65,8 @@ self.done = true;
 +    }
 *** Add File: notes.md
 +hello
+*** Append File: log.md
++one more line
 *** Delete File: old.rs
 *** End Patch
 PATCH
@@ -76,7 +80,7 @@ Rules for SEARCH/REPLACE blocks under `*** Update File:`:
 - A file whose syntax (tree-sitter) gets more errors fails the whole patch and names the line; fix the block, or pass `--allow-broken` to write anyway.
 - A multi-line SEARCH matches a CRLF file as LF text and prints a `note:`; the file stays CRLF.
 
-Output lists the written lines with their new numbers, so no re-read is needed. When they are not needed, add `-q`: it prints only the summary and errors, so use it instead of `| tail`, `| head` or `>/dev/null` (the hook rewrites those to `-q` anyway). `*** Add File:` prints only its summary line; a `*** Replace Symbol:` body longer than 40 lines prints its first and last 5 lines with a `… N more lines` marker. `--json` keeps every line. All or nothing: on error nothing was written; fix the block from the lines shown and resend the whole patch. `--check` validates without writing and reports what would change; `--diff` prints a unified diff (`--check --diff` previews). `--fmt` cannot be combined with `--check`. `--fmt` runs the file's formatter (rustfmt, ruff/black, prettier, swift-format, gofmt) over the whole file and prints the formatted lines, so the next patch's context still matches; add it only where the project requires formatted code, since it also changes lines you did not edit. Pick a heredoc delimiter that no line of the patch equals (`PATCH`, or `ACUS_END` when editing docs or scripts). Symbols may be written `Class.method` too.
+Output lists the written lines with their new numbers, so no re-read is needed. When they are not needed, add `-q`: it prints only the summary and errors, so use it instead of `| tail`, `| head` or `>/dev/null` (the hook rewrites those to `-q` anyway). `*** Add File:` prints only its summary line; a `*** Replace Symbol:` body longer than 40 lines prints its first and last 5 lines with a `… N more lines` marker. `--json` keeps every line. All or nothing: on error nothing is written; when several blocks fail, one run reports every one with its nearest match, so fix them all and resend the whole patch. `--check` validates without writing and reports what would change; `--diff` prints a unified diff (`--check --diff` previews). `--fmt` cannot be combined with `--check`. `--fmt` runs the file's formatter (rustfmt, ruff/black, prettier, swift-format, gofmt) over the whole file and prints the formatted lines, so the next patch's context still matches; add it only where the project requires formatted code, since it also changes lines you did not edit. Pick a heredoc delimiter that no line of the patch equals (`PATCH`, or `ACUS_END` when editing docs or scripts). Symbols may be written `Class.method` too.
 
 More directives, mixable with the above in one patch (`acus patch --help` has the full syntax):
 
@@ -99,9 +103,13 @@ fn ${1}_new(
 +fn helper() {}
 *** Copy File: src/a.rs
 *** To: src/a_copy.rs
+*** Resolve Conflict: src/app.py:12 --ours
+*** Resolve Conflict: src/app.py:42 --theirs
 ```
 
 - `*** Replace All: PATH [PATH...]` takes space-separated files, directories and globs (`*.py`, matched below the current directory) and changes every occurrence. SEARCH blocks are literal and whitespace-exact and may span lines; REGEX blocks are Rust regex run per file with `(?m)`, with `${1}` in the replacement. A block that matches nothing fails the patch.
+- `*** Append File: PATH` appends the `+` lines after the file's last line, with one newline between; a missing file needs `*** Add File:`.
+- `*** Resolve Conflict: PATH --ours|--theirs|--both|--base` resolves every conflict section of the file (`--both` keeps ours then theirs, `--base` needs the diff3 part); `PATH:LINE --theirs` resolves only the section containing LINE, so one patch can pick different sides. Line numbers are from before the patch.
 - `Delete Symbol` and `Move Symbol` take doc comments and attributes along; `Move Symbol` needs `*** Before:` or `*** After: path#Sym`, or `*** To: path`.
 - `*** Delete Lines: PATH:A-B` and `*** Move Lines: PATH:A-B` cut or move lines by number. Each needs `*** Expect: TEXT` on the next line, the exact text of line A, or the patch fails and shows the actual line. A move then takes `*** After: PATH:N` (0 for the file start) or `*** After: PATH#Sym`. Numbers refer to the file before the patch, so line directives run first.
 
@@ -116,6 +124,7 @@ fn ${1}_new(
 - Unquoted globs are expanded by the shell: write `-g '*.ts'`, and `-g '!dist'` to exclude.
 - Patterns are Rust regex, so `foo(` fails; use `-F` for literal text.
 - Symbols exist for Rust, Swift, TS/JS, Svelte, Python, Shell, C, CSS, SCSS, HTML, XML/plist, Markdown and TOML/JSON/YAML keys. Other files: `find` and `show path:A-B`.
+- A pattern that starts with `-` is read as a flag: write `acus find -e '-x' PATH`.
 - Paths may be relative, absolute or start with `~`.
 
 Flags: `acus help <command>`.

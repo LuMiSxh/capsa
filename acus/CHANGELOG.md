@@ -2,9 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- `acus patch`: `*** Append File: PATH` appends `+` lines after the file's last line, with one newline between them; a missing file still needs `*** Add File:`.
+- `acus patch`: `*** Resolve Conflict: PATH --ours|--theirs|--both|--base` resolves every conflict section of a file, and `PATH:LINE --theirs` only the section around a line, so one patch can pick different sides. A file that still has markers is syntax-checked only on its result. In 14 days the guard refused 28 `sed -i` edits and 22 syntax-gated patches over 100 Python conflict scripts.
+- `acus diff`: without REV, a status header names the branch, its upstream and ahead/behind position, the staged, unstaged, untracked and conflict counts, and any merge, rebase or cherry-pick in progress; `--stat` prints `path +A -R` per file with a total, `--name-only` one `STATUS path` line each, and `--conflicts` the unmerged paths with their conflict line ranges (exit 1 when there are none). In 14 days: 653 `git status`, 129 `git diff --stat`, 51 `--name-only` and 33 `--diff-filter=U` calls. The header, the untracked list and the conflicts come from one `git status --porcelain=v2 --branch` call, which replaces `git ls-files`.
+
+### Changed
+
+- `acus diff --json` is an object, `{"header": …, "files": […]}`: the header is present for the working tree and absent for `REV..REV`, and an empty diff is `{"files": []}` where it was `null`. Breaking for scripts that read the old top-level array.
+- `acus diff -p` summarises a moved symbol once (`  moved kind name ← path:range (unchanged|edited)`), prints the body diff only when it was edited, outlines an added file (or its first 20 lines without an outline), hides blank changed lines and caps each file at 80 changed lines (`--full` restores the old view). `acus diff -p 7049404..1862ade -- acus/crates/acus-cli/src/cmd_find` went from 8,994 to 3,952 chars (−56%).
+- `acus show`: a whole file over 400 lines shows its outline and first 60 lines with pointers instead of every line, and a call stops near 24k characters naming the address that shows the rest; `--full` prints everything; `--json` is never capped (it also ignores `--max-lines`). A 500-line file prints 114 lines instead of 500.
+- `--head N` and `--cut N` work on `files`, `map`, `log`, `ctx` and `follow` as on `find`, `show`, `outline` and `diff`; `files --depth N` (`--max-depth`) limits the walk; `map` takes several paths and maps them as one tree; `-b` is short for `find --block`, `--max-columns` is an alias of `--cut`, and `acus log` defaults to `hash subject (age)`.
+- `acus run` exits 0 when at least one line succeeded and lists the failed lines in a `failed: N of M lines (…)` footer; it exits 2 only when every line failed or `--fail-fast` stopped at the first. Output is cut fairly within a 24k-character budget, below Claude Code's 30k result cap, and each cut names `acus <cmd> --head N` (or `acus run --full`); `--full` lifts the budget and `--head`/`--cut` cap every line. In 14 days 278 run results were ≥15k chars, 14 hit the 30k cap, and 117 of 1,422 calls exited 2 on one failing line.
+- `acus patch` reports every failing block in one run, each with its nearest match, and writes nothing, instead of stopping at the first.
+
 ### Fixed
 
-- `acus find` with no path searches piped standard input instead of the working directory, so `cmd | acus find 'PAT'` and the guard's `grep` rewrite filter the command's output. A terminal, an empty stream or a closed stdin still searches `.`.
+- `acus find` with no path searches standard input only when it is a pipe or a regular file: a pipe is read to EOF (a note on stderr names the wait after 2 s of silence), while a terminal, socket, character device such as `/dev/null`, closed descriptor or empty file walks `.`. `cmd | acus find 'PAT'` and the guard's `grep` rewrite filter the command's output; a silent pipe no longer walks `.` after a fixed wait. An unknown short flag hints at `-e` for a pattern that starts with `-`.
 
 ## [0.20.0]
 
