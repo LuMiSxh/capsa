@@ -13,6 +13,10 @@ fn start_op(d: &Directive, rest: &str, n: usize, ops: &mut Vec<Op>) -> Result<()
             path: rest.trim().into(),
             lines: vec![],
         }),
+        Kind::Append => ops.push(Op::Append {
+            path: rest.trim().into(),
+            lines: vec![],
+        }),
         Kind::Delete => ops.push(Op::Delete {
             path: rest.trim().into(),
         }),

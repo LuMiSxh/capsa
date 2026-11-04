@@ -16,6 +16,7 @@ pub(super) struct Directive {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
     Add,
+    Append,
     Update,
     Delete,
     MoveTo,
@@ -38,6 +39,12 @@ const DIRECTIVES: &[Directive] = &[
         kind: Kind::Add,
         form: "*** Add File: PATH",
         note: "",
+    },
+    Directive {
+        name: "Append File",
+        kind: Kind::Append,
+        form: "*** Append File: PATH",
+        note: " (then `+` lines, added after the file's last line)",
     },
     Directive {
         name: "Update File",

@@ -69,26 +69,15 @@ pub(super) fn body(op: Option<&mut Op>, line: &str, n: usize, stage: &mut Stage)
             }
         },
         Some(
-            Op::Add { lines, .. } | Op::ReplaceSymbol { lines, .. } | Op::Insert { lines, .. },
+            Op::Add { lines, .. }
+            | Op::Append { lines, .. }
+            | Op::ReplaceSymbol { lines, .. }
+            | Op::Insert { lines, .. },
         ) => match line.strip_prefix('+') {
             Some(l) => lines.push(l.into()),
             None => return Err(EditError::NotAddLine { line: n }),
         },
-        Some(Op::Update { .. }) => {
-            if line.trim().is_empty() {
-                return Ok(());
-            }
-            if line.starts_with("<<<<<<< REGEX") {
-                return Err(EditError::RegexUnderUpdate { line: n });
-            }
-            if line.starts_with(['@', '-', '+', ' ']) {
-                return Err(EditError::HunkLines { line: n });
-            }
-            return Err(EditError::ExpectedSearch {
-                line: n,
-                got: line.into(),
-            });
-        }
+        Some(Op::Update { .. }) => return update_line(line, n),
         Some(Op::Delete { path }) => {
             return Err(EditError::UnexpectedAfter {
                 line: n,
@@ -113,6 +102,23 @@ pub(super) fn body(op: Option<&mut Op>, line: &str, n: usize, stage: &mut Stage)
         None => return Err(EditError::ContentBeforeDirective { line: n }),
     }
     Ok(())
+}
+
+/// An `*** Update File` line outside a block: blank lines pass, hunk lines and other text fail.
+fn update_line(line: &str, n: usize) -> Result<()> {
+    if line.trim().is_empty() {
+        return Ok(());
+    }
+    if line.starts_with("<<<<<<< REGEX") {
+        return Err(EditError::RegexUnderUpdate { line: n });
+    }
+    if line.starts_with(['@', '-', '+', ' ']) {
+        return Err(EditError::HunkLines { line: n });
+    }
+    Err(EditError::ExpectedSearch {
+        line: n,
+        got: line.into(),
+    })
 }
 
 fn after_line_directive(line: usize, path: &str) -> EditError {

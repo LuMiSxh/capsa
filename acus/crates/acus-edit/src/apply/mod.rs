@@ -10,7 +10,7 @@ mod search;
 mod symbols;
 
 use crate::Op;
-use crate::error::Result;
+use crate::error::{EditError, Result};
 use commit::{check_syntax, commit};
 use files::Files;
 use line_ranges::apply_line_ranges;
@@ -137,8 +137,21 @@ pub fn apply_with(ops: &[Op], root: &Path, check: bool, allow_broken: bool) -> R
         .iter()
         .partition(|op| matches!(op, Op::DeleteLines { .. } | Op::MoveLines { .. }));
     let mut changes = apply_line_ranges(&mut files, &line_ops)?;
+    // Every op runs so one failure does not hide the next. A failed block is skipped, so the
+    // blocks after it see the file without it; nothing is written while any failure remains.
+    let mut failures = Vec::new();
     for op in other_ops {
-        changes.extend(apply_op(&mut files, op)?);
+        match apply_op(&mut files, op) {
+            Ok(mut made) => changes.append(&mut made),
+            Err(EditError::Many { failures: mut more }) => failures.append(&mut more),
+            Err(e) => failures.push(e),
+        }
+    }
+    if failures.len() == 1 {
+        return Err(failures.remove(0));
+    }
+    if !failures.is_empty() {
+        return Err(EditError::many(failures));
     }
     let mut regions = Vec::new();
     for (path, f) in &files.map {

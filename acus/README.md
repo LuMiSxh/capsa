@@ -87,12 +87,13 @@ Output is a compact agent format by default. `--agent`, `--human` and `--json` c
 ```
 
 - The old text must occur exactly once. With no match the error shows the nearest lines; with several it lists their line numbers, so add a neighbouring line. If the text is not found as written, acus also accepts it with `acus show` line-number prefixes stripped, ignoring trailing whitespace or leading indentation, and prints a `note:`.
-- Blocks and files apply all or nothing, and each file is replaced atomically. Before writing, each file that tree-sitter supports is parsed: a patch that adds syntax errors fails and names the first new error's line (`--allow-broken` writes anyway).
-- `+` prefixes only the new lines of Replace Symbol, Insert Before/After and Add File. A multi-line SEARCH matches a CRLF file as LF and writes CRLF back, with a `note:`.
+- Blocks and files apply all or nothing, and each file is replaced atomically. When several blocks fail, one run reports every failing block with its nearest match, and nothing is written. Before writing, each file that tree-sitter supports is parsed: a patch that adds syntax errors fails and names the first new error's line (`--allow-broken` writes anyway).
+- `+` prefixes only the new lines of Replace Symbol, Insert Before/After, Add File and Append File. A multi-line SEARCH matches a CRLF file as LF and writes CRLF back, with a `note:`.
 - `--check` validates and reports what would change; `--diff` prints a unified diff (with `--check`, a preview). `--fmt` (or `[patch] fmt = true`) runs the file's formatter if one is installed (rustfmt, ruff or black, prettier, swift-format, gofmt) and prints the formatted lines.
 - Further directives (`acus patch --help` has the syntax):
     - `*** Replace All: PATH...` changes every occurrence, also part of a line, in files, directories and globs (`*.py`); it fails if a block matches nowhere. A `<<<<<<< REGEX` block is a Rust regex per file with `(?m)`, and `${1}` is the replacement's group.
     - `*** Insert Before:` and `*** Insert After:` take `path#Symbol` or `path:N` and put the `+` lines above the symbol's doc comments and attributes, or below the symbol.
+    - `*** Append File: PATH` adds the `+` lines after the file's last line, with one newline between them; a missing file needs `*** Add File:`.
     - `*** Copy File: SRC` with `*** To: DST` copies a file and fails if DST exists.
     - `*** Delete Symbol:` and `*** Move Symbol:` carry doc comments and attributes along. A move goes `*** Before:` or `*** After:` another symbol, or `*** To:` the end of a file (created if needed).
     - `*** Delete Lines: PATH:A-B` and `*** Move Lines: PATH:A-B` cut or move lines by number. The next line is `*** Expect:` with the exact text of line A, so a stale range fails; a move then takes `*** After: PATH:N` (0 for the file start) or `*** After: PATH#Sym`. Line numbers refer to the file before the patch, so these run first.

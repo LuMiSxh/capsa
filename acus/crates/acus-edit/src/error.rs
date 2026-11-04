@@ -259,6 +259,12 @@ pub enum EditError {
     /// A `*** Replace All` pattern that does not compile. `block` counts from 1.
     #[error("Replace All block {block}: {error}")]
     BadRegex { block: usize, error: regex::Error },
+    /// `*** Append File` for a file that does not exist.
+    #[error("{path}: file not found")]
+    AppendMissing { path: String },
+    /// More than one failure of one patch, reported together; nothing was written.
+    #[error("{}", failures_message(.failures))]
+    Many { failures: Vec<EditError> },
     /// A `*** Replace All` block that matches nothing. `regex` tells its kind.
     #[error("Replace All block {block}: `{search}` matches nothing in {paths}")]
     ReplaceNoMatch {
@@ -294,6 +300,51 @@ fn join_lines(lines: &[usize]) -> String {
         .map(usize::to_string)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+impl EditError {
+    /// Reports every failure of one patch as one error, in patch order.
+    pub(crate) fn many(failures: Vec<Self>) -> Self {
+        Self::Many { failures }
+    }
+
+    /// Whether the failure is about one SEARCH block.
+    fn in_block(&self) -> bool {
+        matches!(
+            self,
+            Self::SearchNotFound { .. } | Self::SearchAmbiguous { .. }
+        )
+    }
+
+    /// The failure as the multi-failure report lists it: the message, then the closest match.
+    fn detail(&self) -> String {
+        match self {
+            Self::SearchNotFound { nearest, .. } if !nearest.is_empty() => {
+                format!("{self}{nearest}")
+            }
+            Self::BrokenSyntax { snippet, .. } => format!("{self}\n{}", snippet.join("\n")),
+            _ => self.to_string(),
+        }
+    }
+}
+
+/// The message of a patch that failed in more than one place: one line per failure, then the
+/// note that later blocks saw the file without the failed ones.
+fn failures_message(failures: &[EditError]) -> String {
+    let what = if failures.iter().all(EditError::in_block) {
+        "blocks"
+    } else {
+        "changes"
+    };
+    let mut out = format!("{} {what} failed; nothing was written", failures.len());
+    for failure in failures {
+        out.push('\n');
+        out.push_str(&failure.detail());
+    }
+    out.push_str(
+        "\nnote: a block after a failed one in the same file was checked against the file without it",
+    );
+    out
 }
 
 impl Hint for EditError {
@@ -375,6 +426,12 @@ impl Hint for EditError {
             Self::SearchNotFound { nearest, .. } => Cow::Owned(format!(
                 "copy the text as the file has it, a part of a line is fine; re-read it with acus show{nearest}"
             )),
+            Self::AppendMissing { path } => Cow::Owned(format!(
+                "use `*** Add File: {path}` to create it, or `*** Update File: {path}` to edit it"
+            )),
+            Self::Many { .. } => {
+                Cow::Borrowed("fix each failing block from its message and resend the whole patch")
+            }
             _ => return None,
         };
         Some(text)

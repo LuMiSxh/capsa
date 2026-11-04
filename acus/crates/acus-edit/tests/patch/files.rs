@@ -41,6 +41,32 @@ fn unknown_directives_list_the_accepted_forms() {
 }
 
 #[test]
+fn append_file_adds_after_the_last_line() {
+    let d = dir(&[("with.txt", "a\n"), ("without.txt", "a")]);
+    let c = run(
+        d.path(),
+        "*** Append File: with.txt\n+b\n+c\n*** Append File: without.txt\n+b\n",
+    )
+    .unwrap();
+    assert_eq!(read(d.path(), "with.txt"), "a\nb\nc\n");
+    // No trailing newline before the patch means none after it, but one still separates the lines.
+    assert_eq!(read(d.path(), "without.txt"), "a\nb");
+    let s: Vec<_> = c.iter().map(ToString::to_string).collect();
+    assert_eq!(s, ["M with.txt +2 -0", "M without.txt +2 -1"]);
+}
+
+#[test]
+fn append_file_to_a_missing_file_needs_add_file() {
+    let d = dir(&[]);
+    let e = run(d.path(), "*** Append File: nope.txt\n+x\n")
+        .unwrap_err()
+        .shown();
+    assert!(e.contains("nope.txt: file not found"), "{e}");
+    assert!(e.contains("use `*** Add File: nope.txt`"), "{e}");
+    assert!(!d.path().join("nope.txt").exists());
+}
+
+#[test]
 fn insert_mixes_with_other_ops_all_or_nothing() {
     let d = dir(&[("a.rs", "fn one() {}\n"), ("b.txt", "keep\n")]);
     let e = run(

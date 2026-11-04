@@ -263,6 +263,41 @@ fn patch_notes_a_search_matched_ignoring_indentation() {
 }
 
 #[test]
+fn patch_reports_every_failing_block_in_one_run() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.rs"), "fn a() {}\n").unwrap();
+    std::fs::write(d.path().join("b.rs"), "fn b() {}\n").unwrap();
+    let p = "*** Begin Patch\n*** Update File: a.rs\n<<<<<<< SEARCH\nfn missing_one() {}\n=======\nfn one() {}\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nfn missing_two() {}\n=======\nfn two() {}\n>>>>>>> REPLACE\n*** Update File: b.rs\n<<<<<<< SEARCH\nfn missing_three() {}\n=======\nfn three() {}\n>>>>>>> REPLACE\n*** End Patch\n";
+    for args in [&["patch"][..], &["patch", "--check"][..]] {
+        let (code, out, err) = acus_in(d.path(), args, p);
+        assert_eq!(code, 2);
+        assert!(out.is_empty(), "{out}");
+        assert!(
+            err.starts_with("error: 3 blocks failed; nothing was written\n"),
+            "{err}"
+        );
+        for line in [
+            "a.rs: block 1: SEARCH not found, first line `fn missing_one() {}`",
+            "a.rs: block 2: SEARCH not found, first line `fn missing_two() {}`",
+            "b.rs: block 1: SEARCH not found, first line `fn missing_three() {}`",
+            "note: a block after a failed one in the same file was checked against the file without it",
+        ] {
+            assert!(err.contains(line), "{err}");
+        }
+        assert_eq!(err.matches("\nerror: ").count(), 0, "{err}");
+        assert_eq!(err.matches("\nhint: ").count(), 1, "{err}");
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("a.rs")).unwrap(),
+            "fn a() {}\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("b.rs")).unwrap(),
+            "fn b() {}\n"
+        );
+    }
+}
+
+#[test]
 fn patch_check_writes_nothing_and_exits_0() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("a.rs"), "fn f() {\n    1\n}\n").unwrap();

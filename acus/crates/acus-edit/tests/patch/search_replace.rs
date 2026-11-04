@@ -412,6 +412,56 @@ fn search_matches_across_crlf_lines_and_keeps_crlf() {
 }
 
 #[test]
+fn every_failing_block_is_reported_and_nothing_is_written() {
+    let d = dir(&[("a.txt", "alpha\nbeta\n"), ("b.txt", "gamma\n")]);
+    let e = run(
+        d.path(),
+        "*** Update File: a.txt\n<<<<<<< SEARCH\nmissing one\n=======\nx\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nmissing two\n=======\ny\n>>>>>>> REPLACE\n*** Update File: b.txt\n<<<<<<< SEARCH\nmissing three\n=======\nz\n>>>>>>> REPLACE\n",
+    )
+    .unwrap_err()
+    .shown();
+    assert!(e.starts_with("3 blocks failed; nothing was written"), "{e}");
+    for line in [
+        "a.txt: block 1: SEARCH not found, first line `missing one`",
+        "a.txt: block 2: SEARCH not found, first line `missing two`",
+        "b.txt: block 1: SEARCH not found, first line `missing three`",
+        "note: a block after a failed one in the same file was checked against the file without it",
+        "hint: fix each failing block",
+    ] {
+        assert!(e.contains(line), "{e}");
+    }
+    assert_eq!(read(d.path(), "a.txt"), "alpha\nbeta\n");
+    assert_eq!(read(d.path(), "b.txt"), "gamma\n");
+}
+
+#[test]
+fn a_block_after_a_failed_one_sees_the_file_without_it() {
+    // Block 1 would create `x` but fails, so block 2, which searches `x`, fails too.
+    let d = dir(&[("a.txt", "a\n")]);
+    let e = run(
+        d.path(),
+        "*** Update File: a.txt\n<<<<<<< SEARCH\nmissing\n=======\nx\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nx\n=======\ny\n>>>>>>> REPLACE\n",
+    )
+    .unwrap_err()
+    .shown();
+    assert!(e.starts_with("2 blocks failed; nothing was written"), "{e}");
+    assert!(e.contains("a.txt: block 1: SEARCH not found"), "{e}");
+    assert!(e.contains("a.txt: block 2: SEARCH not found"), "{e}");
+    assert_eq!(read(d.path(), "a.txt"), "a\n");
+}
+
+#[test]
+fn blocks_apply_in_order_so_later_ones_see_earlier_edits() {
+    let d = dir(&[("a.txt", "a\n")]);
+    run(
+        d.path(),
+        "*** Update File: a.txt\n<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nb\n=======\nc\n>>>>>>> REPLACE\n",
+    )
+    .unwrap();
+    assert_eq!(read(d.path(), "a.txt"), "c\n");
+}
+
+#[test]
 fn crlf_patch_text_matches_an_lf_file() {
     let d = dir(&[("w.txt", "a\nb\nc\n")]);
     let a = apply(

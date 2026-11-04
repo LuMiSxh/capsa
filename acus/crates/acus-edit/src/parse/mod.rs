@@ -20,6 +20,11 @@ pub enum Op {
         path: String,
         lines: Vec<String>,
     },
+    /// Appends the `+` lines that follow to the end of a file that exists.
+    Append {
+        path: String,
+        lines: Vec<String>,
+    },
     /// Removes a file. It takes no body, so the op is complete as soon as its line is read.
     Delete {
         path: String,
@@ -133,6 +138,7 @@ fn expand_home(ops: &mut [Op]) {
     for op in ops {
         match op {
             Op::Add { path, .. }
+            | Op::Append { path, .. }
             | Op::Delete { path }
             | Op::ReplaceSymbol { path, .. }
             | Op::DeleteSymbol { path, .. }

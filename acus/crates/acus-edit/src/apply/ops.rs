@@ -15,6 +15,7 @@ pub(super) fn apply_op(files: &mut Files, op: &Op) -> Result<Vec<Change>> {
         // `apply_line_ranges` runs these before the other ops.
         Op::DeleteLines { .. } | Op::MoveLines { .. } => Vec::new(),
         Op::Add { path, lines } => vec![add(files, path, lines)?],
+        Op::Append { path, lines } => vec![append(files, path, lines)?],
         Op::Delete { path } => vec![delete(files, path)?],
         Op::Update {
             path,
@@ -73,6 +74,23 @@ fn add(files: &mut Files, path: &str, lines: &[String]) -> Result<Change> {
     })
 }
 
+/// Appends `body` after the last line of a file that exists. Joining the lines puts exactly one
+/// newline between the old end and the new text; a file without a trailing newline keeps that.
+fn append(files: &mut Files, path: &str, body: &[String]) -> Result<Change> {
+    let f = files.get(path)?;
+    let at = match f.lines.as_ref() {
+        Some(lines) => lines.len(),
+        None => return Err(EditError::AppendMissing { path: path.into() }),
+    };
+    f.splice(at, 0, body);
+    f.dirty = true;
+    Ok(Change::Modified {
+        path: path.to_owned(),
+        added: body.len(),
+        removed: 0,
+    })
+}
+
 fn delete(files: &mut Files, path: &str) -> Result<Change> {
     let n = files.lines(path)?.len();
     let f = files.get(path)?;
@@ -95,15 +113,23 @@ fn update(
     let (mut numbered, mut trailing, mut indented, mut skipped, mut crlf) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let (mut added, mut removed) = (0, 0);
+    let mut failed = Vec::new();
     for (i, c) in chunks.iter().enumerate() {
-        let (edit, fix) = search_block(
+        let block = search_block(
             f.lines
                 .as_ref()
                 .ok_or_else(|| EditError::NotLoaded { path: path.into() })?,
             c,
             path,
             i + 1,
-        )?;
+        );
+        let (edit, fix) = match block {
+            Ok(found) => found,
+            Err(e) => {
+                failed.push(e);
+                continue;
+            }
+        };
         if c.old == c.new {
             skipped.push(c.line);
             continue;
@@ -121,6 +147,9 @@ fn update(
         added += edit.added;
         removed += edit.removed;
         f.splice(edit.at, edit.old, &edit.new);
+    }
+    if !failed.is_empty() {
+        return Err(EditError::many(failed));
     }
     files.numbered.extend(numbered);
     files.trailing.extend(trailing);

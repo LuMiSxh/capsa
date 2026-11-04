@@ -6,6 +6,7 @@ expression: "&out[out.find(\"PATCH FORMAT\").unwrap()..]"
 PATCH FORMAT (stdin or --file; all or nothing, nothing is written on an error):
   *** Update File: PATH         then SEARCH/REPLACE blocks (below)
   *** Add File: PATH            then `+` lines
+  *** Append File: PATH         then `+` lines, added after the file's last line
   *** Delete File: PATH
   *** Copy File: SRC            then *** To: DST (later blocks may update DST)
   *** Replace Symbol: PATH#Symbol   then the new definition as `+` lines
@@ -27,10 +28,11 @@ PATCH FORMAT (stdin or --file; all or nothing, nothing is written on an error):
   The old text is a substring, part of a line or several lines, and must occur exactly once in
   the file. With no match the error shows the nearest lines; with several it lists their line
   numbers, so add a neighbouring line to the block to narrow the search.
-  Blocks of one file and files of one patch apply all or nothing. If the text is not found as
-  written, acus also accepts it with line-number prefixes stripped, ignoring trailing
-  whitespace, or ignoring leading indentation (REPLACE is then written in the file's
-  indentation), and prints a `note:`.
+  Blocks of one file and files of one patch apply all or nothing. When several blocks fail,
+  one run reports every one of them, each with its nearest match; nothing is written. If the
+  text is not found as written, acus also accepts it with line-number prefixes stripped,
+  ignoring trailing whitespace, or ignoring leading indentation (REPLACE is then written in
+  the file's indentation), and prints a `note:`.
   Written files must not get more syntax errors (tree-sitter) than they had, or the patch fails
   and names the line; --allow-broken writes them anyway.
 
