@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `acus find` with no path searches piped standard input instead of the working directory, so `cmd | acus find 'PAT'` and the guard's `grep` rewrite filter the command's output. A terminal, an empty stream or a closed stdin still searches `.`.
+
 ## [0.20.0]
 
 ### Added

@@ -11,7 +11,7 @@ One call answers what usually takes search → read → read. Output is line-num
 
 | Instead of | Run |
 |---|---|
-| `grep`, `rg`, `find` to locate code or usages | `acus find 'PAT' [PATH…] [-g '*.rs']` (`-g '!dist'` excludes a path); `--block` adds the code around each hit; `-l`, `-w`, `-i`, `-c`, `-o`, `-v`, `-t py` work as in grep; `-A/-B/-C N` print N lines of context like grep (context lines are `N-`, hits `N`, groups split by `--`); `-x` whole lines, `-L` follows symlinks, `-U` multiline patterns; `-u --hidden` also searches ignored and hidden files |
+| `grep`, `rg`, `find` to locate code or usages | `acus find 'PAT' [PATH…] [-g '*.rs']` (`-g '!dist'` excludes a path); `--block` adds the code around each hit; `-l`, `-w`, `-i`, `-c`, `-o`, `-v`, `-t py` work as in grep; `-A/-B/-C N` print N lines of context like grep (context lines are `N-`, hits `N`, groups split by `--`); `-x` whole lines, `-L` follows symlinks, `-U` multiline patterns; `-u --hidden` also searches ignored and hidden files; with no PATH, piped stdin is searched instead of `.` |
 | `sed -n A,Bp f \| grep 'x'` | `acus find 'x' f:A-B` (or `f#Sym`): searches only that range, with file-absolute line numbers; `f:-N` for the last N lines, `f:N-` from line N to the end |
 | `grep 'x' log \| cut -c1-200 \| tail -30` | `acus find 'x' log --cut 200 --last 30`: `--cut N` clips each hit line to N chars, `--last N` keeps the last N hits per file |
 | `ls -R`, `tree`, `find -type f` | `acus map [DIR]` |

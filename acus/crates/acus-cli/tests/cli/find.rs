@@ -133,6 +133,99 @@ fn find_reads_standard_input_for_dash() {
 }
 
 #[test]
+fn find_searches_piped_stdin_without_a_path() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.rs"), "cwd Parser\n").unwrap();
+    let input = "first Parser\nnothing\nsecond parser\n";
+    let (code, out, err) = acus_in(d.path(), &["find", "Parser"], input);
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert_eq!(out, "<stdin>\n1\tfirst Parser\n");
+    let (_, out, _) = acus_in(d.path(), &["find", "-i", "parser"], input);
+    assert!(
+        out.contains("1\tfirst Parser") && out.contains("3\tsecond parser"),
+        "{out}"
+    );
+    let (code, out, _) = acus_in(d.path(), &["find", "-F", "second parser"], input);
+    assert_eq!((code, out.as_str()), (0, "<stdin>\n3\tsecond parser\n"));
+    let (code, out, _) = acus_in(d.path(), &["find", "zzz_none"], input);
+    assert_eq!((code, out.as_str()), (1, ""));
+}
+
+#[test]
+fn find_stdin_honours_count_head_and_invert() {
+    let d = tempfile::tempdir().unwrap();
+    let input = "hit one\nmiss\nhit two\nhit three\n";
+    let (_, out, _) = acus_in(d.path(), &["find", "hit", "-c"], input);
+    assert_eq!(out, "<stdin> 3\ntotal 3 in 1 files\n");
+    let (_, out, _) = acus_in(d.path(), &["find", "hit", "--head", "3"], input);
+    assert_eq!(out.lines().count(), 4, "{out}");
+    assert!(out.contains("output cut at --head 3"), "{out}");
+    let (_, out, _) = acus_in(d.path(), &["find", "-v", "hit"], input);
+    assert_eq!(out, "<stdin>\n2\tmiss\n");
+}
+
+#[test]
+fn find_explicit_path_ignores_piped_stdin() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.rs"), "file Parser\n").unwrap();
+    let (code, out, err) = acus_in(d.path(), &["find", "Parser", "a.rs"], "stdin Parser\n");
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert_eq!(out, "a.rs\n1\tfile Parser\n");
+}
+
+#[test]
+fn find_empty_or_null_stdin_searches_the_directory() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.rs"), "cwd Parser\n").unwrap();
+    let (code, out, _) = acus_in(d.path(), &["find", "Parser"], "");
+    assert_eq!((code, out.as_str()), (0, "a.rs\n1\tcwd Parser\n"));
+    let empty = d.path().join("empty.txt");
+    std::fs::write(&empty, "").unwrap();
+    let run = |stdin: std::process::Stdio| {
+        decode(
+            bin()
+                .args(["find", "Parser"])
+                .current_dir(d.path())
+                .stdin(stdin)
+                .output()
+                .unwrap(),
+        )
+    };
+    let opened = std::fs::File::open(&empty).unwrap();
+    assert_eq!(
+        run(std::process::Stdio::from(opened)).1,
+        "a.rs\n1\tcwd Parser\n"
+    );
+    assert_eq!(run(std::process::Stdio::null()).1, "a.rs\n1\tcwd Parser\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn find_with_a_closed_stdin_searches_the_directory() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.rs"), "cwd Parser\n").unwrap();
+    let out = std::process::Command::new("sh")
+        .args(["-c", r#"exec 0<&-; exec "$0" find Parser"#])
+        .arg(env!("CARGO_BIN_EXE_acus"))
+        .current_dir(d.path())
+        .env("ACUS_CONFIG", "/nonexistent/acus.toml")
+        .env_remove("ACUS_DISABLE")
+        .output()
+        .unwrap();
+    assert_eq!(decode(out).1, "a.rs\n1\tcwd Parser\n");
+}
+
+#[test]
+fn find_stdin_snapshot() {
+    let d = tempfile::tempdir().unwrap();
+    let _dropguard = snapshot_settings().bind_to_scope();
+    insta::assert_snapshot!(
+        "cli__find_stdin",
+        acus_in(d.path(), &["find", "hit"], HITS).1
+    );
+}
+
+#[test]
 fn find_json() {
     let _dropguard = snapshot_settings().bind_to_scope();
     insta::assert_snapshot!(

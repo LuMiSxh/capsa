@@ -1,0 +1,8 @@
+---
+source: acus/crates/acus-cli/tests/cli/find.rs
+expression: "acus_in(d.path(), &[\"find\", \"hit\"], HITS).1"
+---
+<stdin>
+2	hit one
+6	hit two
+11	hit three

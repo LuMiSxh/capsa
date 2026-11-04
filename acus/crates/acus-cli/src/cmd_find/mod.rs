@@ -1,25 +1,26 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus find`: regex search, with the enclosing symbol of each hit.
 
+mod input;
+mod pattern;
 mod print;
 
 use crate::fmt::{Budget, CUT, Out};
 use crate::globs::{add_type_globs, searched_globs};
 use crate::source::{address, locate};
-use acus_search::{FileHits, FindOpts, Hit, attach_outlines, find, find_range, find_stdin};
+use acus_search::{FileHits, FindOpts, Hit, attach_outlines};
 use acus_syntax::{Address, Target};
 use acus_walk::WalkOpts;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use print::{print_blocks, print_json, print_lines, print_only};
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// Pattern, then paths (like rg). With -e, all positionals are paths; `-` is standard input. A path can be an address as in `acus show`: `path:A-B`, `path:N-`, `path:-N`, `path:LINE` or `path#Symbol`.
+    /// Pattern, then paths (like rg). With no path, piped stdin is searched, else `.`; `-` is standard input. With -e, all positionals are paths. A path can be an address as in `acus show`: `path:A-B`, `path:N-`, `path:-N`, `path:LINE` or `path#Symbol`.
     positional: Vec<String>,
     /// Pattern (repeatable); may start with `-`.
     #[arg(short = 'e', long = "regexp", allow_hyphen_values = true)]
@@ -125,15 +126,34 @@ pub struct Args {
 pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     let context = context_of(a);
     refuse_conflicts(a, context.is_some())?;
-    let patterns = take_patterns(a)?;
+    let patterns = pattern::take_patterns(a)?;
     let newline_hint =
         !a.multiline && !a.fixed_strings && patterns.iter().any(|p| p.contains(r"\n"));
-    // Named in the hint when nothing matches; the paths are those left after the pattern.
-    let searched = searched_globs(&a.globs, path_args(a));
-    let (roots, spans, walk_files, read_stdin) = split_paths(path_args(a))?;
+    let paths = path_args(a);
+    let (roots, spans, walk_files, dash) = split_paths(paths)?;
+    // With no path, non-empty piped stdin replaces the walk of `.`; `-` always reads it.
+    let stdin = if dash {
+        Some(input::read_stdin()?)
+    } else if paths.is_empty() {
+        input::piped_stdin()
+    } else {
+        None
+    };
+    // Named in the hint when nothing matches; a piped search names its one input.
+    let searched = if paths.is_empty() && stdin.is_some() {
+        let stdin_path = ["<stdin>".to_owned()];
+        searched_globs(&a.globs, &stdin_path)
+    } else {
+        searched_globs(&a.globs, paths)
+    };
     let opts = find_opts(a, patterns, roots);
-    let mut files = search_all(&opts, walk_files, read_stdin, &spans)
-        .map_err(|e| explain_pattern_error(e, a.fixed_strings, a.perl))?;
+    let mut files = input::search_all(
+        &opts,
+        walk_files && stdin.is_none(),
+        stdin.as_deref(),
+        &spans,
+    )
+    .map_err(|e| explain_pattern_error(e, a.fixed_strings, a.perl))?;
     if files.is_empty() {
         print_no_matches(a, out, searched.as_deref(), newline_hint);
         return Ok(Outcome::Empty);
@@ -193,38 +213,6 @@ fn refuse_conflicts(a: &Args, context: bool) -> Result<()> {
         );
     }
     Ok(())
-}
-
-/// The patterns: each `-e`, else the first positional; reads `\|` as alternation unless `-E`,
-/// `-P` or `-F` is given.
-fn take_patterns(a: &Args) -> Result<Vec<String>> {
-    let mut patterns: Vec<String> = if a.patterns.is_empty() {
-        a.positional.first().cloned().into_iter().collect()
-    } else {
-        a.patterns.clone()
-    };
-    if patterns.is_empty() {
-        return Err(capsa_core::hint::Hinted::new(
-            "no pattern given",
-            "acus find PATTERN [PATH...] or -e PAT -e PAT",
-        )
-        .into());
-    }
-    if !a.fixed_strings && !a.perl && !a._extended {
-        let mut noted = false;
-        for p in &mut patterns {
-            if let Some(fixed) = bre_alternation(p) {
-                *p = fixed;
-                noted = true;
-            }
-        }
-        if noted {
-            eprintln!(
-                "note: read `\\|` as alternation `|` (grep BRE habit); write `[|]` for a literal pipe, or pass -E/-P/-F to keep `\\|` as is"
-            );
-        }
-    }
-    Ok(patterns)
 }
 
 /// The path arguments: the positionals, less the pattern when it came from a positional.
@@ -442,65 +430,6 @@ fn address_lines(addr: &Address) -> Result<(usize, usize)> {
     let lines: Vec<&str> = src.lines().collect();
     let span = locate(addr, &addr.path, &src, &lines, &mut HashMap::new())?;
     Ok((span.start, span.end))
-}
-
-/// Files with hits: the walked paths, the addressed line ranges, then standard input when `-`
-/// was given. Sorted by path.
-fn search_all(
-    opts: &FindOpts,
-    walk_files: bool,
-    read_stdin: bool,
-    spans: &[(Address, (usize, usize))],
-) -> Result<Vec<FileHits>> {
-    let mut files = if walk_files { find(opts)? } else { Vec::new() };
-    for (addr, lines) in spans {
-        files.extend(find_range(opts, Path::new(&addr.path), *lines)?);
-    }
-    if read_stdin {
-        let mut input = Vec::new();
-        std::io::stdin()
-            .read_to_end(&mut input)
-            .context("cannot read stdin")?;
-        files.extend(find_stdin(opts, &input)?);
-    }
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(files)
-}
-
-/// grep's BRE spells alternation `\|`; Rust regex reads it as a literal pipe. Agents write the
-/// grep form from habit, so unless the pattern already uses an unescaped `|` (a sign the author
-/// knows ERE) each `\|` outside a character class becomes `|`. `\\|` is an escaped backslash
-/// followed by such a `|`, so it leaves the pattern as is. Returns None when nothing changes.
-fn bre_alternation(p: &str) -> Option<String> {
-    let mut out = String::with_capacity(p.len());
-    let (mut in_class, mut changed) = (false, false);
-    let mut chars = p.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => match chars.next() {
-                Some('|') if !in_class => {
-                    out.push('|');
-                    changed = true;
-                }
-                Some(n) => {
-                    out.push('\\');
-                    out.push(n);
-                }
-                None => out.push('\\'),
-            },
-            '[' if !in_class => {
-                in_class = true;
-                out.push(c);
-            }
-            ']' if in_class => {
-                in_class = false;
-                out.push(c);
-            }
-            '|' if !in_class => return None,
-            _ => out.push(c),
-        }
-    }
-    changed.then_some(out)
 }
 
 pub(super) fn matched(h: &Hit) -> impl Iterator<Item = &str> {
