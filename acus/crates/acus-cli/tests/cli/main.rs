@@ -7,6 +7,7 @@ mod common;
 mod ctx;
 mod diff_log;
 mod diff_moves;
+mod diff_status;
 mod files;
 mod find;
 mod follow;

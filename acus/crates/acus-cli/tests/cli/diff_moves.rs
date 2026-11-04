@@ -3,7 +3,7 @@ use crate::common::*;
 
 fn repo() -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
-    git(d.path(), &["init", "-q"]);
+    git(d.path(), &["init", "-q", "-b", "main"]);
     d
 }
 
@@ -48,7 +48,7 @@ fn diff_outlines_added_files_and_names_the_body() {
     let (code, json, _) = acus_in(d.path(), &["diff", "-p", "--json"], "");
     assert_eq!(code, 0);
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    let new = v
+    let new = v["files"]
         .as_array()
         .unwrap()
         .iter()
@@ -58,7 +58,7 @@ fn diff_outlines_added_files_and_names_the_body() {
     // `--full` prints the body again.
     let (code, full, _) = acus_in(d.path(), &["diff", "-p", "--full", "new.rs"], "");
     assert_eq!(code, 0);
-    assert!(full.starts_with("? new.rs +120\n1\t+fn f1() {"), "{full}");
+    assert!(full.contains("? new.rs +120\n1\t+fn f1() {"), "{full}");
     assert!(!full.contains("… body:"), "{full}");
     assert!(!full.contains("  fn f1 1-3"), "{full}");
 }
@@ -83,7 +83,7 @@ fn moves_across_files_print_the_source_summary_and_one_destination_line() {
     assert_eq!(code, 0);
     assert_eq!(
         out,
-        "M a.rs -4\n  (top level) -1\n  fn b (removed) -3 moved → b.rs\nM b.rs +4\n  (top level) +1\n  moved fn b ← a.rs:5-7 (unchanged)\n== 2 files +4 -4\n"
+        "on main · unstaged 2\nM a.rs -4\n  (top level) -1\n  fn b (removed) -3 moved → b.rs\nM b.rs +4\n  (top level) +1\n  moved fn b ← a.rs:5-7 (unchanged)\n== 2 files +4 -4\n"
     );
 }
 
@@ -197,7 +197,7 @@ fn blank_changed_lines_are_counted_but_not_printed() {
     assert_eq!(code, 0);
     assert_eq!(
         out,
-        "M a.rs +3\n  fn f 1-5 +3\n3\t+    x();\n== 1 file +3\n"
+        "on main · unstaged 1\nM a.rs +3\n  fn f 1-5 +3\n3\t+    x();\n== 1 file +3\n"
     );
     assert!(
         !out.lines()

@@ -9,7 +9,7 @@ fn diff_groups_changes_by_symbol() {
         "fn f() {\n    one()\n}\n\nfn gone() {}\n",
     )
     .unwrap();
-    git(d.path(), &["init", "-q"]);
+    git(d.path(), &["init", "-q", "-b", "main"]);
     git(d.path(), &["add", "."]);
     git(d.path(), &["commit", "-qm", "x"]);
     std::fs::write(d.path().join("a.rs"), "fn f() {\n    two()\n}\n").unwrap();
@@ -18,35 +18,36 @@ fn diff_groups_changes_by_symbol() {
     assert_eq!(code, 0, "{out}");
     assert_eq!(
         out,
-        "M a.rs +1 -3\n  fn f 1-3 +1 -1\n\t-    one()\n2\t+    two()\n  (top level) -1\n  fn gone (removed) -1\n\t-fn gone() {}\n? new.md +1\n  h1 Hi 1-1\n… body: acus show new.md\n== 2 files +2 -3\n"
+        "on main · unstaged 1 · untracked 1\nM a.rs +1 -3\n  fn f 1-3 +1 -1\n\t-    one()\n2\t+    two()\n  (top level) -1\n  fn gone (removed) -1\n\t-fn gone() {}\n? new.md +1\n  h1 Hi 1-1\n… body: acus show new.md\n== 2 files +2 -3\n"
     );
     // `--full` keeps the old view: bodies, blank lines and no pointer.
     let (_, full, _) = acus_in(d.path(), &["diff", "-p", "--full"], "");
     assert_eq!(
         full,
-        "M a.rs +1 -3\n  fn f 1-3 +1 -1\n\t-    one()\n2\t+    two()\n  (top level) -1\n\t-\n  fn gone (removed) -1\n\t-fn gone() {}\n? new.md +1\n1\t+# Hi\n== 2 files +2 -3\n"
+        "on main · unstaged 1 · untracked 1\nM a.rs +1 -3\n  fn f 1-3 +1 -1\n\t-    one()\n2\t+    two()\n  (top level) -1\n\t-\n  fn gone (removed) -1\n\t-fn gone() {}\n? new.md +1\n1\t+# Hi\n== 2 files +2 -3\n"
     );
     git(d.path(), &["add", "."]);
     git(d.path(), &["commit", "-qm", "y"]);
     assert_eq!(
         acus_in(d.path(), &["diff"], ""),
-        (0, String::new(), "(no changes)\n".into())
+        (0, "on main\n".into(), "(no changes)\n".into())
     );
     let (code, out, err) = acus_in(d.path(), &["diff", "--json"], "");
-    assert_eq!(code, 0);
-    assert!(err.is_empty());
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&out).unwrap(),
-        serde_json::Value::Null
-    );
+    assert_eq!((code, err.as_str()), (0, ""));
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["header"]["branch"], "main");
+    assert_eq!(v["files"], serde_json::json!([]));
     let (code, out, err) = acus_in(d.path(), &["run", "--json"], r#"[["diff"]]"#);
-    assert_eq!((code, out.as_str(), err.as_str()), (0, "null\n", ""));
+    assert_eq!((code, err.as_str()), (0, ""));
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["header"]["branch"], "main");
+    assert_eq!(v["files"], serde_json::json!([]));
 }
 
 #[test]
 fn unstaged_diff_reads_the_index() {
     let d = tempfile::tempdir().unwrap();
-    git(d.path(), &["init", "-q"]);
+    git(d.path(), &["init", "-q", "-b", "main"]);
     std::fs::write(
         d.path().join("a.rs"),
         "fn one() {\n    1;\n}\n\nfn two() {\n    2;\n}\n",
@@ -65,7 +66,7 @@ fn unstaged_diff_reads_the_index() {
         (code, out.as_str()),
         (
             0,
-            "M b.rs +1 -1\n  fn two 5-7 +1 -1\n== 1 file +1 -1\nstaged: 1 file (acus diff --staged)\n",
+            "on main · staged 1 · unstaged 1\nM b.rs +1 -1\n  fn two 5-7 +1 -1\n== 1 file +1 -1\nstaged: 1 file (acus diff --staged)\n",
         )
     );
 }
@@ -73,21 +74,26 @@ fn unstaged_diff_reads_the_index() {
 #[test]
 fn default_diff_names_staged_changes_in_a_footer() {
     let d = tempfile::tempdir().unwrap();
-    git(d.path(), &["init", "-q"]);
+    git(d.path(), &["init", "-q", "-b", "main"]);
     std::fs::write(d.path().join("a.rs"), "fn one() {\n    1;\n}\n").unwrap();
     git(d.path(), &["add", "."]);
     git(d.path(), &["commit", "-qm", "i"]);
     std::fs::write(d.path().join("a.rs"), "fn one() {\n    2;\n}\n").unwrap();
     git(d.path(), &["add", "a.rs"]);
-    // Only staged changes: the footer replaces "(no changes)" and the exit code stays 0.
+    // Only staged changes: the footer follows the header and the exit code stays 0.
     let (code, out, err) = acus_in(d.path(), &["diff"], "");
     assert_eq!(
         (code, out.as_str(), err.as_str()),
-        (0, "staged: 1 file +1 -1 (acus diff --staged)\n", "")
+        (
+            0,
+            "on main · staged 1\nstaged: 1 file +1 -1 (acus diff --staged)\n",
+            ""
+        )
     );
     // The staged view shows the change itself, without the footer.
     let (code, out, _) = acus_in(d.path(), &["diff", "--staged"], "");
     assert_eq!(code, 0);
+    assert!(out.starts_with("on main · staged 1\n"), "{out}");
     assert!(out.ends_with("== 1 file +1 -1\n"), "{out}");
     // Unstaged work comes first, the footer last.
     std::fs::write(d.path().join("new.md"), "# Hi\n").unwrap();
@@ -95,14 +101,14 @@ fn default_diff_names_staged_changes_in_a_footer() {
     assert_eq!(code, 0);
     assert_eq!(
         out,
-        "? new.md +1\n== 1 file +1\nstaged: 1 file +1 -1 (acus diff --staged)\n"
+        "on main · staged 1 · untracked 1\n? new.md +1\n== 1 file +1\nstaged: 1 file +1 -1 (acus diff --staged)\n"
     );
 }
 
 #[test]
 fn untracked_files_are_marked_question_and_staged_new_files_a() {
     let d = tempfile::tempdir().unwrap();
-    git(d.path(), &["init", "-q"]);
+    git(d.path(), &["init", "-q", "-b", "main"]);
     std::fs::write(d.path().join("a.txt"), "old\n").unwrap();
     git(d.path(), &["add", "."]);
     git(d.path(), &["commit", "-qm", "i"]);
@@ -115,17 +121,23 @@ fn untracked_files_are_marked_question_and_staged_new_files_a() {
         (code, out.as_str()),
         (
             0,
-            "? untracked.txt +1\n== 1 file +1\nstaged: 1 file +1 (acus diff --staged)\n",
+            "on main · staged 1 · untracked 1\n? untracked.txt +1\n== 1 file +1\nstaged: 1 file +1 (acus diff --staged)\n",
         )
     );
     // Staged new file: `A`.
     let (code, out, _) = acus_in(d.path(), &["diff", "--staged"], "");
-    assert_eq!((code, out.as_str()), (0, "A staged.txt +1\n== 1 file +1\n"));
+    assert_eq!(
+        (code, out.as_str()),
+        (
+            0,
+            "on main · staged 1 · untracked 1\nA staged.txt +1\n== 1 file +1\n"
+        )
+    );
     // The JSON status matches the text marker.
     let (code, out, err) = acus_in(d.path(), &["diff", "--json"], "");
     assert_eq!((code, err.as_str()), (0, ""));
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v[0]["status"], "?");
+    assert_eq!(v["files"][0]["status"], "?");
 }
 
 #[test]
@@ -136,7 +148,7 @@ fn diff_human_view_aligns_file_counts() {
         "fn f() {\n    one()\n}\n\nfn gone() {}\n",
     )
     .unwrap();
-    git(d.path(), &["init", "-q"]);
+    git(d.path(), &["init", "-q", "-b", "main"]);
     git(d.path(), &["add", "."]);
     git(d.path(), &["commit", "-qm", "x"]);
     std::fs::write(d.path().join("a.rs"), "fn f() {\n    two()\n}\n").unwrap();
@@ -145,7 +157,7 @@ fn diff_human_view_aligns_file_counts() {
         acus_in(d.path(), &["diff", "--human"], ""),
         (
             0,
-            "M a.rs    +1 -3\n  fn f 1-3 +1 -1\n  (top level) -1\n  fn gone (removed) -1\n? new.md     +1\n== 2 files +2 -3\n".into(),
+            "on main · unstaged 1 · untracked 1\nM a.rs    +1 -3\n  fn f 1-3 +1 -1\n  (top level) -1\n  fn gone (removed) -1\n? new.md     +1\n== 2 files +2 -3\n".into(),
             String::new()
         )
     );
@@ -255,9 +267,9 @@ fn human_views_print_no_ansi_under_no_color() {
 }
 
 #[test]
-fn oneline_and_stat_are_accepted_as_no_ops() {
+fn oneline_is_accepted_and_stat_stays_flat() {
     let d = tempfile::tempdir().unwrap();
-    git(d.path(), &["init", "-q"]);
+    git(d.path(), &["init", "-q", "-b", "main"]);
     for n in 1..=3 {
         std::fs::write(d.path().join("a.rs"), format!("fn f() {{\n    {n}\n}}\n")).unwrap();
         git(d.path(), &["add", "."]);
@@ -271,5 +283,8 @@ fn oneline_and_stat_are_accepted_as_no_ops() {
     let diff = acus_in(d.path(), &["diff"], "");
     assert_eq!(diff.0, 0, "{}", diff.2);
     assert!(diff.1.contains("M a.rs +1 -1"), "{}", diff.1);
-    assert_eq!(acus_in(d.path(), &["diff", "--stat"], ""), diff);
+    // `--stat` keeps one line per file and drops the symbol groups.
+    let (code, stat, _) = acus_in(d.path(), &["diff", "--stat"], "");
+    assert_eq!(code, 0);
+    assert_eq!(stat, "on main · unstaged 1\na.rs +1 -1\n== 1 file +1 -1\n");
 }

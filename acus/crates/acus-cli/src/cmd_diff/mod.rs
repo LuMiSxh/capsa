@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus diff`: changed lines, summarised per enclosing symbol.
 
+mod modes;
 mod moves;
 mod new_files;
+mod raw;
+mod status;
 
 use crate::fmt::{Budget, Out, clip};
 use crate::git::git;
@@ -11,6 +14,8 @@ use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use moves::{Move, MoveIndex, find_moves, moved_line};
+use raw::parse;
+use status::Status;
 use std::path::Path;
 
 /// Printed changed lines per file with `-p`; `--full` lifts the cap.
@@ -55,9 +60,15 @@ pub struct Args {
     /// With -p, clip each changed line to N characters; a clipped line ends with `… (+N chars)`.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
     cut: Option<u64>,
-    /// Accepted for git habits: the per-file summary is already the default output.
-    #[arg(long = "stat", hide = true)]
-    _stat: bool,
+    /// One `path +A -R` line per file and a total, without symbol groups.
+    #[arg(long)]
+    stat: bool,
+    /// Changed paths only, one per line with the status letter.
+    #[arg(long)]
+    name_only: bool,
+    /// Unmerged paths with their conflict line ranges; exits 1 when there are none.
+    #[arg(long)]
+    conflicts: bool,
 }
 
 #[derive(Default)]
@@ -69,6 +80,8 @@ struct FileDiff {
     binary: bool,
     /// Not in the index: shown as `?`, like git's `??`.
     untracked: bool,
+    /// Unmerged: shown as `U`, like git's `UU`.
+    unmerged: bool,
     /// (added, line number on that side, text).
     lines: Vec<(bool, usize, String)>,
 }
@@ -117,32 +130,61 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     let new_rev = range
         .map(|(_, r)| r.trim_start_matches('.'))
         .map(|r| if r.is_empty() { "HEAD" } else { r });
-    let files = changed_files(&a, rev, paths, range.is_some())?;
-    // The default view is the working tree against the index: staged changes are named in a footer.
-    let staged = if out.format != Format::Json && rev.is_none() && !a.staged {
-        staged_footer(paths)?
+    // One `git status` feeds the header, the untracked list and the unmerged paths.
+    let status = if rev.is_none() || a.conflicts {
+        Some(Status::load(paths)?)
     } else {
         None
     };
+    let header = status.as_ref().filter(|_| rev.is_none());
+    if a.conflicts {
+        let Some(st) = status.as_ref() else {
+            return Ok(Outcome::Empty);
+        };
+        return Ok(modes::conflicts(out, header, st));
+    }
+    let files = changed_files(&a, rev, paths, range.is_some(), status.as_ref())?;
+    // `--stat` and `--name-only` need no outlines or symbol groups.
+    let views = if a.stat || a.name_only {
+        Vec::new()
+    } else {
+        render(&a, &files, rev, old_rev, new_rev)
+    };
+    // The default view is the working tree against the index: staged changes are named in a footer.
+    let staged =
+        if out.format != Format::Json && rev.is_none() && !a.staged && !a.stat && !a.name_only {
+            staged_footer(paths)?
+        } else {
+            None
+        };
     if files.is_empty() {
+        if out.format == Format::Json {
+            print_json(&a, header, &files, &views);
+            return Ok(Outcome::Found);
+        }
+        if let Some(h) = header {
+            outln!("{}", out.header(&h.header()));
+        }
         if let Some(line) = staged {
             outln!("{}", out.dim(&line));
             return Ok(Outcome::Found);
         }
-        if out.format == Format::Json {
-            // JSON prints `null` for no changes; the exit code stays 0.
-            outln!("null");
-        } else {
-            eprintln!("(no changes)");
-        }
+        eprintln!("(no changes)");
         return Ok(Outcome::Code(0));
     }
-    let rendered = render(&a, &files, rev, old_rev, new_rev);
     if out.format == Format::Json {
-        print_json_files(&a, &rendered);
+        print_json(&a, header, &files, &views);
         return Ok(Outcome::Found);
     }
-    print_text_files(&a, out, &files, &rendered, staged, rev);
+    if a.stat {
+        modes::print_stat(&a, out, header, &files);
+        return Ok(Outcome::Found);
+    }
+    if a.name_only {
+        modes::print_name_only(&a, out, header, &files);
+        return Ok(Outcome::Found);
+    }
+    print_text_files(&a, out, header, &files, &views, staged, rev);
     Ok(Outcome::Found)
 }
 
@@ -153,6 +195,7 @@ fn changed_files(
     rev: Option<&str>,
     paths: &[String],
     ranged: bool,
+    status: Option<&Status>,
 ) -> Result<Vec<FileDiff>> {
     let mut cmd = DIFF_FLAGS.to_vec();
     if a.staged {
@@ -170,27 +213,39 @@ fn changed_files(
         ),
         _ => e,
     })?);
-    if !a.staged && !ranged {
-        let mut ls = vec!["ls-files", "--others", "--exclude-standard", "--"];
-        ls.extend(paths.iter().map(String::as_str));
-        for p in git(&ls)?.lines() {
-            let Ok(src) = std::fs::read(p) else { continue };
-            let mut f = FileDiff {
-                new: Some(p.into()),
-                untracked: true,
-                ..FileDiff::default()
-            };
-            if src.contains(&0) {
-                f.binary = true;
-            } else {
-                let src = String::from_utf8_lossy(&src);
-                f.lines = src
-                    .lines()
-                    .enumerate()
-                    .map(|(i, l)| (true, i + 1, l.into()))
-                    .collect();
+    if let Some(s) = status {
+        if !a.staged && !ranged {
+            for p in &s.untracked {
+                let Ok(src) = std::fs::read(p) else { continue };
+                let mut f = FileDiff {
+                    new: Some(p.clone()),
+                    untracked: true,
+                    ..FileDiff::default()
+                };
+                if src.contains(&0) {
+                    f.binary = true;
+                } else {
+                    let src = String::from_utf8_lossy(&src);
+                    f.lines = src
+                        .lines()
+                        .enumerate()
+                        .map(|(i, l)| (true, i + 1, l.into()))
+                        .collect();
+                }
+                files.push(f);
             }
-            files.push(f);
+        }
+        // An unmerged file has no ordinary diff, so `git status` names it instead.
+        for p in &s.unmerged {
+            if files.iter().any(|f| f.new.as_deref() == Some(p.as_str())) {
+                continue;
+            }
+            files.push(FileDiff {
+                old: Some(p.clone()),
+                new: Some(p.clone()),
+                unmerged: true,
+                ..FileDiff::default()
+            });
         }
     }
     Ok(files)
@@ -252,36 +307,41 @@ fn render<'a>(
         .collect()
 }
 
-/// The JSON array: one object per changed file, with its symbol groups.
-fn print_json_files(a: &Args, views: &[View<'_>]) {
+/// The JSON value: the status header when there is one, then one object per changed file.
+fn print_json(a: &Args, header: Option<&Status>, files: &[FileDiff], views: &[View<'_>]) {
     let none = MoveIndex::default();
-    let v: Vec<_> = views
+    let v: Vec<_> = files
         .iter()
         .enumerate()
-        .map(|(i, view)| {
-            let f = view.f;
-            let gs = groups(f, view.new_o.as_ref(), view.old_o.as_ref(), i, &none);
-            let syms: Vec<_> = gs
-                .iter()
-                .map(|g| {
-                    let mut s = serde_json::json!({
-                        "symbol": g.label, "range": g.range, "added": g.add, "removed": g.del,
-                    });
-                    if a.lines {
-                        s["lines"] = g.lines.iter().map(|(add, n, t)| serde_json::json!({
-                            "op": if *add { "+" } else { "-" }, "line": n, "text": t,
-                        })).collect();
-                    }
-                    s
-                })
-                .collect();
+        .map(|(i, f)| {
+            let syms: Vec<serde_json::Value> = views.get(i).map_or_else(Vec::new, |view| {
+                groups(f, view.new_o.as_ref(), view.old_o.as_ref(), i, &none)
+                    .iter()
+                    .map(|g| {
+                        let mut s = serde_json::json!({
+                            "symbol": g.label, "range": g.range, "added": g.add, "removed": g.del,
+                        });
+                        if a.lines {
+                            s["lines"] = g.lines.iter().map(|(add, n, t)| serde_json::json!({
+                                "op": if *add { "+" } else { "-" }, "line": n, "text": t,
+                            })).collect();
+                        }
+                        s
+                    })
+                    .collect()
+            });
             serde_json::json!({
                 "status": status(f), "path": f.new.as_ref().or(f.old.as_ref()), "old_path": f.old,
                 "binary": f.binary, "added": total(f, true), "removed": total(f, false), "symbols": syms,
             })
         })
         .collect();
-    outln!("{}", serde_json::Value::Array(v));
+    let mut root = serde_json::Map::new();
+    if let Some(h) = header {
+        root.insert("header".into(), h.json());
+    }
+    root.insert("files".into(), serde_json::Value::Array(v));
+    outln!("{}", serde_json::Value::Object(root));
 }
 
 /// Output style for the text view.
@@ -308,12 +368,16 @@ impl Style<'_> {
 fn print_text_files(
     a: &Args,
     out: &Out,
+    header: Option<&Status>,
     files: &[FileDiff],
     views: &[View<'_>],
     staged: Option<String>,
     rev: Option<&str>,
 ) {
     let mut budget = Budget::new(a.head.map(|n| n as usize));
+    if let Some(h) = header {
+        budget.emit(&out.header(&h.header()));
+    }
     let style = Style {
         out,
         lines: a.lines,
@@ -342,12 +406,23 @@ fn print_text_files(
         let f = view.f;
         let path = file_path(f);
         let count = counts(total(f, true), total(f, false));
-        let head = if out.format == Format::Human {
+        let tail = if count.is_empty() {
+            if f.binary {
+                " (binary)".to_owned()
+            } else {
+                String::new()
+            }
+        } else if out.format == Format::Human {
             let binary = if f.binary { " (binary)" } else { "" };
-            format!("{} {path:<path_w$}  {count:>count_w$}{binary}", status(f))
+            format!("  {count:>count_w$}{binary}")
         } else {
             let binary = if f.binary { "(binary)" } else { "" };
-            format!("{} {path} {count}{binary}", status(f))
+            format!(" {count}{binary}")
+        };
+        let head = if out.format == Format::Human {
+            format!("{} {path:<path_w$}{tail}", status(f))
+        } else {
+            format!("{} {path}{tail}", status(f))
         };
         let mut block = vec![out.header(&head).trim_end().to_owned()];
         let dropped = if style.compact && f.old.is_none() && f.new.is_some() && !f.binary {
@@ -374,12 +449,7 @@ fn print_text_files(
     let (add, del) = files.iter().fold((0, 0), |(x, y), f| {
         (x + total(f, true), y + total(f, false))
     });
-    budget.emit(&out.header(&format!(
-        "== {} file{} {}",
-        files.len(),
-        if files.len() == 1 { "" } else { "s" },
-        counts(add, del)
-    )));
+    budget.emit(&out.header(&modes::total_line(files.len(), add, del)));
     if let Some(line) = staged {
         budget.emit(&out.dim(&line));
     }
@@ -502,6 +572,7 @@ fn file_path(f: &FileDiff) -> String {
 
 fn status(f: &FileDiff) -> &'static str {
     match (&f.old, &f.new) {
+        _ if f.unmerged => "U",
         _ if f.untracked => "?",
         (None, _) => "A",
         (_, None) => "D",
@@ -603,65 +674,9 @@ fn enclosing_index(o: &Outline, line: usize) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-/// Parses `git diff -U0` with `a/` and `b/` prefixes.
-fn parse(text: &str) -> Vec<FileDiff> {
-    let mut files: Vec<FileDiff> = Vec::new();
-    let (mut o, mut n, mut in_hunk) = (0, 0, false);
-    for l in text.lines() {
-        if let Some(h) = l.strip_prefix("diff --git a/") {
-            let (a, b) = h.split_once(" b/").unwrap_or((h, h));
-            files.push(FileDiff {
-                old: Some(a.into()),
-                new: Some(b.into()),
-                ..FileDiff::default()
-            });
-            in_hunk = false;
-            continue;
-        }
-        let Some(f) = files.last_mut() else { continue };
-        if in_hunk {
-            if let Some(t) = l.strip_prefix('-') {
-                f.lines.push((false, o, t.into()));
-                o += 1;
-            } else if let Some(t) = l.strip_prefix('+') {
-                f.lines.push((true, n, t.into()));
-                n += 1;
-            }
-        }
-        if let Some(h) = l.strip_prefix("@@ -") {
-            in_hunk = true;
-            let num = |s: &str| {
-                s.split(',')
-                    .next()
-                    .and_then(|x| x.parse().ok())
-                    .unwrap_or(0)
-            };
-            let mut it = h.split(' ');
-            o = num(it.next().unwrap_or(""));
-            n = num(it.next().unwrap_or("").trim_start_matches('+'));
-        } else if in_hunk {
-        } else if l.starts_with("new file mode") {
-            f.old = None;
-        } else if l.starts_with("deleted file mode") {
-            f.new = None;
-        } else if let Some(p) = l.strip_prefix("rename from ") {
-            f.old = Some(p.into());
-        } else if let Some(p) = l.strip_prefix("rename to ") {
-            f.new = Some(p.into());
-        } else if let Some(p) = l.strip_prefix("--- a/") {
-            f.old = Some(p.trim_end_matches('\t').into());
-        } else if let Some(p) = l.strip_prefix("+++ b/") {
-            f.new = Some(p.trim_end_matches('\t').into());
-        } else if l.starts_with("Binary files ") {
-            f.binary = true;
-        }
-    }
-    files
-}
-
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::raw::parse;
 
     #[test]
     fn parses_hunks_renames_and_headers_inside_hunks() {
