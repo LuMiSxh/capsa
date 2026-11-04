@@ -69,7 +69,7 @@ pub fn program_path(text: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{program_path, quote, render};
+    use super::{program_path, render};
     use std::path::Path;
 
     const LABEL: &str = "io.github.lumisxh.vicarius";
@@ -126,6 +126,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn zsh_starts_a_binary_whose_path_has_a_space_and_a_quote() {
+        use super::quote;
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("it's a dir").join("vicarius");
