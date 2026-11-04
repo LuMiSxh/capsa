@@ -9,11 +9,15 @@ use crate::hint::Hint;
 #[cfg(test)]
 mod tests;
 
-/// The skill a tool ships: its name, which is also its directory name, and the file text.
+/// Files a skill ships beside `SKILL.md`: a path relative to the skill directory and its text.
+pub type ExtraFiles = &'static [(&'static str, &'static str)];
+
+/// The skill a tool ships: its name, which is also its directory name, and its files.
 #[derive(Debug, Clone, Copy)]
 pub struct Skill {
     pub tool: &'static str,
     pub text: &'static str,
+    pub extra: ExtraFiles,
 }
 
 /// Where a skill is written.
@@ -67,51 +71,98 @@ pub fn install(home: &Path, skill: &Skill, target: Target) -> Result<Vec<PathBuf
             path: dir.clone(),
             source,
         })?;
-        let file = dir.join(SKILL_FILE);
-        std::fs::write(&file, skill.text).map_err(|source| SkillError::Write {
-            path: file.clone(),
-            source,
-        })?;
-        written.push(file);
+        write(&dir.join(SKILL_FILE), skill.text, &mut written)?;
+        for (path, text) in skill.extra {
+            let file = dir.join(path);
+            if let Some(parent) = file.parent() {
+                std::fs::create_dir_all(parent).map_err(|source| SkillError::Create {
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
+            }
+            write(&file, text, &mut written)?;
+        }
     }
     Ok(written)
 }
 
-/// Removes the `SKILL.md` of `tool` from every skill directory under `home`, and each directory
-/// that is left empty. Returns the files removed or, with `dry_run`, the files that would be.
+fn write(file: &Path, text: &str, written: &mut Vec<PathBuf>) -> Result<(), SkillError> {
+    std::fs::write(file, text).map_err(|source| SkillError::Write {
+        path: file.to_path_buf(),
+        source,
+    })?;
+    written.push(file.to_path_buf());
+    Ok(())
+}
+
+/// Removes the files of `skill` from every skill directory under `home`, and each directory that
+/// is left empty. Returns the files removed or, with `dry_run`, the files that would be.
 ///
 /// # Errors
 ///
 /// Fails when a file exists but cannot be removed.
-pub fn uninstall(home: &Path, tool: &str, dry_run: bool) -> Result<Vec<PathBuf>, SkillError> {
+pub fn uninstall(home: &Path, skill: &Skill, dry_run: bool) -> Result<Vec<PathBuf>, SkillError> {
     let mut files = Vec::new();
-    for dir in Target::All.dirs(home, tool) {
-        let file = dir.join(SKILL_FILE);
-        if !file.is_file() {
-            continue;
+    for dir in Target::All.dirs(home, skill.tool) {
+        let mut removed = false;
+        for file in owned_files(&dir, skill) {
+            if !file.is_file() {
+                continue;
+            }
+            if !dry_run {
+                std::fs::remove_file(&file).map_err(|source| SkillError::Remove {
+                    path: file.clone(),
+                    source,
+                })?;
+                removed = true;
+            }
+            files.push(file);
         }
-        if !dry_run {
-            std::fs::remove_file(&file).map_err(|source| SkillError::Remove {
-                path: file.clone(),
-                source,
-            })?;
-            // A directory that still holds other files is the user's and stays.
-            let _ = std::fs::remove_dir(&dir);
+        if removed {
+            remove_empty_owned_dirs(&dir, skill.extra);
         }
-        files.push(file);
     }
     Ok(files)
 }
 
-/// Compares the `SKILL.md` files of `target` with `skill.text`.
+fn owned_files(dir: &Path, skill: &Skill) -> Vec<PathBuf> {
+    let mut files = vec![dir.join(SKILL_FILE)];
+    files.extend(skill.extra.iter().map(|(path, _)| dir.join(path)));
+    files
+}
+
+/// Removes the directories a skill owns below `dir`, deepest first, where they are empty.
+fn remove_empty_owned_dirs(dir: &Path, extra: ExtraFiles) {
+    let mut dirs: Vec<PathBuf> = extra
+        .iter()
+        .filter_map(|(path, _)| dir.join(path).parent().map(Path::to_path_buf))
+        .collect();
+    dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    dirs.dedup();
+    for owned in dirs {
+        if owned != dir && owned.starts_with(dir) {
+            // A directory that still holds other files is the user's and stays.
+            let _ = std::fs::remove_dir(owned);
+        }
+    }
+    let _ = std::fs::remove_dir(dir);
+}
+
+/// Compares the files of `target` with the ones `skill` ships.
 pub fn state(home: &Path, skill: &Skill, target: Target) -> SkillState {
     let mut present = false;
     for dir in target.dirs(home, skill.tool) {
         match std::fs::read_to_string(dir.join(SKILL_FILE)) {
             Ok(text) if text == skill.text => present = true,
             Ok(_) => return SkillState::Outdated,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(_) => return SkillState::Outdated,
+        }
+        for (path, text) in skill.extra {
+            match std::fs::read_to_string(dir.join(path)) {
+                Ok(found) if found == *text => {}
+                _ => return SkillState::Outdated,
+            }
         }
     }
     if present {
