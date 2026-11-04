@@ -137,6 +137,7 @@ impl Render for ByView<'_> {
         ));
         if t.kind == Kind::Cycle && t.basis.pattern != Pattern::SinceReset {
             doc.line("needs two weeks of weekly snapshots to map the reset; zero until then");
+            return;
         }
         doc.section(format!("expected cost per {kind}"));
         let rows = t

@@ -35,6 +35,8 @@
 
 ### Changed
 
+- `census usage --by cycle` prints only the note when fewer than two weeks of weekly snapshots
+  map the reset, instead of the 168 zero buckets. `--json` keeps its rows.
 - `census session` labels its cost row `subscription` in the agent and human formats. `--json`
   keeps `cost`, which now means the requests billed as subscription under `billing`.
 - `census usage` gains a `billing` column in the models table; its `--json` is unchanged.

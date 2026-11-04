@@ -526,6 +526,37 @@ fn limits_and_usage_by_without_data_exit_one() {
 }
 
 #[test]
+fn cycle_without_a_mapped_reset_prints_the_note_instead_of_zero_buckets() {
+    let home = Scratch::new("cli-cycle-unmapped");
+    let cwd = home.path().to_path_buf();
+    claude_session(&home, &cwd);
+    for args in [
+        &["usage", "--by", "cycle"][..],
+        &["--human", "usage", "--by", "cycle"][..],
+    ] {
+        let out = census(home.path(), &cwd, args, "", &[]);
+        assert_eq!(out.status.code(), Some(0));
+        let output = text(&out.stdout);
+        assert!(output.contains("needs two weeks of weekly snapshots to map the reset"));
+        assert!(
+            !output.contains("+0h"),
+            "no bucket rows before the reset is mapped: {output}"
+        );
+    }
+    let out = census(
+        home.path(),
+        &cwd,
+        &["--json", "usage", "--by", "cycle"],
+        "",
+        &[],
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let doc: Value = serde_json::from_slice(&out.stdout).expect("census prints JSON");
+    assert_eq!(doc["basis"]["pattern"], "weekday_hour");
+    assert_eq!(doc["rows"].as_array().map(Vec::len), Some(168));
+}
+
+#[test]
 fn budget_mode_switches_limits_and_statusline() {
     let home = Scratch::new("cli-budget");
     let cfg = home.path().join("config");

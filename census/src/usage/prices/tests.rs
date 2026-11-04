@@ -189,6 +189,14 @@ fn the_snapshot_prices_the_claude_models_census_priced() {
 }
 
 #[test]
+fn the_snapshot_prices_deepseek_flash_including_cache_reads() {
+    let t = request(1_000_000, 1_000_000, 0, 1_000_000);
+    assert_usd(usd("deepseek-flash", &t), 1.506);
+    assert_eq!(provider("deepseek-flash"), Some("deepseek"));
+    assert!(!counts_toward_limits("deepseek-flash"));
+}
+
+#[test]
 fn trims_to_the_priced_chat_models() {
     let t = table::trim(LITELLM, 42).expect("parse");
     assert_eq!(t.fetched_at, 42);
