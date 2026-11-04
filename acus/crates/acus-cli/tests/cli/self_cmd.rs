@@ -286,3 +286,40 @@ fn uninstall_refuses_a_binary_not_named_acus() {
     assert!(err.contains("refusing") && err.contains("hint:"), "{err}");
     assert!(copy.is_file());
 }
+
+#[test]
+fn skill_install_writes_the_reference_topics() {
+    let home = tempfile::tempdir().unwrap();
+    let h = home.path().to_str().unwrap();
+    let (code, _, err) = acus_env(
+        &["self", "skill", "--install"],
+        &[("HOME", h), ("USERPROFILE", h)],
+    );
+    assert_eq!(code, 0, "{err}");
+    for topic in ["find", "read", "patch", "git", "ctx"] {
+        let file = home
+            .path()
+            .join(".claude/skills/acus/reference")
+            .join(format!("{topic}.md"));
+        assert!(file.is_file(), "{}", file.display());
+    }
+}
+
+#[test]
+fn skill_topic_prints_a_reference() {
+    let (code, out, err) = acus(&["self", "skill", "--topic", "patch"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("# patch\n"), "{out}");
+    assert!(out.contains("*** Resolve Conflict"), "{out}");
+}
+
+#[test]
+fn skill_topic_cannot_be_combined_with_full_or_install() {
+    for args in [
+        &["self", "skill", "--topic", "patch", "--full"][..],
+        &["self", "skill", "--topic", "patch", "--install"][..],
+    ] {
+        let (code, _, err) = acus(args);
+        assert_eq!(code, 2, "{args:?}: {err}");
+    }
+}

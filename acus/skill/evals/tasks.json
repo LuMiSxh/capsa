@@ -1,0 +1,43 @@
+{
+  "skill": "acus",
+  "note": "No runner exists; these tasks have not been run.",
+  "tasks": [
+    {
+      "prompt": "Find where parse_config is defined and show the function.",
+      "expected": [
+        "acus find 'fn parse_config' --block"
+      ]
+    },
+    {
+      "prompt": "Rename the constant old_timeout to timeout everywhere under src.",
+      "expected": [
+        "acus patch <<'PATCH'\n*** Begin Patch\n*** Replace All: src\n<<<<<<< SEARCH\nold_timeout\n=======\ntimeout\n>>>>>>> REPLACE\n*** End Patch\nPATCH"
+      ]
+    },
+    {
+      "prompt": "Run the Rust tests and show only the failures with the code they point at.",
+      "expected": [
+        "acus ctx 'cargo test'"
+      ]
+    },
+    {
+      "prompt": "Show what changed on this branch compared with main, with the changed lines.",
+      "expected": [
+        "acus diff main..HEAD -p"
+      ]
+    },
+    {
+      "prompt": "Who calls Parser::parse, and what does it call?",
+      "expected": [
+        "acus follow src/parser.rs#Parser::parse",
+        "acus follow src/parser.rs#Parser::parse --down"
+      ]
+    },
+    {
+      "prompt": "Delete lines 40 to 44 of src/a.rs.",
+      "expected": [
+        "acus patch <<'PATCH'\n*** Begin Patch\n*** Delete Lines: src/a.rs:40-44\n*** Expect: <the exact text of line 40>\n*** End Patch\nPATCH"
+      ]
+    }
+  ]
+}

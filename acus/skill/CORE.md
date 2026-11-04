@@ -1,31 +1,34 @@
 # acus
 
-Use acus instead of shell tools. A hook rewrites or refuses grep, rg, find, cat, sed, head, tail and piped builds.
+One call answers what usually takes search → read → read. Output is line-numbered, grouped by enclosing symbol, and every truncation names the exact next command.
 
 | Instead of | Run |
 |---|---|
-| grep, rg | `acus find 'PAT' [PATH…]` (`--block`, `-l`, `-w`, `-i`, `-F`, `-g '*.rs'`, `-g '!dist'` excludes); `acus find 'PAT' a.rs#Sym b.rs:40-80` searches only there |
-| find -name, fd, git ls-files, Glob, wc -l | `acus files [PATH…] -g '*.rs' [--lines] [--depth=N] [--head=N] [--cut=N]` |
-| cat, sed -n, head, tail, Read, git show | `acus show a.rs#Sym b.rs:40-80 c.rs:-N c.rs:N- REV:a.rs#Sym`; `acus outline PATH` |
-| who calls / what it calls | `acus follow a.rs#Sym [--down]` |
-| ls -R, tree | `acus map [DIR…]` |
-| sed -i, Edit | `acus patch` (below) |
-| `cargo test \| tail` | `acus ctx 'CMD' [--tail N] [--grep RE]`; `acus ctx --log FILE` for a saved log |
-| git status/diff/log | `acus diff [-p]` (`--stat`, `--name-only`, `--conflicts`), `acus log` |
+| grep, rg, find to locate code or usages | `acus find 'PAT' [PATH…]`; `--block` adds the code |
+| cat, head, tail, sed -n, Read | `acus show PATH#Sym PATH:A-B`; `acus outline PATH` |
+| sed -i, perl -pi, Python replace, Edit | `acus patch` (below) |
+| cargo test, npm test | `acus ctx 'CMD'`; failures plus the code they name |
+| git status, git diff | `acus diff [REV]`; `-p` adds the changed lines |
 
-Batch independent lookups: several tool calls, or one `acus run`.
+Batch independent lookups in one `acus run`.
+
+Edit with `acus patch`; it needs no prior read and applies all or nothing.
 
 ```bash
 acus patch <<'PATCH'
 *** Begin Patch
 *** Update File: src/lib.rs
 <<<<<<< SEARCH
-exact old text, occurring once
+        let x = 1;
 =======
-new text
+        let x = 2;
 >>>>>>> REPLACE
 *** End Patch
 PATCH
 ```
 
-One patch per step. Add `-q` (summary only) unless you need the written lines. `*** Delete Lines: a.rs:40-44` needs `*** Expect:` with line 40's text. `--fmt` only where the project requires it (it reformats the whole file). All directives and rules: `acus self skill --full`.
+- SEARCH is the exact old text, without the `acus show` line-number prefix; it must occur exactly once, so add a neighbouring line when it is ambiguous. A miss shows the nearest lines.
+- The whole patch is all or nothing and reports every failing block; fix all of them and resend once.
+- `acus patch -q` prints only the summary, so use it when the written lines are not needed.
+
+More flags: `acus self skill --full` and `acus self skill --topic <topic>`.
