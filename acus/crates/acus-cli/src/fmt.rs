@@ -112,6 +112,27 @@ pub fn clip(t: &str, col: usize, max: usize) -> String {
     format!("{head}{body}{tail}")
 }
 
+/// Caps `text` so it fits in `budget` chars including its newline, with `clip`'s marker; empty
+/// when not even the marker fits.
+pub fn fit_line(text: &str, budget: usize) -> String {
+    let room = budget.saturating_sub(1);
+    let total = text.chars().count();
+    if total <= room {
+        return text.to_owned();
+    }
+    let mut max = room.saturating_sub(12);
+    loop {
+        let clipped = clip(text, 0, max);
+        if clipped.chars().count() <= room {
+            return clipped;
+        }
+        if max == 0 {
+            return String::new();
+        }
+        max -= 1;
+    }
+}
+
 /// The footer under a truncated listing, naming the command that shows the rest.
 pub fn more_lines(path: &str, from: usize, to: usize, n: usize) -> String {
     format!("… {n} more lines (acus show {path}:{from}-{to})")
@@ -188,6 +209,17 @@ mod tests {
         };
         assert_eq!(off.header("x"), "x");
         assert_eq!(off.dim("y"), "y");
+    }
+
+    #[test]
+    fn fit_line_keeps_the_budget_and_marks_the_cut() {
+        let line = "x".repeat(30_000);
+        let fitted = fit_line(&line, 100);
+        let length = fitted.chars().count();
+        assert!(length <= 100, "{length}");
+        assert!(fitted.contains("(+"), "{fitted}");
+        assert_eq!(fit_line("short", 100), "short");
+        assert!(fit_line(&line, 8).is_empty());
     }
 
     #[test]

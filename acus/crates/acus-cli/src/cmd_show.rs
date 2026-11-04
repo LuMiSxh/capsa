@@ -2,7 +2,7 @@
 //! `acus show`: prints files, line ranges and symbols, optionally as of a git revision.
 
 use crate::cmd_outline;
-use crate::fmt::{Budget, Out, clip, more_lines};
+use crate::fmt::{Budget, Out, clip, fit_line, more_lines};
 use crate::source::{Span, address, locate, read_text, revision, show_blob};
 use acus_syntax::{Lang, Outline, Target};
 use anyhow::Result;
@@ -53,6 +53,14 @@ enum Emit {
     CharCut,
 }
 
+/// Where the character budget stopped.
+enum Cut {
+    /// The address was cut mid-way: these addresses continue the output, this one first.
+    Rest(Vec<String>),
+    /// The first line did not fit and was clipped: only `--full` prints it whole.
+    FirstLine,
+}
+
 /// The `--head` budget plus the call-wide character budget.
 struct Sink<'a> {
     budget: &'a mut Budget,
@@ -68,13 +76,32 @@ impl Sink<'_> {
         if let Some(left) = &mut self.chars_left {
             let n = line.chars().count() + 1;
             if n > *left {
-                *left = 0;
                 return Emit::CharCut;
             }
             *left -= n;
         }
         self.budget.emit(line);
         Emit::Printed
+    }
+
+    /// Prints `line` clipped to the remaining character budget, with `clip`'s marker. The rest
+    /// of the call is then named by `--full`, never by repeating the address.
+    fn emit_clipped(&mut self, line: &str) -> bool {
+        if self.budget.exhausted() {
+            self.budget.emit(line);
+            return false;
+        }
+        let Some(left) = &mut self.chars_left else {
+            self.budget.emit(line);
+            return true;
+        };
+        let text = fit_line(line, *left);
+        if text.is_empty() {
+            return false;
+        }
+        *left = left.saturating_sub(text.chars().count() + 1);
+        self.budget.emit(&text);
+        true
     }
 
     /// Prints a footer under `--head`, outside the character budget.
@@ -92,8 +119,7 @@ struct Shown<'a> {
     sources: HashMap<String, (String, String)>,
     outlines: HashMap<String, Option<Outline>>,
     count: usize,
-    /// The address the character budget cut, with the address that shows its rest.
-    cut: Option<(usize, String)>,
+    cut: Option<Cut>,
 }
 
 impl Shown<'_> {
@@ -152,26 +178,28 @@ impl Shown<'_> {
         let shown_end = cap.map_or(end, |c| c.min(end));
         let header = self.out.header(&format!("== {label} {start}-{end}"));
         if matches!(self.sink.emit(&header), Emit::CharCut) {
-            self.cut = Some((idx, format!("{path}:{start}-{end}")));
+            self.cut = Some(Cut::FirstLine);
             return Ok(());
         }
+        let mut printed = 0;
         if long_whole {
             let cut = self.a.cut.map(|n| n as usize);
-            let block = {
-                let o = self.outlines.entry(path.clone()).or_insert_with(|| {
-                    Lang::from_path(Path::new(file)).and_then(|l| acus_syntax::outline(l, src))
-                });
-                let folded = matches!(
-                    o.as_ref().map(|o| o.lang),
-                    Some(Lang::Toml | Lang::Json | Lang::Yaml)
-                );
-                let depth = if folded { 1 } else { usize::MAX };
-                cmd_outline::render(&path, o.as_ref(), depth, folded, cut, self.out)
-            };
+            let block = outline_block(&mut self.outlines, self.out, &path, file, src, cut);
             for line in block {
-                if matches!(self.sink.emit(&line), Emit::CharCut) {
-                    self.cut = Some((idx, format!("{path}:{start}-{end}")));
-                    return Ok(());
+                match self.sink.emit(&line) {
+                    Emit::Printed => printed += 1,
+                    Emit::CharCut if printed == 0 => {
+                        self.sink.emit_clipped(&line);
+                        self.cut = Some(Cut::FirstLine);
+                        return Ok(());
+                    }
+                    Emit::CharCut => {
+                        let mut rest = vec![format!("{path}:{start}-{end}")];
+                        rest.extend(self.a.addrs[idx + 1..].iter().cloned());
+                        self.cut = Some(Cut::Rest(rest));
+                        return Ok(());
+                    }
+                    Emit::Dropped => {}
                 }
             }
         }
@@ -180,9 +208,20 @@ impl Shown<'_> {
             let text = self
                 .out
                 .numbered(i + 1, clipped.as_deref().unwrap_or(*line), false);
-            if matches!(self.sink.emit(&text), Emit::CharCut) {
-                self.cut = Some((idx, format!("{path}:{}-{end}", i + 1)));
-                return Ok(());
+            match self.sink.emit(&text) {
+                Emit::Printed => printed += 1,
+                Emit::CharCut if printed == 0 => {
+                    self.sink.emit_clipped(&text);
+                    self.cut = Some(Cut::FirstLine);
+                    return Ok(());
+                }
+                Emit::CharCut => {
+                    let mut rest = vec![format!("{path}:{}-{end}", i + 1)];
+                    rest.extend(self.a.addrs[idx + 1..].iter().cloned());
+                    self.cut = Some(Cut::Rest(rest));
+                    return Ok(());
+                }
+                Emit::Dropped => {}
             }
         }
         if shown_end < end {
@@ -200,6 +239,26 @@ impl Shown<'_> {
         }
         Ok(())
     }
+}
+
+/// The outline of a long whole file, with `cut` applied to each symbol's text.
+fn outline_block(
+    outlines: &mut HashMap<String, Option<Outline>>,
+    out: &Out,
+    path: &str,
+    file: &str,
+    src: &str,
+    cut: Option<usize>,
+) -> Vec<String> {
+    let o = outlines.entry(path.to_owned()).or_insert_with(|| {
+        Lang::from_path(Path::new(file)).and_then(|l| acus_syntax::outline(l, src))
+    });
+    let folded = matches!(
+        o.as_ref().map(|o| o.lang),
+        Some(Lang::Toml | Lang::Json | Lang::Yaml)
+    );
+    let depth = if folded { 1 } else { usize::MAX };
+    cmd_outline::render(path, o.as_ref(), depth, folded, cut, out)
 }
 
 #[expect(
@@ -236,13 +295,16 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
             failed += 1;
         }
     }
-    if let Some((idx, rest)) = &shown.cut {
-        let mut more = vec![rest.clone()];
-        more.extend(a.addrs[idx + 1..].iter().cloned());
-        outln!(
-            "… output budget spent ({CHAR_BUDGET} chars); the rest: acus show {}",
-            more.join(" ")
-        );
+    if let Some(cut) = &shown.cut {
+        match cut {
+            Cut::Rest(rest) => outln!(
+                "… output budget spent ({CHAR_BUDGET} chars); the rest: acus show {}",
+                rest.join(" ")
+            ),
+            Cut::FirstLine => {
+                outln!("… output budget spent ({CHAR_BUDGET} chars); rerun with --full");
+            }
+        }
     }
     if let Some(f) = shown.sink.budget.footer() {
         outln!("{f}");

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus run`: runs several acus commands from stdin, one per line or as a JSON array.
 
-use crate::fmt::{Out, capture, clip};
+use crate::fmt::{Out, capture, clip, fit_line};
 use crate::{Cli, execute};
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
@@ -17,6 +17,10 @@ const REASON: usize = 80;
 
 /// Commands whose `--head N` shows the rest of their output.
 const HEAD_COMMANDS: [&str; 4] = ["find", "show", "outline", "diff"];
+
+/// `self` commands write through `render::emit` and `update`, outside the capture sink.
+const SELF_REFUSED: &str =
+    "`acus self` cannot run inside `acus run`\nhint: run the command on its own";
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -44,55 +48,75 @@ pub struct Args {
     reason = "execute hands over the parsed arguments"
 )]
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
-    let mut s = String::new();
-    std::io::stdin()
-        .read_to_string(&mut s)
-        .context("cannot read stdin")?;
-    // A line that does not split (unclosed quote) fails alone instead of the whole batch.
-    let batch: Vec<Result<Vec<String>>> = if s.trim_start().starts_with('[') {
-        let v: Vec<Vec<String>> = serde_json::from_str(&s).map_err(|e| {
-            capsa_core::hint::Hinted::new(
-                format!("expected a JSON array of argument arrays: {e}"),
-                r#"[["find","needle"],["show","src/a.rs#f"]]"#,
-            )
-        })?;
-        v.into_iter().map(Ok).collect()
-    } else {
-        s.lines()
-            .map(split)
-            .filter(|a| !matches!(a, Ok(a) if a.is_empty()))
-            .collect()
-    };
-    let total = batch.len();
+    let batch = read_batch()?;
     let text = out.format != Format::Json;
-    let mut budget = if a.full || !text { usize::MAX } else { BUDGET };
-    let (mut found, mut failed) = (false, Vec::new());
+    let mut state = Batch {
+        a: &a,
+        out,
+        text,
+        total: batch.len(),
+        budget: if a.full || !text { usize::MAX } else { BUDGET },
+        found: false,
+        failed: Vec::new(),
+        stop: false,
+    };
     for (i, args) in batch.into_iter().enumerate() {
-        let line = i + 1;
+        state.entry(i + 1, args);
+        if state.stop {
+            break;
+        }
+    }
+    state.finish()
+}
+
+/// The state of one `run` call: the shared budget and the lines that ran.
+struct Batch<'a> {
+    a: &'a Args,
+    out: &'a Out,
+    text: bool,
+    total: usize,
+    budget: usize,
+    found: bool,
+    failed: Vec<(usize, String)>,
+    stop: bool,
+}
+
+impl Batch<'_> {
+    /// Runs one line, records its failure and stops the batch after it under `--fail-fast`.
+    fn entry(&mut self, number: usize, args: Result<Vec<String>>) {
         let args = match args {
             Ok(args) => args,
-            Err(e) => {
-                let msg = format!("{e:#}");
-                failed.push((line, short(&msg)));
-                entry_error_line(out, &msg);
-                if a.fail_fast {
-                    break;
-                }
-                continue;
-            }
+            Err(e) => return self.fail(number, &format!("{e:#}")),
         };
-        let mut argv = vec!["acus".to_owned()];
-        argv.extend(args.iter().cloned());
-        if !text {
-            argv.push("--json".into());
-        }
-        let shown = shown_args(&args);
-        if text {
-            let header = out.header(&format!(">>> acus {shown}"));
-            budget = budget.saturating_sub(header.chars().count() + 1);
+        if self.text {
+            let header = self.out.header(&format!(">>> acus {}", shown_args(&args)));
+            self.budget = self.budget.saturating_sub(header.chars().count() + 1);
             outln!("{header}");
         }
-        let (res, mut body) = capture(|| {
+        if args.first().is_some_and(|c| c == "self") {
+            return self.fail(number, SELF_REFUSED);
+        }
+        let (status, body) = self.call(&args);
+        std::io::stdout().flush().ok();
+        let body = if self.text {
+            self.cap(&args, number - 1, body)
+        } else {
+            body
+        };
+        crate::fmt::out(&body);
+        if let Err(msg) = status {
+            self.fail(number, &msg);
+        }
+    }
+
+    /// Runs the line in the capture sink; returns its failure reason and printed output.
+    fn call(&mut self, args: &[String]) -> (Result<(), String>, String) {
+        let mut argv = vec!["acus".to_owned()];
+        argv.extend(args.iter().cloned());
+        if !self.text {
+            argv.push("--json".into());
+        }
+        let (res, body) = capture(|| {
             Cli::try_parse_from(&argv)
                 .map_err(|e| crate::parse_error(&e, &argv))
                 .and_then(|cli| {
@@ -100,52 +124,91 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
                     execute(cli, format, true)
                 })
         });
-        std::io::stdout().flush().ok();
-        if text {
-            if let (Some(n), false) = (a.cut, has_flag(&args, "--cut")) {
-                body = cut_text(&body, as_usize(n));
-            }
-            if let (Some(n), false) = (a.head, has_flag(&args, "--head")) {
-                body = head_text(&body, as_usize(n));
-            }
-        }
-        let mut status = Ok(());
         match res {
             // Code(0) is a passing `ctx`, or a diff with no changes, which prints its own `null`.
-            Ok(Outcome::Found | Outcome::Code(0)) => found = true,
-            Ok(Outcome::Code(code)) => status = Err(format!("exit code {code}")),
+            Ok(Outcome::Found | Outcome::Code(0)) => {
+                self.found = true;
+                (Ok(()), body)
+            }
+            Ok(Outcome::Code(code)) => (Err(format!("exit code {code}")), body),
             // JSON output keeps one line per entry, so an empty result is `null`.
-            Ok(Outcome::Empty) => body.push_str(if text { "(no results)\n" } else { "null\n" }),
-            Err(e) => status = Err(entry_error(&e)),
-        }
-        if text && !body.is_empty() {
-            let share = budget.checked_div(total - i).unwrap_or(usize::MAX);
-            if body.chars().count() > share {
-                body = budget_cut(&body, share, &args, &shown);
+            Ok(Outcome::Empty) => {
+                let empty = if self.text {
+                    "(no results)\n"
+                } else {
+                    "null\n"
+                };
+                (Ok(()), body + empty)
             }
-            budget = budget.saturating_sub(body.chars().count());
-        }
-        crate::fmt::out(&body);
-        if let Err(msg) = status {
-            failed.push((line, short(&msg)));
-            entry_error_line(out, &msg);
-            if a.fail_fast {
-                break;
-            }
+            Err(e) => (Err(entry_error(&e)), body),
         }
     }
-    failure_footer(out, &failed, total);
-    if a.fail_fast && !failed.is_empty() {
-        anyhow::bail!("--fail-fast stopped at line {}", failed[0].0);
+
+    /// Applies the line's `--cut`/`--head`, then the shared character budget, to `body`.
+    fn cap(&mut self, args: &[String], index: usize, mut body: String) -> String {
+        if let (Some(n), false) = (self.a.cut, has_flag(args, "--cut")) {
+            body = cut_text(&body, as_usize(n));
+        }
+        if let (Some(n), false) = (self.a.head, has_flag(args, "--head")) {
+            body = head_text(&body, as_usize(n));
+        }
+        if body.is_empty() {
+            return body;
+        }
+        let share = self
+            .budget
+            .checked_div(self.total - index)
+            .unwrap_or(usize::MAX);
+        if body.chars().count() > share {
+            body = budget_cut(&body, share, args);
+        }
+        self.budget = self.budget.saturating_sub(body.chars().count());
+        body
     }
-    if !failed.is_empty() && failed.len() == total {
-        anyhow::bail!("all {total} lines failed");
+
+    /// Records a failed line, prints its error and stops after it under `--fail-fast`.
+    fn fail(&mut self, number: usize, msg: &str) {
+        self.failed.push((number, short(msg)));
+        entry_error_line(self.out, msg);
+        self.stop = self.a.fail_fast;
     }
-    Ok(if found {
-        Outcome::Found
-    } else {
-        Outcome::Empty
-    })
+
+    fn finish(self) -> Result<Outcome> {
+        failure_footer(self.out, &self.failed, self.total);
+        if self.a.fail_fast && !self.failed.is_empty() {
+            anyhow::bail!("--fail-fast stopped at line {}", self.failed[0].0);
+        }
+        if !self.failed.is_empty() && self.failed.len() == self.total {
+            anyhow::bail!("all {} lines failed", self.total);
+        }
+        Ok(if self.found {
+            Outcome::Found
+        } else {
+            Outcome::Empty
+        })
+    }
+}
+
+/// Reads one command per line or a JSON array of argument arrays from stdin.
+fn read_batch() -> Result<Vec<Result<Vec<String>>>> {
+    let mut s = String::new();
+    std::io::stdin()
+        .read_to_string(&mut s)
+        .context("cannot read stdin")?;
+    if s.trim_start().starts_with('[') {
+        let v: Vec<Vec<String>> = serde_json::from_str(&s).map_err(|e| {
+            capsa_core::hint::Hinted::new(
+                format!("expected a JSON array of argument arrays: {e}"),
+                r#"[["find","needle"],["show","src/a.rs#f"]]"#,
+            )
+        })?;
+        return Ok(v.into_iter().map(Ok).collect());
+    }
+    // A line that does not split (unclosed quote) fails alone instead of the whole batch.
+    Ok(s.lines()
+        .map(split)
+        .filter(|a| !matches!(a, Ok(a) if a.is_empty()))
+        .collect())
 }
 
 fn as_usize(n: u64) -> usize {
@@ -158,18 +221,21 @@ fn has_flag(args: &[String], flag: &str) -> bool {
         .any(|a| a == flag || a.starts_with(&format!("{flag}=")))
 }
 
-/// The line's command with quotes around arguments that need them, so it can be pasted back.
+/// The line's command with shell quoting, so it can be pasted back.
 fn shown_args(args: &[String]) -> String {
-    args.iter()
-        .map(|a| {
-            if a.is_empty() || a.contains(char::is_whitespace) {
-                format!("\"{a}\"")
-            } else {
-                a.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    args.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" ")
+}
+
+/// Quotes `a` in single quotes unless every character is one a shell leaves alone.
+fn quote(a: &str) -> String {
+    let safe = !a.is_empty()
+        && a.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_./:#=@%+,-".contains(c));
+    if safe {
+        a.to_owned()
+    } else {
+        format!("'{}'", a.replace('\'', "'\\''"))
+    }
 }
 
 /// Keeps the first N lines and names the rerun that shows the rest.
@@ -203,25 +269,81 @@ fn cut_text(body: &str, n: usize) -> String {
 }
 
 /// Cuts `body` after the last whole line that fits in `share` chars and names the command that
-/// shows the rest.
-fn budget_cut(body: &str, share: usize, args: &[String], shown: &str) -> String {
+/// shows the rest. A first line that does not fit is clipped instead of dropped.
+fn budget_cut(body: &str, share: usize, args: &[String]) -> String {
     let (kept, dropped) = fit_lines(body, share);
+    if kept.is_empty() && !body.is_empty() {
+        return first_line_cut(body, share);
+    }
     let chars = kept.chars().count();
-    let total = kept.lines().count() + dropped;
-    let more = if args
-        .first()
-        .is_some_and(|c| HEAD_COMMANDS.contains(&c.as_str()))
-    {
-        let shown = shown.strip_prefix("acus ").unwrap_or(shown);
-        format!("acus {shown} --head {total}")
-    } else {
-        "acus run --full".to_owned()
-    };
+    let lines = kept.lines().count() + dropped;
     let mut out = kept.to_owned();
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str(&format!("… cut at {chars} chars: {more}\n"));
+    out.push_str(&format!("… cut at {chars} chars: {}\n", rerun(args, lines)));
+    out
+}
+
+/// Keeps the first line clipped to `share` chars and names the flag that lifts the budget.
+fn first_line_cut(body: &str, share: usize) -> String {
+    let first = body.lines().next().unwrap_or_default();
+    let clipped = fit_line(first, share);
+    let chars = clipped.chars().count() + 1;
+    format!("{clipped}\n… cut at {chars} chars: acus run --full\n")
+}
+
+/// The command that shows the rest of a cut entry, replacing an existing `--head` instead of
+/// repeating it. `--head` cannot lift the whole-file cap of `show` or the per-file cap of
+/// `diff -p`, so those name `--full`.
+fn rerun(args: &[String], lines: usize) -> String {
+    let cmd = args.first().map(String::as_str).unwrap_or_default();
+    let full = cmd == "show" || (cmd == "diff" && args.iter().any(|a| a == "-p" || a == "--lines"));
+    let rerun = if full {
+        with_flag(args, "--full", None)
+    } else if HEAD_COMMANDS.contains(&cmd) {
+        with_flag(args, "--head", Some(lines))
+    } else {
+        return "acus run --full".to_owned();
+    };
+    format!("acus {}", shown_args(&rerun))
+}
+
+/// `args` with `flag` set to `value`, replacing an existing `--flag value` or `--flag=value`.
+fn with_flag(args: &[String], flag: &str, value: Option<usize>) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len() + 2);
+    let (mut i, mut set) = (0, false);
+    while i < args.len() {
+        let a = &args[i];
+        if a == flag {
+            set = true;
+            i += 1;
+            if value.is_some() {
+                i += 1;
+            }
+            out.push(flag.to_owned());
+            if let Some(v) = value {
+                out.push(v.to_string());
+            }
+            continue;
+        }
+        if let (Some(v), Some((name, _))) = (value, a.split_once('='))
+            && name == flag
+        {
+            out.push(format!("{flag}={v}"));
+            set = true;
+            i += 1;
+            continue;
+        }
+        out.push(a.clone());
+        i += 1;
+    }
+    if !set {
+        out.push(flag.to_owned());
+        if let Some(v) = value {
+            out.push(v.to_string());
+        }
+    }
     out
 }
 
@@ -357,5 +479,56 @@ mod tests {
             cut,
             "a\nb\n… output cut at --head 2; 1 more lines (rerun with --head 3)\n"
         );
+    }
+
+    #[test]
+    fn quotes_arguments_a_shell_would_split() {
+        let args = ["find", "foo|bar", "src", "-g", "*.rs", "$x", "a b", "it's"].map(str::to_owned);
+        assert_eq!(
+            shown_args(&args),
+            r#"find 'foo|bar' src -g '*.rs' '$x' 'a b' 'it'\''s'"#
+        );
+    }
+
+    #[test]
+    fn replaces_an_existing_head_instead_of_appending() {
+        let args = ["find", "x", "--head", "5"].map(str::to_owned);
+        assert_eq!(
+            with_flag(&args, "--head", Some(9)),
+            ["find", "x", "--head", "9"]
+        );
+        let args = ["find", "x", "--head=5"].map(str::to_owned);
+        assert_eq!(
+            with_flag(&args, "--head", Some(9)),
+            ["find", "x", "--head=9"]
+        );
+        let args = ["find", "x"].map(str::to_owned);
+        assert_eq!(
+            with_flag(&args, "--head", Some(9)),
+            ["find", "x", "--head", "9"]
+        );
+    }
+
+    #[test]
+    fn names_the_rerun_that_lifts_each_cap() {
+        let find = ["find", "x", "--head", "5"].map(str::to_owned);
+        assert_eq!(rerun(&find, 12), "acus find x --head 12");
+        let show = ["show", "big.rs"].map(str::to_owned);
+        assert_eq!(rerun(&show, 60), "acus show big.rs --full");
+        let diff = ["diff", "-p", "HEAD"].map(str::to_owned);
+        assert_eq!(rerun(&diff, 80), "acus diff -p HEAD --full");
+        let log = ["log"].map(str::to_owned);
+        assert_eq!(rerun(&log, 5), "acus run --full");
+    }
+
+    #[test]
+    fn clips_a_first_line_too_long_for_its_share() {
+        let body = format!("{}\nsecond\n", "x".repeat(30_000));
+        let cut = budget_cut(&body, 100, &["show".to_owned(), "min.js".to_owned()]);
+        let first = cut.lines().next().unwrap_or_default();
+        assert!(first.chars().count() < 100, "{}", first.chars().count());
+        assert!(first.contains("(+"), "{first}");
+        assert!(cut.ends_with("chars: acus run --full\n"), "{cut}");
+        assert!(!cut.contains("--head"), "{cut}");
     }
 }

@@ -124,7 +124,7 @@ fn run_cuts_lines_fairly_and_names_the_rerun() {
     }
     assert!(out.len() < 26_000, "{}", out.len());
     assert_eq!(
-        out.matches("chars: acus show big.rs --head ").count(),
+        out.matches("chars: acus show big.rs --full").count(),
         3,
         "{out}"
     );
@@ -168,6 +168,56 @@ fn run_head_and_cut_cap_a_line_without_them() {
     assert_eq!(code, 0);
     assert!(out.contains("… output cut at --head 3;"), "{out}");
     assert!(out.contains("(+"), "{out}");
+}
+
+#[test]
+fn show_clips_a_line_longer_than_the_character_budget() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("min.js"), "x".repeat(30_000)).unwrap();
+    let (code, out, _) = acus_in(d.path(), &["show", "min.js"], "");
+    assert_eq!(code, 0);
+    assert!(out.contains("… (+"), "{out}");
+    assert!(out.ends_with("rerun with --full\n"), "{out}");
+    assert!(!out.contains("acus show min.js:1-1"), "{out}");
+    assert!(out.chars().count() < 25_000, "{}", out.chars().count());
+}
+
+#[test]
+fn run_cuts_a_line_longer_than_its_share_and_names_full() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("min.js"), "x".repeat(30_000)).unwrap();
+    let (code, out, _) = acus_in(d.path(), &["run"], "show min.js\n");
+    assert_eq!(code, 0);
+    assert!(out.contains("acus show min.js --full"), "{out}");
+    assert!(!out.contains("min.js:1-1"), "{out}");
+    assert!(out.chars().count() < 26_000, "{}", out.chars().count());
+}
+
+#[cfg(unix)]
+#[test]
+fn run_clips_a_first_line_longer_than_its_share() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("min.js"), "x".repeat(30_000)).unwrap();
+    let (code, out, _) = acus_in(d.path(), &["run"], "ctx --raw 'cat min.js'\n");
+    assert_eq!(code, 0);
+    assert!(out.contains("… (+"), "{out}");
+    assert!(out.ends_with("chars: acus run --full\n"), "{out}");
+    assert!(out.chars().count() < 25_000, "{}", out.chars().count());
+}
+
+#[test]
+fn run_refuses_self_lines_with_an_error() {
+    let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
+    let (code, out, err) = acus_in(dir, &["run"], "self doctor\nshow src/lib.rs:1\n");
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("error: `acus self` cannot run inside `acus run`"),
+        "{out}"
+    );
+    assert!(out.contains("hint: run the command on its own"), "{out}");
+    assert!(out.contains("== src/lib.rs 1-1"), "{out}");
+    assert!(out.contains("failed: 1 of 2 lines"), "{out}");
+    assert_eq!(err, "");
 }
 
 #[test]
