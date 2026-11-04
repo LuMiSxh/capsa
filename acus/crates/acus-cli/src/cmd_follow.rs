@@ -93,7 +93,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
                 None => json!({"at": at, "next": next}),
             })
             .collect();
-        println!(
+        outln!(
             "{}",
             json!({
                 "target": {"addr": root.addr, "kind": root.sym.kind,
@@ -108,9 +108,9 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
             "{}  {} {}-{}  {dir} depth {max}",
             root.addr, root.sym.kind, root.sym.start_line, root.sym.end_line
         );
-        println!("{}", out.header(&header));
+        outln!("{}", out.header(&header));
         for l in &tree.lines {
-            println!("{l}");
+            outln!("{l}");
         }
     }
     Ok(if edges.is_empty() {

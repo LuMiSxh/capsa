@@ -148,7 +148,7 @@ pub fn run(a: Args) -> Result<Outcome> {
     roll_up(&mut root);
     load_symbols(&mut root);
     plan(&mut root, a.budget * 4, a.depth.unwrap_or(usize::MAX));
-    println!(
+    outln!(
         "== {}{}  {}",
         display_path(&a.path),
         tags(&root),
@@ -157,10 +157,10 @@ pub fn run(a: Args) -> Result<Outcome> {
     let mut rows = Vec::new();
     render(&root, 1, &mut rows);
     for r in &rows {
-        println!("{r}");
+        outln!("{r}");
     }
     if has_closed(&root) {
-        println!("… deeper: acus map DIR; symbols: acus outline DIR --depth 1");
+        outln!("… deeper: acus map DIR; symbols: acus outline DIR --depth 1");
     }
     Ok(Outcome::Found)
 }

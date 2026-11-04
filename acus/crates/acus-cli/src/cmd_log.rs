@@ -76,7 +76,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string(&rows)?);
+        outln!("{}", serde_json::to_string(&rows)?);
         return Ok(Outcome::Found);
     }
     if out.format == Format::Human {
@@ -88,7 +88,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
             0 => String::new(),
             n => format!(" {} {n}f", changed(c.add, c.del)),
         };
-        println!(
+        outln!(
             "{} {} {} {}{}",
             out.header(&c.hash),
             c.date,
@@ -97,7 +97,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
             out.dim(&stat)
         );
     }
-    println!(
+    outln!(
         "{}",
         out.header(&format!(
             "== {} commit{} (more: -n N, one commit's changes: acus diff REV^..REV)",

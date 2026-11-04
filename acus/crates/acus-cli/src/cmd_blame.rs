@@ -79,12 +79,12 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
                 })
             })
             .collect();
-        println!("{}", serde_json::Value::Array(rows));
+        outln!("{}", serde_json::Value::Array(rows));
         return Ok(Outcome::Found);
     }
     for r in &runs {
         let c = &commits[&r.hash];
-        println!(
+        outln!(
             "{}-{}  {}  {}  {}  {}",
             r.start,
             r.end,

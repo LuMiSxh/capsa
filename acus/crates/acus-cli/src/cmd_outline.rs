@@ -125,7 +125,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
                 })
             })
             .collect();
-        println!("{}", serde_json::Value::Array(v));
+        outln!("{}", serde_json::Value::Array(v));
         return Ok(Outcome::Found);
     }
     let mut budget = Budget::new(a.head.map(|n| n as usize));
@@ -147,7 +147,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         }
     }
     if let Some(f) = budget.footer() {
-        println!("{f}");
+        outln!("{f}");
     }
     Ok(Outcome::Found)
 }

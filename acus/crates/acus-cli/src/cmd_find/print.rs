@@ -176,7 +176,7 @@ pub(super) fn print_json(shown: &[(&FileHits, usize)], rest: usize, only: bool) 
             serde_json::json!({ "path": f.path, "lang": f.lang, "hits": hits })
         })
         .collect();
-    println!(
+    outln!(
         "{}",
         serde_json::json!({ "files": files, "truncated": rest })
     );

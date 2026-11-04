@@ -1,6 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The `acus` binary: parses the command line and dispatches to the `cmd_*` modules.
 
+/// Prints one line through `fmt::out`, so `run` can capture a line's output.
+macro_rules! outln {
+   () => { $crate::fmt::out("\n") };
+   ($($arg:tt)*) => {{
+       $crate::fmt::out(&format!("{}\n", format_args!($($arg)*)));
+   }};
+}
+
+/// Prints without a newline through `fmt::out`, as `print!` does.
+macro_rules! outprint {
+   ($($arg:tt)*) => {{
+       $crate::fmt::out(&format!($($arg)*));
+   }};
+}
+
 mod cmd_blame;
 mod cmd_ctx;
 mod cmd_diff;

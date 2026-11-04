@@ -5,9 +5,13 @@ use crate::common::*;
 fn run_survives_a_bad_line() {
     let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
     let (code, out, _) = acus_in(dir, &["run"], "find \"open\nshow src/lib.rs:1\n");
-    assert_eq!(code, 2);
+    assert_eq!(code, 0);
     assert!(
         out.contains("unclosed") && out.contains("== src/lib.rs 1-1"),
+        "{out}"
+    );
+    assert!(
+        out.ends_with("failed: 1 of 2 lines (line 1: unclosed \" in `find \"open`)\n"),
         "{out}"
     );
 }
@@ -17,7 +21,11 @@ fn run_batch() {
     let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
     let batch = r#"[["show","src/lib.rs#new"],["find","zzz_none"],["show","nope.rs"]]"#;
     let (code, out, _) = acus_in(dir, &["run"], batch);
-    assert_eq!(code, 2);
+    assert_eq!(code, 0);
+    assert!(
+        out.ends_with("failed: 1 of 3 lines (line 3: path not found: nope.rs)\n"),
+        "{out}"
+    );
     let _dropguard = snapshot_settings().bind_to_scope();
     insta::assert_snapshot!("cli__run_batch", out);
     let (code, out, _) = acus_in(dir, &["run", "--json"], r#"[["show","src/lib.rs:1"]]"#);
@@ -30,6 +38,132 @@ fn run_batch() {
     );
     let (code, out, err) = acus_in(dir, &["run", "--json"], r#"[["find","zzz_none"]]"#);
     assert_eq!((code, out.as_str(), err.as_str()), (1, "null\n", ""));
+}
+
+#[test]
+fn run_json_keeps_one_line_per_entry() {
+    let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
+    let batch = r#"[["show","src/lib.rs:1"],["show","nope.rs"]]"#;
+    let (code, out, _) = acus_in(dir, &["run", "--json"], batch);
+    assert_eq!(code, 0);
+    assert_eq!(out.lines().count(), 2, "{out}");
+    assert!(
+        out.lines()
+            .nth(1)
+            .is_some_and(|l| l.starts_with(r#"{"error":"#)),
+        "{out}"
+    );
+}
+
+#[test]
+fn run_all_lines_failing_exits_two() {
+    let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
+    let (code, out, err) = acus_in(dir, &["run"], "show nope.rs\nshow nope.rs\n");
+    assert_eq!(code, 2);
+    assert!(
+        out.contains(
+            "failed: 2 of 2 lines (line 1: path not found: nope.rs, \
+             line 2: path not found: nope.rs)"
+        ),
+        "{out}"
+    );
+    assert!(err.contains("error: all 2 lines failed"), "{err}");
+}
+
+#[test]
+fn run_fail_fast_stops_at_the_first_failure() {
+    let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
+    let (code, out, err) = acus_in(
+        dir,
+        &["run", "--fail-fast"],
+        "show src/lib.rs:1\nshow nope.rs\nshow src/lib.rs:2\n",
+    );
+    assert_eq!(code, 2);
+    assert!(!out.contains(">>> acus show src/lib.rs:2"), "{out}");
+    assert!(
+        out.contains("failed: 1 of 3 lines (line 2: path not found: nope.rs)"),
+        "{out}"
+    );
+    assert!(
+        err.contains("error: --fail-fast stopped at line 2"),
+        "{err}"
+    );
+}
+
+fn big_file(d: &std::path::Path) {
+    let pad = "x".repeat(60);
+    let source: String = (1..=1000)
+        .map(|i| format!("fn f{i}() {{ /* {pad} */ }}\n"))
+        .collect();
+    std::fs::write(d.join("big.rs"), source).unwrap();
+}
+
+#[test]
+fn run_cuts_lines_fairly_and_names_the_rerun() {
+    let d = tempfile::tempdir().unwrap();
+    big_file(d.path());
+    let (code, out, _) = acus_in(
+        d.path(),
+        &["run"],
+        "show big.rs\nshow big.rs\nshow big.rs\n",
+    );
+    assert_eq!(code, 0);
+    let cuts: Vec<usize> = out
+        .match_indices("… cut at ")
+        .filter_map(|(i, _)| {
+            out[i + "… cut at ".len()..]
+                .split(" chars")
+                .next()?
+                .parse()
+                .ok()
+        })
+        .collect();
+    assert_eq!(cuts.len(), 3, "{out}");
+    for n in &cuts {
+        assert!((7_000..=8_200).contains(n), "{cuts:?}\n{out}");
+    }
+    assert!(out.len() < 26_000, "{}", out.len());
+    assert_eq!(
+        out.matches("chars: show big.rs --head ").count(),
+        3,
+        "{out}"
+    );
+}
+
+#[test]
+fn run_full_lifts_the_budget() {
+    let d = tempfile::tempdir().unwrap();
+    big_file(d.path());
+    let (code, out, _) = acus_in(d.path(), &["run", "--full"], "show big.rs\nshow big.rs\n");
+    assert_eq!(code, 0);
+    assert!(!out.contains("… cut at "), "{out}");
+    assert!(out.len() > 60_000, "{}", out.len());
+}
+
+#[test]
+fn run_head_does_not_override_a_line_head() {
+    let d = tempfile::tempdir().unwrap();
+    let source: String = (1..=30).map(|i| format!("fn f{i}() {{}}\n")).collect();
+    std::fs::write(d.path().join("a.rs"), source).unwrap();
+    let (code, out, _) = acus_in(d.path(), &["run", "--head", "2"], "show a.rs --head 5\n");
+    assert_eq!(code, 0);
+    assert!(out.contains("… output cut at --head 5;"), "{out}");
+    assert!(!out.contains("--head 2"), "{out}");
+}
+
+#[test]
+fn run_head_and_cut_cap_a_line_without_them() {
+    let d = tempfile::tempdir().unwrap();
+    let source: String = (1..=30).map(|i| format!("fn f{i}() {{}}\n")).collect();
+    std::fs::write(d.path().join("a.rs"), source).unwrap();
+    let (code, out, _) = acus_in(
+        d.path(),
+        &["run", "--head", "3", "--cut", "4"],
+        "show a.rs\n",
+    );
+    assert_eq!(code, 0);
+    assert!(out.contains("… output cut at --head 3;"), "{out}");
+    assert!(out.contains("(+"), "{out}");
 }
 
 #[test]

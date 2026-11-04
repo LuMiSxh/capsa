@@ -120,10 +120,10 @@ pub fn run(a: Args, out: &Out, nested: bool, cfg: &Config) -> Result<Outcome> {
     );
     if a.diff {
         for t in &applied.texts {
-            print!("{}", unified(t));
+            outprint!("{}", unified(t));
         }
         for l in &notes {
-            println!("{l}");
+            outln!("{l}");
         }
         return Ok(Outcome::Found);
     }
@@ -132,16 +132,16 @@ pub fn run(a: Args, out: &Out, nested: bool, cfg: &Config) -> Result<Outcome> {
         return Ok(Outcome::Found);
     }
     for l in &lines {
-        println!("{l}");
+        outln!("{l}");
     }
     for l in &notes {
-        println!("{l}");
+        outln!("{l}");
     }
     if !a.quiet {
         echo_regions(out, &applied.regions, &long_bodies);
     }
     if a.check {
-        println!("(check only, nothing written)");
+        outln!("(check only, nothing written)");
     }
     Ok(Outcome::Found)
 }
@@ -175,7 +175,7 @@ fn print_json(regions: &[Region], lines: &[String], notes: &[String], written: b
             })
         })
         .collect();
-    println!(
+    outln!(
         "{}",
         serde_json::json!({ "changes": lines, "notes": notes, "regions": regions, "written": written })
     );
@@ -201,16 +201,16 @@ fn echo_regions(out: &Out, regions: &[Region], long_bodies: &[(&str, &[String])]
             continue;
         }
         echoed += shown;
-        println!(
+        outln!(
             "{}",
             out.header(&format!("== {} {}-{end}", r.path, r.start))
         );
         for line in region_lines(out, r, long) {
-            println!("{line}");
+            outln!("{line}");
         }
     }
     if !unshown.is_empty() {
-        println!("{}", more_regions(&unshown));
+        outln!("{}", more_regions(&unshown));
     }
 }
 

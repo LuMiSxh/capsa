@@ -106,12 +106,12 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     };
     if files.is_empty() {
         if let Some(line) = staged {
-            println!("{}", out.dim(&line));
+            outln!("{}", out.dim(&line));
             return Ok(Outcome::Found);
         }
         if out.format == Format::Json {
             // JSON prints `null` for no changes; the exit code stays 0.
-            println!("null");
+            outln!("null");
         } else {
             eprintln!("(no changes)");
         }
@@ -246,7 +246,7 @@ fn print_json_files(a: &Args, rendered: &[(&FileDiff, Vec<Group>)]) {
             })
         })
         .collect();
-    println!("{}", serde_json::Value::Array(v));
+    outln!("{}", serde_json::Value::Array(v));
 }
 
 /// The text view: one block per file, cut at `--max-lines` and `--head`, then a total and the
@@ -332,7 +332,7 @@ fn print_text_files(
         budget.emit(&out.dim(&line));
     }
     if let Some(f) = budget.footer() {
-        println!("{f}");
+        outln!("{f}");
     }
 }
 

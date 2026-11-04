@@ -103,21 +103,21 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
             }
             None => serde_json::json!({ "files": &files[..shown], "truncated": rest }),
         };
-        println!("{json}");
+        outln!("{json}");
     } else if out.format == Format::Human {
         print_human(&files[..shown], counts.as_deref(), total, rest, out)?;
     } else {
         for (i, f) in files[..shown].iter().enumerate() {
             match &counts {
-                Some(c) => println!("{f}  {}", c[i].map_or("-".to_owned(), |n| n.to_string())),
-                None => println!("{f}"),
+                Some(c) => outln!("{f}  {}", c[i].map_or("-".to_owned(), |n| n.to_string())),
+                None => outln!("{f}"),
             }
         }
         if rest > 0 {
-            println!("… {rest} more; narrow with -g or a path");
+            outln!("… {rest} more; narrow with -g or a path");
         }
         if counts.is_some() {
-            println!("total  {total}");
+            outln!("total  {total}");
         }
     }
     Ok(Outcome::Found)

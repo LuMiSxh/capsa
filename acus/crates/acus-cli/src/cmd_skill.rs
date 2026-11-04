@@ -46,12 +46,12 @@ pub fn run(a: Args, cfg: &crate::config::Config) -> Result<Outcome> {
                 hook["session_id"].as_str().unwrap_or_default(),
             );
         }
-        print!("{}", if a.full { body(SKILL) } else { CORE });
+        outprint!("{}", if a.full { body(SKILL) } else { CORE });
         return Ok(Outcome::Found);
     }
     let home = std::env::home_dir().context("no home directory")?;
     for file in capsa_core::skill::install(&home, &SKILL_DEF, a.target).hinted()? {
-        println!("{}", file.display());
+        outln!("{}", file.display());
     }
     Ok(Outcome::Found)
 }

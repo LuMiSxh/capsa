@@ -231,7 +231,7 @@ pub fn run(a: Args, out: &Out, cfg: &Config) -> Result<Outcome> {
     // A saved log opens with its header, before any of its lines, so the first line says what
     // was read.
     if let Some(path) = &a.log {
-        println!(
+        outln!(
             "{}",
             out.header(&format!("== log {} ({} lines)", path.display(), all.len()))
         );
@@ -257,7 +257,7 @@ pub fn run(a: Args, out: &Out, cfg: &Config) -> Result<Outcome> {
         log_note,
     );
     if let (true, Some(secs)) = (timed_out, a.timeout) {
-        println!(
+        outln!(
             "{}",
             out.dim(&format!(
                 "… killed after {secs}s (--timeout); output above is what it printed until then. Raise --timeout, or --grep/--tail a narrower command"
@@ -265,7 +265,7 @@ pub fn run(a: Args, out: &Out, cfg: &Config) -> Result<Outcome> {
         );
     }
     if a.log.is_none() {
-        println!("{}", out.header(&format!("== exit {code}")));
+        outln!("{}", out.header(&format!("== exit {code}")));
     }
     print_snippets(out, &a, &refs);
     if let Some(path) = &a.log {
@@ -365,7 +365,7 @@ fn command_line(a: &Args, out: &Out, cfg: &Config) -> Result<String> {
                     )
                 })?;
             if out.format != Format::Json {
-                println!("{}", out.dim(&format!("$ {c}")));
+                outln!("{}", out.dim(&format!("$ {c}")));
             }
             Ok(c)
         }

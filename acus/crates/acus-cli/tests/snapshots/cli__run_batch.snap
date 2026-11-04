@@ -1,5 +1,6 @@
 ---
-source: crates/acus-cli/tests/cli.rs
+source: crates/acus-cli/tests/cli/run_config_misc.rs
+assertion_line: 24
 expression: out
 ---
 >>> acus show src/lib.rs#new
@@ -12,3 +13,4 @@ expression: out
 >>> acus show nope.rs
 error: path not found: nope.rs
 hint: paths are relative to the working directory; `acus files` lists them
+failed: 1 of 3 lines (line 3: path not found: nope.rs)

@@ -3,7 +3,32 @@
 
 use capsa_core::format::{Format, Stream, color};
 use capsa_core::render::{Doc, Profile, Tone, bold, paint};
+use std::cell::RefCell;
 use std::io;
+
+thread_local! {
+    /// Holds the output of the line `run` is executing instead of writing it to stdout.
+    static CAPTURE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Writes `s` to stdout, or into the buffer `capture` installed.
+pub fn out(s: &str) {
+    CAPTURE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        match slot.as_mut() {
+            Some(buf) => buf.push_str(s),
+            None => print!("{s}"),
+        }
+    });
+}
+
+/// Runs `f` while `out` collects what it prints; returns the value and the collected text.
+pub fn capture<T>(f: impl FnOnce() -> T) -> (T, String) {
+    CAPTURE.with(|slot| *slot.borrow_mut() = Some(String::new()));
+    let value = f();
+    let text = CAPTURE.with(|slot| slot.borrow_mut().take().unwrap_or_default());
+    (value, text)
+}
 
 /// Printing helpers. Colour follows `capsa_core::format::color`: human output on a terminal
 /// without `NO_COLOR`, so piped and agent output is plain text.
@@ -34,13 +59,16 @@ impl Out {
 
     /// Writes a human-view `Doc` to stdout in the rich layout, coloured when colour is on.
     pub fn doc(&self, doc: &Doc) -> io::Result<()> {
+        let mut rendered = Vec::new();
         doc.write(
-            &mut io::stdout().lock(),
+            &mut rendered,
             Profile {
                 color: self.color,
                 rich: true,
             },
-        )
+        )?;
+        out(&String::from_utf8_lossy(&rendered));
+        Ok(())
     }
 
     /// `n\tline`, or `n>\tline` for matching lines — the shape agents know from `cat -n`.
@@ -111,7 +139,7 @@ impl Budget {
             if self.exhausted() {
                 self.dropped += 1;
             } else {
-                println!("{line}");
+                outln!("{line}");
                 self.printed += 1;
             }
         }

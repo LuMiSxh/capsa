@@ -324,7 +324,7 @@ fn print_files(a: &Args, out: &Out, files: &mut [FileHits], context: Option<(usi
             .iter()
             .map(|f| serde_json::json!({ "path": f.path, "count": f.hits.len() }))
             .collect();
-        println!("{}", serde_json::json!({ "files": counts, "total": total }));
+        outln!("{}", serde_json::json!({ "files": counts, "total": total }));
         return;
     }
     let mut budget = Budget::new(a.head.map(|n| n as usize));
@@ -335,7 +335,7 @@ fn print_files(a: &Args, out: &Out, files: &mut [FileHits], context: Option<(usi
         }
         budget.emit(&format!("total {total} in {} files", files.len()));
         if let Some(f) = budget.footer() {
-            println!("{f}");
+            outln!("{f}");
         }
         return;
     }
@@ -344,7 +344,7 @@ fn print_files(a: &Args, out: &Out, files: &mut [FileHits], context: Option<(usi
             budget.emit(&format!("{} {}", f.path, f.hits.len()));
         }
         if let Some(f) = budget.footer() {
-            println!("{f}");
+            outln!("{f}");
         }
         return;
     }
@@ -374,7 +374,7 @@ fn print_files(a: &Args, out: &Out, files: &mut [FileHits], context: Option<(usi
         ));
     }
     if let Some(f) = budget.footer() {
-        println!("{f}");
+        outln!("{f}");
     }
 }
 

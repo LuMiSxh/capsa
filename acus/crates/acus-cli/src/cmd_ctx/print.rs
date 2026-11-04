@@ -16,7 +16,7 @@ pub(super) fn print_json(a: &Args, cwd: &Path, shown: &str, code: i32) -> Outcom
         .filter_map(|(p, l)| snippet(p, *l, a))
         .map(|s| serde_json::json!({"address": s.0, "start": s.1, "text": s.2.join("\n")}))
         .collect();
-    println!(
+    outln!(
         "{}",
         serde_json::json!({"exit": code, "output": shown, "locations": locs})
     );
@@ -39,14 +39,14 @@ pub(super) fn print_lines(a: &Args, lines: &[String]) -> usize {
         lines.len().saturating_sub(half * 2)
     };
     if omitted > 0 {
-        lines[..half].iter().map(cut).for_each(|l| println!("{l}"));
-        println!("… {omitted} output lines omitted");
+        lines[..half].iter().map(cut).for_each(|l| outln!("{l}"));
+        outln!("… {omitted} output lines omitted");
         lines[lines.len() - half..]
             .iter()
             .map(cut)
-            .for_each(|l| println!("{l}"));
+            .for_each(|l| outln!("{l}"));
     } else {
-        lines.iter().map(cut).for_each(|l| println!("{l}"));
+        lines.iter().map(cut).for_each(|l| outln!("{l}"));
     }
     omitted
 }
@@ -67,7 +67,7 @@ pub(super) fn print_notes(
         } else {
             String::new()
         };
-        println!(
+        outln!(
             "{}",
             out.dim(&format!(
                 "… {dropped} noise lines dropped{tests} (--raw keeps them)"
@@ -82,7 +82,7 @@ pub(super) fn print_notes(
         } else {
             ""
         };
-        println!(
+        outln!(
             "{}",
             out.dim(&format!(
                 "… {grep_dropped} lines not matching --grep dropped{why}"
@@ -91,7 +91,7 @@ pub(super) fn print_notes(
     }
     if let Some((log, n)) = log {
         let p = log.display();
-        println!(
+        outln!(
             "{}",
             out.dim(&format!(
                 "… full output ({n} lines): acus find 'PAT' {p}, or acus show {p}:A-B"
@@ -120,19 +120,19 @@ pub(super) fn print_snippets(out: &Out, a: &Args, refs: &[(PathBuf, usize)]) {
     for (label, start, body, marks) in &shown {
         let ls: Vec<String> = marks.iter().map(ToString::to_string).collect();
         let word = if marks.len() > 1 { "lines" } else { "line" };
-        println!(
+        outln!(
             "{}",
             out.header(&format!("== {label} ({word} {})", ls.join(", ")))
         );
         for (i, t) in body.iter().enumerate() {
-            println!(
+            outln!(
                 "{}",
                 out.numbered(start + i, &cut_line(t, a.cut), marks.contains(&(start + i)))
             );
         }
     }
     if more > 0 {
-        println!("… {more} more locations (--max-refs {})", a.max_refs + more);
+        outln!("… {more} more locations (--max-refs {})", a.max_refs + more);
     }
 }
 
@@ -147,7 +147,7 @@ pub(super) fn print_growing(out: &Out, path: &Path) {
         return;
     };
     let p = path.display();
-    println!(
+    outln!(
         "{}",
         out.dim(&format!(
             "{p} was written to {}s ago and may still be growing; rerun acus ctx --log {p} for newer lines",

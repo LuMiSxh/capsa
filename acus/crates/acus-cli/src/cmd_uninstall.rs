@@ -36,13 +36,13 @@ pub fn run(a: &Args, format: Format) -> Result<Outcome> {
             .hinted()?;
         if format != Format::Json {
             for file in files {
-                println!("{} {}", verb(dry_run), file.display());
+                outln!("{} {}", verb(dry_run), file.display());
             }
         }
         Ok(())
     })?;
     if !a.dry_run && format != Format::Json {
-        println!(
+        outln!(
             "hooks in {} are left; remove the acus entries by hand",
             capsa_core::claude_settings::path().display()
         );

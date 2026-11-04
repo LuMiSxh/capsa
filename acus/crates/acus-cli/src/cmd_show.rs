@@ -101,10 +101,10 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         }
     }
     if let Some(f) = budget.footer() {
-        println!("{f}");
+        outln!("{f}");
     }
     if out.format == Format::Json {
-        println!("{}", serde_json::Value::Array(json));
+        outln!("{}", serde_json::Value::Array(json));
     }
     // Failed addresses were reported above: exit 2 when nothing could be shown, 1 when some were.
     Ok(match (shown, failed) {
