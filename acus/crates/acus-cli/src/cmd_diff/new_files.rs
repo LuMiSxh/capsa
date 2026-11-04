@@ -2,7 +2,7 @@
 //! Renders an added or untracked file as an outline in `acus diff -p`.
 
 use super::moves::{Move, MoveIndex, moved_line};
-use super::{FILE_LINES, Style, View};
+use super::render::{FILE_LINES, Style, View};
 use acus_syntax::Lang;
 
 /// Lines printed from a new file that has no outline.

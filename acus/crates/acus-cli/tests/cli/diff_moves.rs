@@ -135,6 +135,64 @@ fn a_move_within_one_file_shows_both_sides() {
 }
 
 #[test]
+fn an_edit_shifted_down_by_inserted_lines_is_not_a_move() {
+    let d = repo();
+    std::fs::write(
+        d.path().join("a.rs"),
+        "fn a() {\n    1;\n}\n\nfn f() -> u8 { 1 }\n",
+    )
+    .unwrap();
+    commit(d.path());
+    std::fs::write(
+        d.path().join("a.rs"),
+        "fn x1() {}\nfn x2() {}\nfn x3() {}\nfn x4() {}\nfn x5() {}\n\nfn a() {\n    1;\n}\n\nfn f() -> u8 { 2 }\n",
+    )
+    .unwrap();
+    let (code, out, _) = acus_in(d.path(), &["diff", "-p"], "");
+    assert_eq!(code, 0);
+    assert!(!out.contains("moved ←"), "{out}");
+    assert!(!out.contains("moved →"), "{out}");
+    assert!(out.contains("  fn f 11-11 +1 -1\n"), "{out}");
+}
+
+#[test]
+fn identical_functions_in_different_files_are_not_paired() {
+    let d = repo();
+    std::fs::write(d.path().join("a.rs"), "fn f() {\n  1;\n}\n").unwrap();
+    std::fs::write(d.path().join("b.rs"), "fn f() {\n  1;\n}\n").unwrap();
+    commit(d.path());
+    std::fs::write(d.path().join("a.rs"), "").unwrap();
+    std::fs::write(d.path().join("b.rs"), "fn f() {\n    1;\n}\n").unwrap();
+    let (code, out, _) = acus_in(d.path(), &["diff", "-p"], "");
+    assert_eq!(code, 0);
+    assert!(out.contains("  fn f (removed) -3\n"), "{out}");
+    assert!(!out.contains("moved ←"), "{out}");
+    assert!(!out.contains("moved →"), "{out}");
+}
+
+#[test]
+fn a_copy_that_stays_in_its_file_is_not_a_move() {
+    let d = repo();
+    std::fs::write(
+        d.path().join("a.py"),
+        "def f():\n    1\n\n\ndef f():\n    1\n",
+    )
+    .unwrap();
+    std::fs::write(d.path().join("b.py"), "def keep():\n    2\n").unwrap();
+    commit(d.path());
+    std::fs::write(d.path().join("a.py"), "def f():\n    1\n").unwrap();
+    std::fs::write(
+        d.path().join("b.py"),
+        "def keep():\n    2\n\n\ndef f():\n    1\n",
+    )
+    .unwrap();
+    let (code, out, _) = acus_in(d.path(), &["diff", "-p"], "");
+    assert_eq!(code, 0);
+    assert!(!out.contains("moved ←"), "{out}");
+    assert!(!out.contains("moved →"), "{out}");
+}
+
+#[test]
 fn a_moved_and_edited_function_prints_only_the_body_diff() {
     let d = repo();
     std::fs::write(

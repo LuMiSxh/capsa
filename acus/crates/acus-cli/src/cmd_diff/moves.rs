@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Pairs symbols removed in one place and added elsewhere in the same diff.
 
-use super::{View, file_path};
-use acus_syntax::Outline;
+use super::file_path;
+use super::render::View;
+use acus_syntax::{Outline, Symbol};
 use similar::{ChangeTag, TextDiff};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -60,6 +61,7 @@ pub(super) fn find_moves(views: &[View<'_>]) -> Vec<Move> {
         collect(view, file, false, &mut removed);
         collect(view, file, true, &mut added);
     }
+    drop_reappearing(views, &mut removed, &mut added);
     pair(&removed, &added)
         .into_iter()
         .filter_map(|(o, n)| build(views, &removed[o], &added[n]))
@@ -151,7 +153,7 @@ fn pair(removed: &[Candidate], added: &[Candidate]) -> Vec<(usize, usize)> {
     for (i, c) in added.iter().enumerate() {
         if let Some(old) = by_body
             .get_mut(c.body.as_str())
-            .and_then(VecDeque::pop_front)
+            .and_then(|q| take_near(q, c.file, removed))
         {
             used[old] = true;
             matched[i] = true;
@@ -173,7 +175,7 @@ fn pair(removed: &[Candidate], added: &[Candidate]) -> Vec<(usize, usize)> {
         }
         if let Some(old) = by_name
             .get_mut(&(c.kind, c.name.as_str()))
-            .and_then(VecDeque::pop_front)
+            .and_then(|q| take_near(q, c.file, removed))
         {
             used[old] = true;
             pairs.push((old, i));
@@ -182,16 +184,26 @@ fn pair(removed: &[Candidate], added: &[Candidate]) -> Vec<(usize, usize)> {
     pairs
 }
 
+/// Takes the first removed candidate of `file` from `queue`, or the first candidate when the
+/// body or name also appears in another file.
+fn take_near(queue: &mut VecDeque<usize>, file: usize, removed: &[Candidate]) -> Option<usize> {
+    let at = queue
+        .iter()
+        .position(|&i| removed[i].file == file)
+        .unwrap_or(0);
+    queue.remove(at)
+}
+
 fn build(views: &[View<'_>], old: &Candidate, new: &Candidate) -> Option<Move> {
     let old_view = views.get(old.file)?;
     let new_view = views.get(new.file)?;
-    let old_sym = old_view.old_o.as_ref()?.symbols.get(old.sym)?;
-    let new_sym = new_view.new_o.as_ref()?.symbols.get(new.sym)?;
-    // A symbol rewritten where it stood is not a move.
-    if old.file == new.file
-        && old_sym.start_line <= new_sym.end_line
-        && new_sym.start_line <= old_sym.end_line
-    {
+    let old_o = old_view.old_o.as_ref()?;
+    let new_o = new_view.new_o.as_ref()?;
+    let old_sym = old_o.symbols.get(old.sym)?;
+    let new_sym = new_o.symbols.get(new.sym)?;
+    // A symbol edited where it stood only shifted with its neighbours; it moved only when it
+    // passed one of them.
+    if old.file == new.file && !moved_past(old_o, old.sym, new_o, new.sym) {
         return None;
     }
     let old_body = body(
@@ -214,6 +226,83 @@ fn build(views: &[View<'_>], old: &Candidate, new: &Candidate) -> Option<Move> {
         from_range: (old_sym.start_line, old_sym.end_line),
         lines: diff(&old_body, old_sym.start_line, &new_body, new_sym.start_line),
     })
+}
+
+/// Drops a candidate whose body still sits on the other side of its own file unless the same
+/// file also has it as a touched candidate: an indentation or comment change is not a move, and
+/// an identical function in another file must not pair with it.
+fn drop_reappearing(views: &[View<'_>], removed: &mut Vec<Candidate>, added: &mut Vec<Candidate>) {
+    if removed.is_empty() || added.is_empty() {
+        return;
+    }
+    let new_bodies: Vec<HashSet<String>> = views
+        .iter()
+        .map(|v| bodies(v.new_o.as_ref(), v.new_src.as_deref()))
+        .collect();
+    let old_bodies: Vec<HashSet<String>> = views
+        .iter()
+        .map(|v| bodies(v.old_o.as_ref(), v.old_src.as_deref()))
+        .collect();
+    {
+        let touched: HashSet<(usize, &str)> =
+            added.iter().map(|c| (c.file, c.body.as_str())).collect();
+        removed.retain(|c| {
+            touched.contains(&(c.file, c.body.as_str())) || !new_bodies[c.file].contains(&c.body)
+        });
+    }
+    {
+        let touched: HashSet<(usize, &str)> =
+            removed.iter().map(|c| (c.file, c.body.as_str())).collect();
+        added.retain(|c| {
+            touched.contains(&(c.file, c.body.as_str())) || !old_bodies[c.file].contains(&c.body)
+        });
+    }
+}
+
+/// The normalized bodies of every symbol in one outline of a file.
+fn bodies(o: Option<&Outline>, src: Option<&str>) -> HashSet<String> {
+    let (Some(o), Some(src)) = (o, src) else {
+        return HashSet::new();
+    };
+    let lines: Vec<&str> = src.lines().collect();
+    o.symbols
+        .iter()
+        .filter_map(|s| {
+            let from = s.start_line.checked_sub(1)?;
+            if from >= s.end_line || s.end_line > lines.len() {
+                return None;
+            }
+            Some(normalize(&lines[from..s.end_line]))
+        })
+        .collect()
+}
+
+/// True when the symbol passed another symbol that sits in both outlines, rather than only
+/// shifting with inserted lines.
+fn moved_past(old: &Outline, old_sym: usize, new: &Outline, new_sym: usize) -> bool {
+    let old_pos = old.symbols[old_sym].start_line;
+    let new_pos = new.symbols[new_sym].start_line;
+    old.symbols.iter().enumerate().any(|(i, s)| {
+        if i == old_sym || !is_leaf(old, i) {
+            return false;
+        }
+        let Some(other) = counterpart(new, s) else {
+            return false;
+        };
+        (s.start_line < old_pos) != (other.start_line < new_pos)
+    })
+}
+
+/// The one leaf of `o` with the same kind and qualified name as `s`; None when absent or
+/// duplicated.
+fn counterpart<'a>(o: &'a Outline, s: &Symbol) -> Option<&'a Symbol> {
+    let mut matches = o
+        .symbols
+        .iter()
+        .enumerate()
+        .filter(|(i, x)| is_leaf(o, *i) && x.kind == s.kind && x.qual == s.qual);
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first.1)
 }
 
 fn diff(
