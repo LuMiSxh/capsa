@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.1]
+
 ### Fixed
 
 - A background subagent whose last event was a tool result was shown as done
