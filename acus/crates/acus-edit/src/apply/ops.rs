@@ -12,8 +12,8 @@ use crate::{Chunk, Op};
 
 pub(super) fn apply_op(files: &mut Files, op: &Op) -> Result<Vec<Change>> {
     Ok(match op {
-        // `apply_line_ranges` runs these before the other ops.
-        Op::DeleteLines { .. } | Op::MoveLines { .. } => Vec::new(),
+        // `apply_line_ranges` and `apply_conflicts` run these before the other ops.
+        Op::DeleteLines { .. } | Op::MoveLines { .. } | Op::ResolveConflict { .. } => Vec::new(),
         Op::Add { path, lines } => vec![add(files, path, lines)?],
         Op::Append { path, lines } => vec![append(files, path, lines)?],
         Op::Delete { path } => vec![delete(files, path)?],

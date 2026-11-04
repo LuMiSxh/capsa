@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Parses the `PATH#Symbol` and `PATH:N` addresses of directives.
 
-use super::{InsertAt, LineAnchor};
+use super::{InsertAt, LineAnchor, ResolveMode};
 use crate::error::{EditError, Result};
 
 pub(super) fn sym_addr(rest: &str, n: usize, directive: &str) -> Result<(String, String)> {
@@ -52,6 +52,37 @@ pub(super) fn move_anchor(rest: &str, n: usize) -> Result<LineAnchor> {
             directive: "After".into(),
         }),
     }
+}
+
+/// Parses `PATH MODE` or `PATH:LINE MODE` of `*** Resolve Conflict`, where MODE is `--ours`,
+/// `--theirs`, `--both` or `--base`.
+pub(super) fn resolve_addr(rest: &str, n: usize) -> Result<(String, ResolveMode, Option<usize>)> {
+    let rest = rest.trim();
+    let (target, flag) = rest
+        .rsplit_once(char::is_whitespace)
+        .ok_or(EditError::ResolveBadMode { line: n })?;
+    let mode = ResolveMode::from_flag(flag).ok_or(EditError::ResolveBadMode { line: n })?;
+    let target = target.trim();
+    if target.is_empty() {
+        return Err(EditError::ResolveBadMode { line: n });
+    }
+    let (path, line) = match target.rsplit_once(':') {
+        Some((path, number)) if !path.is_empty() && is_number(number) => {
+            let line: usize = number
+                .parse()
+                .map_err(|_| EditError::ResolveBadLine { line: n })?;
+            if line == 0 {
+                return Err(EditError::ResolveBadLine { line: n });
+            }
+            (path, Some(line))
+        }
+        _ => (target, None),
+    };
+    Ok((path.into(), mode, line))
+}
+
+fn is_number(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Parses `PATH#Symbol` or `PATH:N`.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 #![expect(clippy::unwrap_used, reason = "test code")]
 
+mod conflicts;
 mod files;
 mod line_ranges;
 mod replace_all;

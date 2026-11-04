@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Applies directives to the ops they open or complete.
 
-use super::addr::{insert_addr, line_range, move_anchor, sym_addr};
+use super::addr::{insert_addr, line_range, move_anchor, resolve_addr, sym_addr};
 use super::directives::{Directive, Kind, accepted, did_you_mean, split_directive};
 use super::{Dest, Op};
 use crate::error::{EditError, Result};
@@ -89,6 +89,15 @@ fn start_op(d: &Directive, rest: &str, n: usize, ops: &mut Vec<Op>) -> Result<()
                 end,
                 expect: None,
                 to: None,
+                line: n,
+            });
+        }
+        Kind::ResolveConflict => {
+            let (path, mode, target) = resolve_addr(rest, n)?;
+            ops.push(Op::ResolveConflict {
+                path,
+                mode,
+                target,
                 line: n,
             });
         }

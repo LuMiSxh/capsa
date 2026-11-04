@@ -10,6 +10,28 @@ use crate::error::{EditError, Result};
 use body::{Stage, body};
 use ops::directive;
 
+/// Which side of every conflict section a `*** Resolve Conflict` directive keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolveMode {
+    Ours,
+    Theirs,
+    Both,
+    Base,
+}
+
+impl ResolveMode {
+    /// The mode a `--ours` style flag names.
+    pub(super) fn from_flag(flag: &str) -> Option<Self> {
+        Some(match flag {
+            "--ours" => Self::Ours,
+            "--theirs" => Self::Theirs,
+            "--both" => Self::Both,
+            "--base" => Self::Base,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// One directive of a patch, in the order the directives appear. The lines after a directive
 /// (its `+` lines, SEARCH blocks or `*** To:`) fill in the op before them, so the parser builds
@@ -72,6 +94,15 @@ pub enum Op {
         end: usize,
         expect: Option<String>,
         to: Option<LineAnchor>,
+        line: usize,
+    },
+    /// Resolves every conflict section of a file, or the one that contains `target`.
+    ResolveConflict {
+        path: String,
+        mode: ResolveMode,
+        /// The 1-based line of the file as it was before the patch; `None` resolves every section.
+        target: Option<usize>,
+        /// The patch line of the directive.
         line: usize,
     },
     /// Inserts the `+` lines next to a symbol or line.
@@ -143,6 +174,7 @@ fn expand_home(ops: &mut [Op]) {
             | Op::ReplaceSymbol { path, .. }
             | Op::DeleteSymbol { path, .. }
             | Op::DeleteLines { path, .. }
+            | Op::ResolveConflict { path, .. }
             | Op::Insert { path, .. } => home(path),
             Op::MoveLines { path, to, .. } => {
                 home(path);

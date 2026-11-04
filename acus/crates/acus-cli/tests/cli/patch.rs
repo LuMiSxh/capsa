@@ -431,6 +431,27 @@ fn patch_echo_stops_after_120_region_lines() {
     assert!(out.matches("new ").count() <= 120, "{out}");
 }
 
+#[test]
+fn patch_resolves_conflicts_and_notes_a_remaining_marker() {
+    let d = tempfile::tempdir().unwrap();
+    let before = "fn f() {\n<<<<<<< HEAD\n    1\n=======\n    2\n>>>>>>> branch\n}\nfn g() {\n<<<<<<< HEAD\n    3\n=======\n    4\n>>>>>>> branch\n}\n";
+    std::fs::write(d.path().join("a.rs"), before).unwrap();
+    let (code, out, err) = acus_in(
+        d.path(),
+        &["patch", "-q"],
+        "*** Resolve Conflict: a.rs:2 --ours\n",
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("note: skipped the syntax check of a.rs (still has conflict markers)"),
+        "{out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(d.path().join("a.rs")).unwrap(),
+        "fn f() {\n    1\n}\nfn g() {\n<<<<<<< HEAD\n    3\n=======\n    4\n>>>>>>> branch\n}\n"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn patch_through_a_symlink_edits_the_target_and_keeps_the_link() {

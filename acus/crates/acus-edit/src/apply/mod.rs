@@ -2,6 +2,7 @@
 //! Applies a parsed patch to in-memory copies of its files, then writes them all or none.
 
 mod commit;
+mod conflict;
 mod files;
 mod line_ranges;
 mod ops;
@@ -12,6 +13,7 @@ mod symbols;
 use crate::Op;
 use crate::error::{EditError, Result};
 use commit::{check_syntax, commit};
+use conflict::apply_conflicts;
 use files::Files;
 use line_ranges::apply_line_ranges;
 use ops::apply_op;
@@ -102,6 +104,8 @@ pub struct Applied {
     pub crlf: Vec<String>,
     /// Paths written although their syntax got worse (`--allow-broken`).
     pub broken: Vec<String>,
+    /// Paths whose syntax was not checked because they still hold conflict markers.
+    pub unchecked: Vec<String>,
     /// Before and after text of every file the patch wrote or deleted.
     pub texts: Vec<FileText>,
 }
@@ -131,12 +135,16 @@ pub fn apply_with(ops: &[Op], root: &Path, check: bool, allow_broken: bool) -> R
         skipped: Vec::new(),
         crlf: Vec::new(),
     };
-    // Line directives number the file as it was before the patch, so they run first; the rest
-    // then apply in patch order to the result.
-    let (line_ops, other_ops): (Vec<&Op>, Vec<&Op>) = ops
+    // Conflict and line directives number the file as it was before the patch, so they run
+    // first; the rest then apply in patch order to the result.
+    let (conflict_ops, rest): (Vec<&Op>, Vec<&Op>) = ops
+        .iter()
+        .partition(|op| matches!(op, Op::ResolveConflict { .. }));
+    let (line_ops, other_ops): (Vec<&Op>, Vec<&Op>) = rest
         .iter()
         .partition(|op| matches!(op, Op::DeleteLines { .. } | Op::MoveLines { .. }));
-    let mut changes = apply_line_ranges(&mut files, &line_ops)?;
+    let mut changes = apply_conflicts(&mut files, &conflict_ops)?;
+    changes.append(&mut apply_line_ranges(&mut files, &line_ops)?);
     // Every op runs so one failure does not hide the next. A failed block is skipped, so the
     // blocks after it see the file without it; nothing is written while any failure remains.
     let mut failures = Vec::new();
@@ -184,7 +192,7 @@ pub fn apply_with(ops: &[Op], root: &Path, check: bool, allow_broken: bool) -> R
             }),
         })
         .collect();
-    let broken = check_syntax(&files, allow_broken)?;
+    let (broken, unchecked) = check_syntax(&files, allow_broken)?;
     if !check {
         commit(root, std::mem::take(&mut files.map))?;
     }
@@ -197,6 +205,7 @@ pub fn apply_with(ops: &[Op], root: &Path, check: bool, allow_broken: bool) -> R
         skipped: files.skipped,
         crlf: files.crlf,
         broken,
+        unchecked,
         texts,
     })
 }

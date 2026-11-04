@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Checks a patch's syntax before anything is written, then writes every changed file.
 
+use super::conflict::has_markers;
 use super::files::{File, Files};
 use crate::error::{EditError, Result};
 use acus_syntax::{Lang, is_jsonc, syntax_errors};
@@ -9,11 +10,16 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-/// Files the patch writes whose syntax gets worse: more error nodes than they had before.
-/// A JSON file that already uses comments or trailing commas is checked as JSONC.
+/// Files the patch writes whose syntax gets worse: more error nodes than they had before. A file
+/// that held conflict markers is checked only on the result; one that still holds them is not
+/// checked at all. A JSON file that already uses comments or trailing commas is checked as JSONC.
 /// Nothing is written yet, so an error here fails the whole patch unless `allow_broken`.
-pub(super) fn check_syntax(files: &Files, allow_broken: bool) -> Result<Vec<String>> {
+pub(super) fn check_syntax(
+    files: &Files,
+    allow_broken: bool,
+) -> Result<(Vec<String>, Vec<String>)> {
     let mut broken = Vec::new();
+    let mut unchecked = Vec::new();
     for (path, f) in files.map.iter().filter(|(_, f)| f.dirty) {
         let (Some(lines), Some(lang)) = (&f.lines, Lang::from_path(Path::new(path))) else {
             continue;
@@ -23,15 +29,23 @@ pub(super) fn check_syntax(files: &Files, allow_broken: bool) -> Result<Vec<Stri
         if f.trailing_newline && !lines.is_empty() {
             text.push('\n');
         }
+        let had_markers = f.before.as_deref().is_some_and(has_markers);
+        if had_markers && has_markers(&text) {
+            unchecked.push(path.clone());
+            continue;
+        }
         let jsonc = lang == Lang::Json && f.before.as_deref().is_some_and(is_jsonc);
         let Some(new) = syntax_errors(lang, &text, jsonc).filter(|e| !e.is_empty()) else {
             continue;
         };
-        let old = f
-            .before
-            .as_deref()
-            .and_then(|t| syntax_errors(lang, t, jsonc))
-            .map_or(0, |e| e.len());
+        let old = if had_markers {
+            0
+        } else {
+            f.before
+                .as_deref()
+                .and_then(|t| syntax_errors(lang, t, jsonc))
+                .map_or(0, |e| e.len())
+        };
         if new.len() <= old {
             continue;
         }
@@ -50,7 +64,7 @@ pub(super) fn check_syntax(files: &Files, allow_broken: bool) -> Result<Vec<Stri
         }
         broken.push(path.clone());
     }
-    Ok(broken)
+    Ok((broken, unchecked))
 }
 
 /// Writes every dirty file to a temp file next to it, then renames them all into place.

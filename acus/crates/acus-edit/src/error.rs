@@ -127,6 +127,33 @@ pub enum EditError {
     /// A second `*** After:` under one `*** Move Lines`.
     #[error("patch line {line}: `*** Move Lines` takes one `*** After:`")]
     MoveLinesDestinationTwice { line: usize },
+    /// A `*** Resolve Conflict` without a `--ours`, `--theirs`, `--both` or `--base` mode.
+    #[error(
+        "patch line {line}: expected `*** Resolve Conflict: PATH --ours`, `--theirs`, `--both` or `--base`"
+    )]
+    ResolveBadMode { line: usize },
+    /// A `*** Resolve Conflict` line target that is not a positive line number.
+    #[error("patch line {line}: the line after `:` must be a 1-based line number")]
+    ResolveBadLine { line: usize },
+    /// A `*** Resolve Conflict` on a file without conflict markers.
+    #[error("{path}: no conflict markers")]
+    NoConflict { path: String },
+    /// A conflict section whose `=======` or `>>>>>>>` marker is missing.
+    #[error("{path}:{line}: unterminated conflict section")]
+    UnterminatedConflict { path: String, line: usize },
+    /// A `PATH:LINE` that is outside every conflict section.
+    #[error("{path}:{line}: no conflict section contains that line")]
+    NoConflictAtLine { path: String, line: usize },
+    /// Two `*** Resolve Conflict` directives that name the same section.
+    #[error("patch line {patch_line}: the conflict section at {path}:{line} was already resolved")]
+    ConflictAlreadyResolved {
+        path: String,
+        line: usize,
+        patch_line: usize,
+    },
+    /// `--base` on a section without the diff3 `|||||||` part.
+    #[error("{path}:{line}: conflict section has no `|||||||` base")]
+    NoConflictBase { path: String, line: usize },
 
     /// `*** Add File` for a file that exists.
     #[error("{path}: already exists")]
@@ -349,6 +376,9 @@ fn failures_message(failures: &[EditError]) -> String {
 
 impl Hint for EditError {
     fn hint(&self) -> Option<Cow<'_, str>> {
+        if let Some(text) = self.conflict_hint() {
+            return Some(text);
+        }
         let text = match self {
             Self::UnknownDirective { hint, .. } => Cow::Borrowed(hint.as_str()),
             Self::UnterminatedBlock => Cow::Borrowed("close it with `>>>>>>> REPLACE`"),
@@ -435,5 +465,33 @@ impl Hint for EditError {
             _ => return None,
         };
         Some(text)
+    }
+}
+
+impl EditError {
+    /// The fix for a failure of `*** Resolve Conflict`.
+    fn conflict_hint(&self) -> Option<Cow<'_, str>> {
+        Some(match self {
+            Self::ResolveBadMode { .. } => Cow::Borrowed(
+                "put the mode after the path: `--ours`, `--theirs`, `--both` or `--base`",
+            ),
+            Self::ResolveBadLine { .. } => {
+                Cow::Borrowed("line numbers are 1-based, as `acus show PATH:A-B` prints them")
+            }
+            Self::NoConflict { .. } => {
+                Cow::Borrowed("resolve the file with `*** Update File:` SEARCH/REPLACE blocks")
+            }
+            Self::UnterminatedConflict { .. } => Cow::Borrowed(
+                "add the missing `=======` and `>>>>>>>` markers, or edit the file by hand",
+            ),
+            Self::NoConflictAtLine { path, .. } => Cow::Owned(format!("acus show {path}")),
+            Self::ConflictAlreadyResolved { .. } => {
+                Cow::Borrowed("use one directive per conflict section")
+            }
+            Self::NoConflictBase { .. } => {
+                Cow::Borrowed("use `--ours`, `--theirs` or `--both` for a two-way conflict")
+            }
+            _ => return None,
+        })
     }
 }

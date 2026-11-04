@@ -18,6 +18,11 @@ PATCH FORMAT (stdin or --file; all or nothing, nothing is written on an error):
   *** Delete Lines: PATH:A-B        then *** Expect: TEXT, the exact text of line A
   *** Move Lines: PATH:A-B          then *** Expect: TEXT, *** After: PATH:N (0 = start) or PATH#Sym
                                     line numbers are from before the patch (run first)
+  *** Resolve Conflict: PATH --ours    resolve every conflict section; also --theirs, --both, --base
+                                    --both keeps ours then theirs; --base needs the diff3 part
+  *** Resolve Conflict: PATH:LINE --theirs
+                                    resolve only the section that contains line LINE
+                                    line numbers are from before the patch
 
   SEARCH/REPLACE under `*** Update File:`, with the Edit tool's semantics: one or more blocks
   <<<<<<< SEARCH

@@ -87,6 +87,12 @@ pub(super) fn body(op: Option<&mut Op>, line: &str, n: usize, stage: &mut Stage)
         Some(Op::DeleteLines { path, .. } | Op::MoveLines { path, .. }) => {
             return Err(after_line_directive(n, path));
         }
+        Some(Op::ResolveConflict { path, .. }) => {
+            return Err(EditError::UnexpectedAfter {
+                line: n,
+                after: format!("`*** Resolve Conflict: {path}`"),
+            });
+        }
         Some(Op::DeleteSymbol { path, symbol } | Op::MoveSymbol { path, symbol, .. }) => {
             return Err(EditError::UnexpectedAfter {
                 line: n,

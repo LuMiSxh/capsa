@@ -27,6 +27,7 @@ pub(super) enum Kind {
     MoveSymbol,
     DeleteLines,
     MoveLines,
+    ResolveConflict,
     ReplaceAll,
 }
 
@@ -111,6 +112,12 @@ const DIRECTIVES: &[Directive] = &[
         kind: Kind::MoveLines,
         form: "*** Move Lines: PATH:A-B",
         note: " (then *** Expect: TEXT of line A, *** After: PATH:N or PATH#Sym)",
+    },
+    Directive {
+        name: "Resolve Conflict",
+        kind: Kind::ResolveConflict,
+        form: "*** Resolve Conflict: PATH --ours|--theirs|--both|--base",
+        note: " (PATH:LINE resolves only that section)",
     },
     Directive {
         name: "Replace All",

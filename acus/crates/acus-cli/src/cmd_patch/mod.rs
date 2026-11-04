@@ -113,6 +113,12 @@ pub fn run(a: Args, out: &Out, nested: bool, cfg: &Config) -> Result<Outcome> {
             applied.broken.join(", ")
         ));
     }
+    if !applied.unchecked.is_empty() {
+        notes.push(format!(
+            "note: skipped the syntax check of {} (still has conflict markers)",
+            applied.unchecked.join(", ")
+        ));
+    }
     notes.extend(
         applied.skipped.iter().map(|n| {
             format!("note: patch line {n}: SEARCH is identical to REPLACE; block skipped")

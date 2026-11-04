@@ -462,6 +462,17 @@ fn blocks_apply_in_order_so_later_ones_see_earlier_edits() {
 }
 
 #[test]
+fn search_replaces_a_line_holding_a_conflict_marker() {
+    let d = dir(&[("a.txt", "old\n<<<<<<< HEAD\nours\n")]);
+    run(
+        d.path(),
+        "*** Update File: a.txt\n<<<<<<< SEARCH\nold\n<<<<<<< HEAD\n=======\nnew\n>>>>>>> REPLACE\n",
+    )
+    .unwrap();
+    assert_eq!(read(d.path(), "a.txt"), "new\nours\n");
+}
+
+#[test]
 fn crlf_patch_text_matches_an_lf_file() {
     let d = dir(&[("w.txt", "a\nb\nc\n")]);
     let a = apply(
