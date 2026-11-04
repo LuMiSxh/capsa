@@ -43,7 +43,7 @@ Build from source, with the toolchain pinned in `rust-toolchain.toml` (see [Buil
 | ------------------------------------ | ---------------------------------------------------------------------------------------------- |
 | `vicarius serve`                     | Runs the proxy in the foreground until SIGTERM or SIGINT; launchd starts it                    |
 | `vicarius status`                    | The gate, the balance, the last refresh, the requests, the tokens and the agents               |
-| `vicarius hook session-start`        | SessionStart hook: prints the line that lists the DeepSeek agents when they are available      |
+| `vicarius hook`                      | Claude Code hook: on `SessionStart` prints the line that lists the DeepSeek agents when available |
 | `vicarius self setup`                | Installs the launchd service, the hook and the settings `env`, then starts the service         |
 | `vicarius self start` / `stop`       | Starts or stops the service and sets or removes `ANTHROPIC_BASE_URL` in the settings with it   |
 | `vicarius self config`               | Shows the settings and changes them; see Settings                                              |

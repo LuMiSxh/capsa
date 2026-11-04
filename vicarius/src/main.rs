@@ -36,8 +36,8 @@ enum Cmd {
     Serve(cmd_serve::Args),
     /// Show the service: the gate, the balance, the refresh, the requests, the tokens and the agents.
     Status,
-    /// Run a Claude Code hook: `hook session-start` prints the DeepSeek agent line when available.
-    Hook(cmd_hook::Args),
+    /// Run a Claude Code hook: reads stdin and prints the DeepSeek agent line on SessionStart.
+    Hook,
     /// Settings and installation of vicarius: `self config`, `self update` and `self uninstall`.
     #[command(name = "self")]
     Itself(cmd_self::Args),
@@ -53,7 +53,7 @@ fn execute(cli: Cli, format: Format) -> Result<Outcome> {
     match cli.cmd {
         Cmd::Serve(a) => cmd_serve::run(&a, format),
         Cmd::Status => cmd_status::run(format),
-        Cmd::Hook(a) => Ok(cmd_hook::run(&a)),
+        Cmd::Hook => Ok(cmd_hook::run()),
         Cmd::Itself(a) => cmd_self::run(a, format),
     }
 }

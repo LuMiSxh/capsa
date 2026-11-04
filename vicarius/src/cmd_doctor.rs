@@ -303,8 +303,19 @@ fn env_check(key: &'static str, settings: &Value, expected: &str) -> Check {
 }
 
 fn hook_check(settings: &Value) -> Check {
+    let outdated = claude_settings::has_hook(settings, "SessionStart", |command| {
+        claude_settings::runs(command, TOOL, service::LEGACY_HOOK_ARGS)
+    });
+    if outdated.is_some() {
+        return check(
+            "SessionStart hook",
+            Status::Warn,
+            "outdated `vicarius hook session-start`",
+            Some("run `vicarius self setup`"),
+        );
+    }
     let installed = claude_settings::has_hook(settings, "SessionStart", |command| {
-        claude_settings::runs(command, TOOL, "hook session-start")
+        claude_settings::runs(command, TOOL, service::HOOK_ARGS)
     });
     if installed.is_some() {
         check("SessionStart hook", Status::Ok, "installed", None)

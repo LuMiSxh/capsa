@@ -29,8 +29,10 @@ pub const BASE_URL: &str = "ANTHROPIC_BASE_URL";
 pub const MAX_CONTEXT: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 /// The binary name that the settings hook runs, bare, as census does.
 pub const TOOL: &str = "vicarius";
-/// The arguments of the SessionStart hook command.
-const HOOK_ARGS: &str = "hook session-start";
+/// The arguments of the hook command.
+pub const HOOK_ARGS: &str = "hook";
+/// The arguments of the hook command that `vicarius hook` replaced; `self setup` rewrites it.
+pub const LEGACY_HOOK_ARGS: &str = "hook session-start";
 
 /// The files and the launchd domain of the agent.
 #[derive(Debug, Clone)]
@@ -295,7 +297,7 @@ pub fn replace_env_value(settings: &Path, key: &str, old: &str, new: &str) -> Re
     Ok(replacement)
 }
 
-/// Makes the SessionStart hook run `vicarius hook session-start`. Returns the step it took; with
+/// Makes the SessionStart hook run `vicarius hook`. Returns the step it took; with
 /// `dry_run` nothing is written.
 ///
 /// # Errors
@@ -324,6 +326,8 @@ pub fn remove_session_hook(settings: &Path) -> Result<bool> {
     Ok(removed)
 }
 
+// `runs` matches the `vicarius hook` prefix, so this claims and rewrites an old
+// `vicarius hook session-start` entry too.
 fn hook_owns(command: &str) -> bool {
     claude_settings::runs(command, TOOL, HOOK_ARGS)
 }

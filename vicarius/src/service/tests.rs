@@ -105,8 +105,26 @@ fn session_hook_is_installed_once_and_a_dry_run_writes_nothing() {
     let hooks = read_json(&install.settings);
     assert_eq!(
         hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"],
-        "vicarius hook session-start"
+        "vicarius hook"
     );
+}
+
+#[test]
+fn session_hook_replaces_the_old_session_start_command_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let install = install_in(dir.path());
+    let old = json!({"hooks": {"SessionStart": [{"hooks": [
+        {"type": "command", "command": "vicarius hook session-start"}
+    ]}]}});
+    std::fs::write(&install.settings, old.to_string()).unwrap();
+    assert_eq!(
+        set_session_hook(&install.settings, false).unwrap(),
+        Step::Replace
+    );
+    let hooks = read_json(&install.settings);
+    let groups = hooks["hooks"]["SessionStart"].as_array().unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0]["hooks"][0]["command"], "vicarius hook");
 }
 
 #[test]

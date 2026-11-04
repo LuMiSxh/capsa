@@ -1,7 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
 ## [0.1.0]
 
 ### Added
@@ -33,9 +31,11 @@
   comes from the login environment and never reaches the plist. The settings `env` keys are
   written only after the service's status answers and removed before the agent is booted out.
 - `vicarius status` (agent text, `--human`, `--json` passes the service's bytes) and the
-  SessionStart hook `vicarius hook session-start`, which prints the DeepSeek agent line only when
-  the gate is open and an agent file is ready. Under 15 ms with the service up or down (debug
-  build, `/usr/bin/time`, 3 runs).
+  hook `vicarius hook`, which reads the Claude Code hook input and prints the DeepSeek agent line
+  only on `SessionStart`, when the gate is open and an agent file is ready. Under 15 ms with the
+  service up or down (debug build, `/usr/bin/time`, 3 runs). `vicarius self setup` replaces a
+  `vicarius hook session-start` entry from a pre-release build, and `vicarius self doctor`
+  reports one as outdated.
 - `vicarius self uninstall` stops the service and removes the agent, the plist and the
   SessionStart hook before it removes the binary.
 - `self config set port` restarts a loaded agent on the new port and rewrites
