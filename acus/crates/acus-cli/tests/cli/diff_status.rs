@@ -78,7 +78,14 @@ fn header_names_the_upstream_and_its_ahead_behind() {
     let origin = base.path().join("origin.git");
     git(
         base.path(),
-        &["init", "-q", "--bare", &origin.to_string_lossy()],
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            &origin.to_string_lossy(),
+        ],
     );
     let d = repo();
     std::fs::write(d.path().join("a.txt"), "a\n").unwrap();
