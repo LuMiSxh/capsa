@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Applies `*** Delete Lines` and `*** Move Lines`, whose numbers refer to the files as they were
-//! before the patch.
+//! Applies the line-addressed directives — `*** Resolve Conflict`, `*** Delete Lines` and
+//! `*** Move Lines` — against the files as they were before the patch, so none shifts another.
 
 use super::Change;
+use super::conflict::{Resolution, resolutions};
 use super::files::Files;
 use super::symbols::symbol_lines;
-use crate::Op;
 use crate::error::{EditError, Result};
-use crate::parse::LineAnchor;
+use crate::parse::{LineAnchor, Op};
 use std::collections::BTreeMap;
 
 /// One line directive: lines `start..=end` (1-based) of `path`, and where a move puts them.
@@ -64,15 +64,32 @@ fn part(op: &Op) -> Option<Part<'_>> {
     }
 }
 
+/// Applies every line-addressed directive of one patch. All of them count lines in the files as
+/// they were before the patch, so they are collected against those lines first; the other
+/// directives of the patch run after this.
+pub(super) fn apply_line_edits(
+    files: &mut Files,
+    conflicts: &[&Op],
+    line_ops: &[&Op],
+) -> Result<Vec<Change>> {
+    let resolved = resolutions(files, conflicts)?;
+    apply_line_ranges(files, line_ops, &resolved)
+}
+
 /// Checks every line directive against the files as they were before the patch, then writes
-/// each file the directives touch once. The other directives of the patch run after this.
-pub(super) fn apply_line_ranges(files: &mut Files, ops: &[&Op]) -> Result<Vec<Change>> {
+/// each file the directives touch once.
+fn apply_line_ranges(
+    files: &mut Files,
+    ops: &[&Op],
+    resolved: &BTreeMap<String, Vec<Resolution>>,
+) -> Result<Vec<Change>> {
     let parts: Vec<Part> = ops.iter().filter_map(|op| part(op)).collect();
     check_sources(files, &parts)?;
     check_overlaps(&parts)?;
     let targets = resolve_targets(files, &parts)?;
     check_targets(&parts, &targets)?;
-    rebuild(files, &parts, &targets)
+    check_resolved(&parts, &targets, resolved)?;
+    rebuild(files, &parts, &targets, resolved)
 }
 
 fn check_sources(files: &mut Files, parts: &[Part]) -> Result<()> {
@@ -180,14 +197,58 @@ fn check_targets(parts: &[Part], targets: &[Target]) -> Result<()> {
     Ok(())
 }
 
-/// Rebuilds each touched file: the cut lines are dropped, and each move's lines are inserted
-/// after its target line, in the order the directives appear.
-fn rebuild(files: &mut Files, parts: &[Part], targets: &[Target]) -> Result<Vec<Change>> {
+/// Refuses a line directive that cuts, or moves lines into, a conflict section another directive
+/// resolves: both would edit the same lines of the file before the patch.
+fn check_resolved(
+    parts: &[Part],
+    targets: &[Target],
+    resolved: &BTreeMap<String, Vec<Resolution>>,
+) -> Result<()> {
+    for (p, target) in parts.iter().zip(targets) {
+        let cuts = resolved
+            .get(p.path)
+            .is_some_and(|rs| rs.iter().any(|r| p.start - 1 < r.end && r.start < p.end));
+        if cuts {
+            return Err(EditError::ResolveOverlap {
+                path: p.path.into(),
+                directive: p.name,
+                line: p.line,
+                place: format!("lines {}-{}", p.start, p.end),
+            });
+        }
+        let Some((dest, after)) = target else {
+            continue;
+        };
+        let inside = resolved
+            .get(dest.as_str())
+            .is_some_and(|rs| rs.iter().any(|r| r.start < *after && *after < r.end));
+        if inside {
+            return Err(EditError::ResolveOverlap {
+                path: dest.clone(),
+                directive: p.name,
+                line: p.line,
+                place: format!("the insert point after line {after}"),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Rebuilds each touched file from the lines before the patch: each resolved section is replaced,
+/// the cut lines are dropped, and each move's lines are inserted after its target line, in the
+/// order the directives appear.
+fn rebuild(
+    files: &mut Files,
+    parts: &[Part],
+    targets: &[Target],
+    resolved: &BTreeMap<String, Vec<Resolution>>,
+) -> Result<Vec<Change>> {
     let mut orig: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let touched = parts
         .iter()
         .map(|p| p.path)
-        .chain(targets.iter().flatten().map(|(dest, _)| dest.as_str()));
+        .chain(targets.iter().flatten().map(|(dest, _)| dest.as_str()))
+        .chain(resolved.keys().map(String::as_str));
     for path in touched {
         if !orig.contains_key(path) {
             orig.insert(path.to_owned(), files.lines(path)?.clone());
@@ -215,28 +276,45 @@ fn rebuild(files: &mut Files, parts: &[Part], targets: &[Target]) -> Result<Vec<
     for (path, lines) in &orig {
         let flags = &cut[path.as_str()];
         let ins = inserts.get(path.as_str());
+        let sections: &[Resolution] = resolved.get(path.as_str()).map_or(&[], Vec::as_slice);
         let mut out = Vec::with_capacity(lines.len());
         let mut edits = Vec::new();
-        for i in 0..=lines.len() {
+        let mut i = 0;
+        while i <= lines.len() {
             if let Some(block) = ins.and_then(|m| m.get(&i)) {
                 edits.push((out.len(), block.len()));
                 out.extend(block.iter().cloned());
             }
-            if i < lines.len() && !flags[i] {
+            if i == lines.len() {
+                break;
+            }
+            if let Some(section) = sections.iter().find(|r| r.start == i) {
+                edits.push((out.len(), section.lines.len()));
+                out.extend(section.lines.iter().cloned());
+                i = section.end;
+                continue;
+            }
+            if !flags[i] {
                 out.push(lines[i].clone());
             }
+            i += 1;
         }
         let f = files.get(path)?;
         f.lines = Some(out);
         f.dirty = true;
         f.edits = edits;
     }
-    Ok(changes(parts, targets))
+    Ok(changes(parts, targets, resolved))
 }
 
-/// One summary per directive: the lines it removes and, for a move, the lines it adds at its
-/// target. `settle` recounts them from the file texts, so the numbers only name the paths.
-fn changes(parts: &[Part], targets: &[Target]) -> Vec<Change> {
+/// One summary per directive and per resolved file: the lines it removes and, for a move, the
+/// lines it adds at its target. `settle` recounts them from the file texts, so the numbers only
+/// name the paths.
+fn changes(
+    parts: &[Part],
+    targets: &[Target],
+    resolved: &BTreeMap<String, Vec<Resolution>>,
+) -> Vec<Change> {
     let mut out = Vec::new();
     for (p, target) in parts.iter().zip(targets) {
         let n = p.end - p.start + 1;
@@ -264,6 +342,13 @@ fn changes(parts: &[Part], targets: &[Target]) -> Vec<Change> {
                 removed: n,
             }),
         }
+    }
+    for path in resolved.keys() {
+        out.push(Change::Modified {
+            path: path.clone(),
+            added: 0,
+            removed: 0,
+        });
     }
     out
 }

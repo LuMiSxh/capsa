@@ -218,6 +218,16 @@ pub enum EditError {
         start: usize,
         end: usize,
     },
+    /// A line directive and a `*** Resolve Conflict` that edit the same lines of one file.
+    #[error(
+        "{path}: `*** Resolve Conflict:` and `*** {directive}:` at patch line {line} both edit {place}"
+    )]
+    ResolveOverlap {
+        path: String,
+        directive: &'static str,
+        line: usize,
+        place: String,
+    },
     /// A move or copy onto a file that exists.
     #[error("{to}: already exists, refusing to {action} {from} over it")]
     Overwrite {
@@ -429,6 +439,9 @@ impl Hint for EditError {
             Self::LineInsideMove { .. } => {
                 Cow::Borrowed("move the lines after a line outside the moved range")
             }
+            Self::ResolveOverlap { .. } => Cow::Borrowed(
+                "put them in separate patches: both count lines from the file before the patch",
+            ),
             Self::InsertPastEnd { path, .. } => Cow::Owned(format!("acus show {path}")),
             Self::Rename { done, .. } | Self::Delete { done, .. } if !done.is_empty() => {
                 Cow::Owned(format!("already written: {}", done.join(", ")))

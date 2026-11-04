@@ -21,6 +21,21 @@ const TWO_SECTIONS: &str = concat!(
     "end\n",
 );
 
+const SECTION_THEN_LINES: &str = concat!(
+    "top\n",
+    "<<<<<<< HEAD\n",
+    "ours\n",
+    "||||||| base\n",
+    "base\n",
+    "=======\n",
+    "theirs\n",
+    ">>>>>>> branch\n",
+    "middle\n",
+    "cut one\n",
+    "cut two\n",
+    "bottom\n",
+);
+
 fn resolved_with(mode: &str) -> String {
     let d = dir(&[("a.txt", TWO_SECTIONS)]);
     run(d.path(), &format!("*** Resolve Conflict: a.txt {mode}\n")).unwrap();
@@ -58,6 +73,80 @@ fn line_targets_resolve_only_their_section_in_one_patch() {
     assert_eq!(
         read(d.path(), "a.txt"),
         "before\ntheirs one\nmiddle\nours two\nend\n"
+    );
+}
+
+#[test]
+fn delete_lines_below_a_resolved_section_counts_from_the_file_before_the_patch() {
+    let d = dir(&[("a.txt", SECTION_THEN_LINES)]);
+    run(
+        d.path(),
+        "*** Resolve Conflict: a.txt --ours\n\
+         *** Delete Lines: a.txt:10-11\n*** Expect: cut one\n",
+    )
+    .unwrap();
+    assert_eq!(read(d.path(), "a.txt"), "top\nours\nmiddle\nbottom\n");
+}
+
+#[test]
+fn delete_lines_above_a_resolved_section_counts_from_the_file_before_the_patch() {
+    let d = dir(&[("a.txt", SECTION_THEN_LINES)]);
+    run(
+        d.path(),
+        "*** Resolve Conflict: a.txt --ours\n\
+         *** Delete Lines: a.txt:1-1\n*** Expect: top\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read(d.path(), "a.txt"),
+        "ours\nmiddle\ncut one\ncut two\nbottom\n"
+    );
+}
+
+#[test]
+fn a_line_directive_over_a_resolved_section_is_refused() {
+    let d = dir(&[("a.txt", SECTION_THEN_LINES)]);
+    let e = run(
+        d.path(),
+        "*** Resolve Conflict: a.txt --ours\n\
+         *** Delete Lines: a.txt:3-3\n*** Expect: ours\n",
+    )
+    .unwrap_err()
+    .shown();
+    assert!(e.contains("`*** Resolve Conflict:`"), "{e}");
+    assert!(e.contains("`*** Delete Lines:`"), "{e}");
+    assert!(e.contains("lines 3-3"), "{e}");
+    assert_eq!(read(d.path(), "a.txt"), SECTION_THEN_LINES);
+}
+
+#[test]
+fn move_lines_after_a_resolved_section_counts_from_the_file_before_the_patch() {
+    let d = dir(&[("a.txt", SECTION_THEN_LINES)]);
+    run(
+        d.path(),
+        "*** Resolve Conflict: a.txt --ours\n\
+         *** Move Lines: a.txt:10-11\n*** Expect: cut one\n*** After: a.txt:0\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read(d.path(), "a.txt"),
+        "cut one\ncut two\ntop\nours\nmiddle\nbottom\n"
+    );
+}
+
+#[test]
+fn update_file_after_a_resolve_sees_the_resolved_text() {
+    let d = dir(&[("a.txt", SECTION_THEN_LINES)]);
+    run(
+        d.path(),
+        "*** Resolve Conflict: a.txt --ours\n\
+         *** Update File: a.txt\n\
+         <<<<<<< SEARCH\nours\nmiddle\n=======\nours\nmiddle changed\n>>>>>>> REPLACE\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read(d.path(), "a.txt"),
+        "top\nours\nmiddle changed\ncut one\ncut two\nbottom\n"
     );
 }
 

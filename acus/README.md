@@ -97,7 +97,7 @@ Output is a compact agent format by default. `--agent`, `--human` and `--json` c
     - `*** Copy File: SRC` with `*** To: DST` copies a file and fails if DST exists.
     - `*** Delete Symbol:` and `*** Move Symbol:` carry doc comments and attributes along. A move goes `*** Before:` or `*** After:` another symbol, or `*** To:` the end of a file (created if needed).
     - `*** Delete Lines: PATH:A-B` and `*** Move Lines: PATH:A-B` cut or move lines by number. The next line is `*** Expect:` with the exact text of line A, so a stale range fails; a move then takes `*** After: PATH:N` (0 for the file start) or `*** After: PATH#Sym`. Line numbers refer to the file before the patch, so these run first.
-    - `*** Resolve Conflict: PATH --ours` resolves every `<<<<<<<` / `=======` / `>>>>>>>` section of a file with one side (`--theirs`, `--both` for ours then theirs, or `--base` for the diff3 `|||||||` part). `PATH:LINE --theirs` resolves only the section that contains line LINE, so one patch can pick different sides; lines refer to the file before the patch.
+    - `*** Resolve Conflict: PATH --ours` resolves every `<<<<<<<` / `=======` / `>>>>>>>` section of a file with one side (`--theirs`, `--both` for ours then theirs, or `--base` for the diff3 `|||||||` part). `PATH:LINE --theirs` resolves only the section that contains line LINE, so one patch can pick different sides. All line directives and resolutions of one file count from the file before the patch, so they do not shift each other; a delete range or a move destination inside a section being resolved fails.
 
 ## Guard and agent setup
 

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Resolves the `<<<<<<<` / `|||||||` / `=======` / `>>>>>>>` sections a patch chooses.
 
-use super::Change;
 use super::files::Files;
 use crate::error::{EditError, Result};
 use crate::parse::{Op, ResolveMode};
@@ -31,9 +30,20 @@ struct State {
     chosen: Vec<Option<Vec<String>>>,
 }
 
-/// Resolves the conflict sections named by `ops`, whose line numbers refer to the files as they
-/// were before the patch. The other directives of the patch run after this.
-pub(super) fn apply_conflicts(files: &mut Files, ops: &[&Op]) -> Result<Vec<Change>> {
+/// A resolved conflict section: lines `start..end` (0-based, half-open) of the file before the
+/// patch, replaced by `lines`.
+pub(super) struct Resolution {
+    pub(super) start: usize,
+    pub(super) end: usize,
+    pub(super) lines: Vec<String>,
+}
+
+/// Works out what each `*** Resolve Conflict` keeps, against the files as they were before the
+/// patch. The caller applies these with the line directives, all from those same lines.
+pub(super) fn resolutions(
+    files: &mut Files,
+    ops: &[&Op],
+) -> Result<BTreeMap<String, Vec<Resolution>>> {
     let mut states: BTreeMap<String, State> = BTreeMap::new();
     for &op in ops {
         let Op::ResolveConflict {
@@ -66,23 +76,25 @@ pub(super) fn apply_conflicts(files: &mut Files, ops: &[&Op]) -> Result<Vec<Chan
             None => state.choose_all(*mode, path)?,
         }
     }
-    let mut changes = Vec::new();
+    let mut out = BTreeMap::new();
     for (path, state) in states {
-        if state.chosen.iter().all(Option::is_none) {
-            continue;
+        let resolutions: Vec<Resolution> = state
+            .sections
+            .iter()
+            .zip(&state.chosen)
+            .filter_map(|(section, chosen)| {
+                chosen.as_ref().map(|lines| Resolution {
+                    start: section.start,
+                    end: section.end + 1,
+                    lines: lines.clone(),
+                })
+            })
+            .collect();
+        if !resolutions.is_empty() {
+            out.insert(path, resolutions);
         }
-        let (lines, edits) = state.rebuild();
-        let f = files.get(&path)?;
-        f.lines = Some(lines);
-        f.dirty = true;
-        f.edits = edits;
-        changes.push(Change::Modified {
-            path,
-            added: 0,
-            removed: 0,
-        });
     }
-    Ok(changes)
+    Ok(out)
 }
 
 impl State {
@@ -123,30 +135,6 @@ impl State {
         }
         self.chosen[index] = Some(resolve(&self.sections[index], &self.lines, mode, path)?);
         Ok(())
-    }
-
-    /// The file with each chosen section replaced, and the (start, length) of every replacement.
-    fn rebuild(&self) -> (Vec<String>, Vec<(usize, usize)>) {
-        let mut out = Vec::with_capacity(self.lines.len());
-        let mut edits = Vec::new();
-        let mut i = 0;
-        while i < self.lines.len() {
-            let Some(index) = self.sections.iter().position(|s| s.start == i) else {
-                out.push(self.lines[i].clone());
-                i += 1;
-                continue;
-            };
-            let section = &self.sections[index];
-            match &self.chosen[index] {
-                Some(replacement) => {
-                    edits.push((out.len(), replacement.len()));
-                    out.extend(replacement.iter().cloned());
-                }
-                None => out.extend(self.lines[section.start..=section.end].iter().cloned()),
-            }
-            i = section.end + 1;
-        }
-        (out, edits)
     }
 }
 
