@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use capsa_core::claude_settings::{Removal, Step};
+use capsa_core::claude_settings::{Removal, Step, command_line};
 use serde_json::{Value, json};
 use vicarius::config::Config;
 
@@ -105,7 +105,7 @@ fn session_hook_is_installed_once_and_a_dry_run_writes_nothing() {
     let hooks = read_json(&install.settings);
     assert_eq!(
         hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"],
-        "vicarius hook"
+        command_line(Path::new("vicarius"), "hook")
     );
 }
 
@@ -124,7 +124,10 @@ fn session_hook_replaces_the_old_session_start_command_in_place() {
     let hooks = read_json(&install.settings);
     let groups = hooks["hooks"]["SessionStart"].as_array().unwrap();
     assert_eq!(groups.len(), 1);
-    assert_eq!(groups[0]["hooks"][0]["command"], "vicarius hook");
+    assert_eq!(
+        groups[0]["hooks"][0]["command"],
+        command_line(Path::new("vicarius"), "hook")
+    );
 }
 
 #[test]
