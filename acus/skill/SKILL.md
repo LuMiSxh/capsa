@@ -1,6 +1,6 @@
 ---
 name: acus
-description: Code search, read, patch and git-summary CLI for coding agents. Use it before any Grep, Glob, Read or Edit call and before a Bash grep, rg, find, cat, head, tail, sed, git status, git diff or git log: to find code or usages, list files, read a file, symbol, line range or log file, filter piped output, edit or rename across files, or review what changed on a branch. Also runs builds and tests (cargo test, npm test) and shows only their failures with the code they point at. Results are line-numbered and grouped by enclosing symbol, every truncation names the next command, and patches apply all or nothing.
+description: Code search, read, patch and git-summary CLI for coding agents. Use it before any Grep, Glob, Read or Edit call and before a Bash grep, rg, find, cat, head, tail, sed, git status, git diff or git log, to find code or usages, list files, read a file, symbol, line range or log file, filter piped output, edit or rename across files, or review what changed on a branch. Also runs builds and tests (cargo test, npm test) and shows only their failures with the code they point at. Results are line-numbered and grouped by enclosing symbol, every truncation names the next command, and patches apply all or nothing.
 ---
 
 # acus
