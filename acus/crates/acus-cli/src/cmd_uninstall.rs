@@ -32,8 +32,8 @@ pub fn run(a: &Args, format: Format) -> Result<Outcome> {
 
     let home = std::env::home_dir().context("no home directory")?;
     let outcome = uninstall_run(&crate::TOOL, a.dry_run, format, |dry_run| {
-        let files = capsa_core::skill::uninstall(&home, crate::cmd_skill::SKILL_DEF.tool, dry_run)
-            .hinted()?;
+        let files =
+            capsa_core::skill::uninstall(&home, &crate::cmd_skill::SKILL_DEF, dry_run).hinted()?;
         if format != Format::Json {
             for file in files {
                 outln!("{} {}", verb(dry_run), file.display());

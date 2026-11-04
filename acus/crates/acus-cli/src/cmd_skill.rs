@@ -6,22 +6,12 @@ use capsa_core::exit::Outcome;
 use capsa_core::hint::ResultExt;
 use capsa_core::skill::{Skill, Target};
 use serde_json::Value;
-use std::path::Path;
 
 /// The skill shipped with this binary, so hook output and installed copies match its version.
 const SKILL: &str = include_str!("../../../skill/SKILL.md");
 /// What the SessionStart hook injects into every session: the routing table and the patch
 /// skeleton. The full SKILL.md stays one `acus self skill --full` away.
 const CORE: &str = include_str!("../../../skill/CORE.md");
-
-/// The reference topics installed beside the skill and printed by `--topic`.
-const TOPICS: [Topic; 5] = [
-    Topic::Find,
-    Topic::Read,
-    Topic::Patch,
-    Topic::Git,
-    Topic::Ctx,
-];
 
 /// A long-form reference topic, so flag lists stay out of the skill an agent preloads.
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -34,16 +24,6 @@ enum Topic {
 }
 
 impl Topic {
-    const fn file(self) -> &'static str {
-        match self {
-            Self::Find => "find.md",
-            Self::Read => "read.md",
-            Self::Patch => "patch.md",
-            Self::Git => "git.md",
-            Self::Ctx => "ctx.md",
-        }
-    }
-
     const fn text(self) -> &'static str {
         match self {
             Self::Find => include_str!("../../../skill/reference/find.md"),
@@ -55,10 +35,20 @@ impl Topic {
     }
 }
 
+/// The reference files installed beside `SKILL.md`, by path below the skill directory.
+const REFERENCES: [(&str, &str); 5] = [
+    ("reference/find.md", Topic::Find.text()),
+    ("reference/read.md", Topic::Read.text()),
+    ("reference/patch.md", Topic::Patch.text()),
+    ("reference/git.md", Topic::Git.text()),
+    ("reference/ctx.md", Topic::Ctx.text()),
+];
+
 /// The skill this binary installs, for `capsa_core::skill`.
 pub const SKILL_DEF: Skill = Skill {
     tool: "acus",
     text: SKILL,
+    extra: &REFERENCES,
 };
 
 #[derive(clap::Args)]
@@ -100,26 +90,10 @@ pub fn run(a: Args, cfg: &crate::config::Config) -> Result<Outcome> {
     }
     let home = std::env::home_dir().context("no home directory")?;
     let written = capsa_core::skill::install(&home, &SKILL_DEF, a.target).hinted()?;
-    install_references(&home, a.target)?;
     for file in written {
         outln!("{}", file.display());
     }
     Ok(Outcome::Found)
-}
-
-/// Writes every reference below `<skill dir>/reference`, beside the installed `SKILL.md`.
-fn install_references(home: &Path, target: Target) -> Result<()> {
-    for dir in target.dirs(home, SKILL_DEF.tool) {
-        let references = dir.join("reference");
-        std::fs::create_dir_all(&references)
-            .with_context(|| format!("cannot create {}", references.display()))?;
-        for topic in TOPICS {
-            let file = references.join(topic.file());
-            std::fs::write(&file, topic.text())
-                .with_context(|| format!("cannot write {}", file.display()))?;
-        }
-    }
-    Ok(())
 }
 
 /// The SessionStart hook's JSON on stdin (`session_id`, `source`). Null when stdin is a
@@ -313,7 +287,7 @@ mod tests {
 
     fn documents() -> Vec<(&'static str, &'static str)> {
         let mut docs = vec![("SKILL.md", super::SKILL), ("CORE.md", super::CORE)];
-        docs.extend(super::TOPICS.map(|topic| (topic.file(), topic.text())));
+        docs.extend(super::REFERENCES);
         docs
     }
 

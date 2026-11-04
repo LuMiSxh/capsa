@@ -30,6 +30,7 @@
 
 - `acus show` clips a first line larger than its character budget instead of printing only the header and pointing at the same address, and `acus run` clips a first line larger than its share or points at `--full`; `run` quotes every argument a shell would split in its `>>>` header and rerun pointers, replaces an existing `--head` instead of appending a second one, points `show` and `diff -p` cuts at `--full`, and refuses `self …` lines with an error because they write outside the capture sink.
 - `acus find` with no path searches standard input only when it is a pipe or a regular file: a pipe is read to EOF (a note on stderr names the wait after 2 s of silence), while a terminal, socket, character device such as `/dev/null`, closed descriptor or empty file walks `.`. `cmd | acus find 'PAT'` and the guard's `grep` rewrite filter the command's output; a silent pipe no longer walks `.` after a fixed wait. An unknown short flag hints at `-e` for a pattern that starts with `-`.
+- `acus self setup` installs the skill's `reference/` files, `acus self uninstall` removes them and the empty directory, and `acus self doctor` reports the skill as current only when they match.
 
 ## [0.20.0]
 

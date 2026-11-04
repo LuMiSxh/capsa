@@ -305,6 +305,43 @@ fn skill_install_writes_the_reference_topics() {
     }
 }
 
+#[cfg(feature = "cmd-update")]
+#[test]
+fn setup_installs_the_reference_files_and_uninstall_removes_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let copy = dir.path().join("acus");
+    std::fs::copy(env!("CARGO_BIN_EXE_acus"), &copy).unwrap();
+    let run = |args: &[&str]| {
+        let mut command = std::process::Command::new(&copy);
+        command
+            .args(args)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("CLAUDE_CONFIG_DIR", &claude)
+            .env("ACUS_CONFIG", "/nonexistent/acus.toml");
+        decode(output_retrying_busy(&mut command).unwrap())
+    };
+
+    let (code, _, err) = run(&["self", "setup"]);
+    assert_eq!(code, 0, "{err}");
+    let skill = home.join(".claude/skills/acus");
+    for topic in ["find", "read", "patch", "git", "ctx"] {
+        let file = skill.join("reference").join(format!("{topic}.md"));
+        assert!(file.is_file(), "{}", file.display());
+    }
+
+    let (code, out, err) = run(&["self", "uninstall"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("removed"), "{out}");
+    assert!(
+        !skill.exists(),
+        "the reference directory is gone with the skill"
+    );
+}
+
 #[test]
 fn skill_topic_prints_a_reference() {
     let (code, out, err) = acus(&["self", "skill", "--topic", "patch"]);
