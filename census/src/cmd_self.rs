@@ -17,6 +17,7 @@ use std::process::{Command, Stdio};
 pub(crate) const SKILL: Skill = Skill {
     tool: "census",
     text: include_str!("../skill/SKILL.md"),
+    extra: &[],
 };
 
 /// This binary as the self-update and uninstall code sees it.
@@ -143,7 +144,7 @@ fn uninstall(_: &UninstallArgs, _: Format) -> Result<Outcome> {
 fn uninstall(a: &UninstallArgs, format: Format) -> Result<Outcome> {
     let home = std::env::home_dir().context("no home directory")?;
     let outcome = capsa_core::update::uninstall_run(&TOOL, a.dry_run, format, |dry| {
-        let files = skill::uninstall(&home, TOOL.name, dry)?;
+        let files = skill::uninstall(&home, &SKILL, dry)?;
         if format != Format::Json {
             let verb = if dry { "would remove" } else { "removed" };
             for file in &files {
