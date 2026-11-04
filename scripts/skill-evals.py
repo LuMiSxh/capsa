@@ -57,15 +57,29 @@ def load_cases(tool):
     near = triggers.get("should_not_trigger") or triggers.get("near_miss") or []
     for index, item in enumerate(should, 1):
         cases.append({"kind": "should_trigger", "index": index, "query": _text(item),
-                      "why": _why(item), "expected": None})
+                      "why": _why(item), "expected": None,
+                      "hook_answer": _hook_answer(item)})
     for index, item in enumerate(near, 1):
         cases.append({"kind": "near_miss", "index": index, "query": _text(item),
-                      "why": _why(item), "expected": None})
+                      "why": _why(item), "expected": None, "hook_answer": None})
     for index, item in enumerate(tasks.get("tasks") or [], 1):
         cases.append({"kind": "task", "index": index,
                       "query": item.get("prompt") or item.get("task") or "",
-                      "why": item.get("why"), "expected": item.get("expected") or []})
+                      "why": item.get("why"), "expected": item.get("expected") or [],
+                      "hook_answer": _hook_answer(item)})
     return cases
+
+
+def _hook_answer(item):
+    return item.get("hook_answer") if isinstance(item, dict) else None
+
+
+def hook_answered(run):
+    # A status hook can answer a context or limits question before any tool call; the run
+    # passes when the answer quotes the hook's figures.
+    pattern = run.get("hook_answer")
+    return bool(pattern and run.get("mode") != "no-hooks" and not run.get("tool_calls")
+                and re.search(pattern, run.get("result_text") or ""))
 
 
 def _text(item):
@@ -97,6 +111,7 @@ def fixture_files():
         ),
         "src/parser.rs": _parser_rs(),
         "src/a.rs": _a_rs(),
+        "app.log": _app_log(),
         "src/search/mod.rs": (
             "// SPDX-License-Identifier: MPL-2.0\n"
             "//! Fixture search.\n\n"
@@ -192,6 +207,14 @@ def _a_rs():
         n = len(lines)
         lines.append(f"pub fn tail_{n:03}() -> u32 {{ {n} }}")
     return "\n".join(lines) + "\n"
+
+
+def _app_log():
+    lines = []
+    for index in range(1, 81):
+        level, outcome = ("ERROR", "failed") if index % 2 == 0 else ("INFO", "ok")
+        lines.append(f"2026-11-04T09:{index % 60:02d}:00Z {level} request {index} {outcome}\n")
+    return "".join(lines)
 
 
 def run_git(cwd, *args):
@@ -487,7 +510,7 @@ def run_job(job, template, args, env, out):
 
     result = events["result"] or {}
     init = events["init"] or {}
-    return {
+    record = {
         "id": job["id"],
         "skill": job["skill"],
         "kind": job["kind"],
@@ -497,7 +520,9 @@ def run_job(job, template, args, env, out):
         "why": job["why"],
         "expected": job["expected"],
         "matched_expected": matched,
+        "hook_answer": job["hook_answer"],
         "passed": bool(passed),
+        "passed_by": "tool" if passed else None,
         "first_tool": describe_call(first),
         "tool_calls": [describe_call(call) for call in calls],
         "bash_commands": [command[:2000] for command in bash],
@@ -517,6 +542,9 @@ def run_job(job, template, args, env, out):
         "stderr": stderr[-1000:],
         "raw": str(raw.relative_to(out)),
     }
+    if not record["passed"] and hook_answered(record):
+        record["passed"], record["passed_by"] = True, "hook"
+    return record
 
 
 def summarize(results):
@@ -597,7 +625,7 @@ def parse_args(argv):
     parser.add_argument("--model", default="haiku")
     parser.add_argument("--effort", default="low")
     parser.add_argument("--max-turns-trigger", type=int, default=1)
-    parser.add_argument("--max-turns-task", type=int, default=2)
+    parser.add_argument("--max-turns-task", type=int, default=3)
     parser.add_argument("--direct", action="store_true",
                         help="use the Anthropic OAuth login, dropping proxy and API-key env")
     parser.add_argument("--keep", action="store_true", help="keep the case directories")
@@ -632,7 +660,8 @@ def build_jobs(args):
                 for run in range(1, args.repeat + 1):
                     jobs.append({"id": case_id, "skill": tool, "kind": case["kind"],
                                  "mode": mode, "run": run, "query": case["query"],
-                                 "why": case["why"], "expected": case["expected"]})
+                                 "why": case["why"], "expected": case["expected"],
+                                 "hook_answer": case["hook_answer"]})
     jobs.sort(key=lambda job: (MODES.index(job["mode"]), TOOLS.index(job["skill"]),
                                KIND_ORDER[job["kind"]], job["id"], job["run"]))
     return jobs
@@ -644,11 +673,18 @@ def rescore(path):
         return 2
     payload = json.loads(path.read_text())
     runs = payload.get("runs") or []
+    current = {f"{tool}-{KIND_SLUG[case['kind']]}-{case['index']:02d}": case
+               for tool in TOOLS for case in load_cases(tool)}
     for run in runs:
+        case = current.get(run.get("id"))
+        if case and case["query"] == run.get("query"):
+            run["expected"], run["hook_answer"] = case["expected"], case["hook_answer"]
         if run.get("kind") == "task":
             run["passed"], run["matched_expected"] = match_task(
                 run.get("expected") or [], run.get("bash_commands") or []
             )
+        if run.get("kind") != "near_miss" and not run.get("passed") and hook_answered(run):
+            run["passed"], run["passed_by"] = True, "hook"
     summary = summarize(runs)
     payload["requests"] = summary["requests"]
     payload["cost_usd"] = summary["cost_usd"]
