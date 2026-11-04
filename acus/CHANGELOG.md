@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.21.1]
+
+### Fixed
+
+- The skill's `description` in `SKILL.md` is valid YAML: a colon followed by a space ended the plain scalar, so strict frontmatter parsers rejected the file. The colon is now a comma.
+
 ## [0.21.0]
 
 ### Added
