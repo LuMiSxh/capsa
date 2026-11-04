@@ -135,6 +135,35 @@ say: intent, a reason, an invariant, an outside constraint.
 - Lines wrap at 100 columns. Shell scripts and TOML follow the same rules
   with `#`.
 
+## Skills
+
+A tool that teaches agents to use it ships a skill: `<tool>/skill/SKILL.md`, embedded with
+`include_str!` and installed by `<tool> self setup` into a directory named after the tool. acus
+also ships `CORE.md`, which a SessionStart hook loads into every session. Sources: Anthropic's
+[skill best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)
+and the [Agent Skills spec](https://agentskills.io/specification).
+
+- **Frontmatter:** `name` (the tool name, `a-z0-9-`) and `description`, nothing else. The
+  description is the only text loaded before a skill triggers: third person, what it does, then
+  when to use it, trigger words first, at most 1024 characters. All "when to use" text lives
+  there, not in the body.
+- **Budget:** every line costs tokens in every session that triggers it. SKILL.md stays under 500
+  lines and about 5k tokens; `CORE.md` stays under 250 words (a test enforces it). Cut what an agent
+  already knows; keep what changes what it does.
+- **Shape of a CLI skill:** a task → command table, then one worked example for each command that
+  is easy to get wrong, then "Common mistakes" with the reason for each. One default per task,
+  with an escape hatch, not a menu. Long flag lists move to `skill/reference/<topic>.md`, one level
+  deep and linked from SKILL.md; a reference over 100 lines starts with a contents list.
+- **Voice:** imperative, with the reason in the same sentence instead of capitalised MUST or NEVER.
+  No history, versions or dates ("now", "new in 0.20"); the CHANGELOG holds those.
+- **One source of truth:** `CORE.md` is a subset of SKILL.md, and AGENTS.md files point to the skill
+  instead of copying its tables. A skill changes in the same commit as the behaviour it describes.
+- **No drift:** every command and flag a skill names exists in the CLI; the tool's skill test checks
+  them against its clap definition.
+- **Evals:** `skill/evals/` holds trigger queries (about ten that should trigger the skill and ten
+  near-misses that should not) and at least three task prompts with their expected commands. Run
+  them before and after a rewrite and note the result in the CHANGELOG entry.
+
 ## Commands
 
 - Run builds and tests through `acus ctx 'COMMAND'`.
