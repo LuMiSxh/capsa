@@ -202,6 +202,10 @@ pub fn find_flag_hint(e: &clap::Error, args: &[String]) -> Option<String> {
         "--no-heading" | "--color" | "--no-line-number" | "--heading" | "--line-number" => {
             "output is always grouped by file with line numbers; drop the flag"
         }
+        // A short unknown flag is more likely a pattern the shell left unescaped than a typo.
+        _ if !flag.starts_with("--") => {
+            return Some("a pattern that starts with '-' needs -e: acus find -e '-x' PATH".into());
+        }
         _ => "that flag does not exist",
     };
     Some(format!(

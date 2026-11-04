@@ -201,6 +201,64 @@ fn find_empty_or_null_stdin_searches_the_directory() {
 
 #[cfg(unix)]
 #[test]
+fn find_with_a_silent_open_pipe_reports_the_wait() {
+    use std::io::BufRead;
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.rs"), "cwd Parser\n").unwrap();
+    let mut child = bin()
+        .args(["find", "Parser"])
+        .current_dir(d.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Keep the write end open without writing: the search waits, and says so once.
+    let _open = child.stdin.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let _ = std::io::BufReader::new(stderr).read_line(&mut line);
+        let _ = tx.send(line);
+    });
+    let line = rx
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .expect("no note within 3 s");
+    assert_eq!(
+        line.trim_end(),
+        "acus: waiting for piped stdin; pass a PATH to search files instead"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn find_reads_data_that_arrives_after_a_delay() {
+    use std::io::Write;
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.rs"), "cwd Parser\n").unwrap();
+    let mut child = bin()
+        .args(["find", "Parser"])
+        .current_dir(d.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        stdin.write_all(b"piped Parser\n").unwrap();
+    });
+    let out = child.wait_with_output().unwrap();
+    let (code, stdout, stderr) = decode(out);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout, "<stdin>\n1\tpiped Parser\n");
+    assert!(!stderr.contains("waiting for piped stdin"), "{stderr}");
+}
+
+#[test]
 fn find_with_a_closed_stdin_searches_the_directory() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("a.rs"), "cwd Parser\n").unwrap();
@@ -286,6 +344,17 @@ fn find_accepts_recursive_grep_habits_and_explains_the_rest() {
         "[[\"find\", \"needle\", \"--files-without-match\"]]",
     );
     assert!(out.contains("hint: `acus find -l PAT`"), "{out}");
+}
+
+#[test]
+fn find_unknown_short_flag_hints_the_escaped_pattern() {
+    let (code, out, err) = acus(&["find", "-zz", "."]);
+    assert_eq!((code, out.as_str()), (2, ""));
+    assert!(err.contains("unexpected argument"), "{err}");
+    assert!(
+        err.contains("hint: a pattern that starts with '-' needs -e: acus find -e '-x' PATH"),
+        "{err}"
+    );
 }
 
 #[test]
