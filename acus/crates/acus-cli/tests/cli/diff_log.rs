@@ -229,7 +229,7 @@ fn log_default_is_compact_with_age_and_takes_n() {
     let (_, out, _) = acus_in(d.path(), &["log", "-n", "2"], "");
     assert!(out.contains(&format!("{h3} c3 (3d ago)")), "{out}");
     assert!(out.contains(&format!("{h2} c2 (2d ago)")), "{out}");
-    assert!(!out.contains("c1"), "{out}");
+    assert!(!out.contains(&h1), "{out}");
     assert!(out.contains("== 2 commits"), "{out}");
 }
 

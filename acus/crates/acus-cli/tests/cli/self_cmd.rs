@@ -346,7 +346,7 @@ fn setup_installs_the_reference_files_and_uninstall_removes_them() {
 fn skill_topic_prints_a_reference() {
     let (code, out, err) = acus(&["self", "skill", "--topic", "patch"]);
     assert_eq!(code, 0, "{err}");
-    assert!(out.starts_with("# patch\n"), "{out}");
+    assert_eq!(out.lines().next(), Some("# patch"), "{out}");
     assert!(out.contains("*** Resolve Conflict"), "{out}");
 }
 
