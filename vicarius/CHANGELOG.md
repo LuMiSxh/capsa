@@ -2,11 +2,7 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- `vicarius self start` no longer reads the DeepSeek balance twice when its refresh request
-  overlaps the service's own startup refresh; overlapping refreshes share one balance request
-  and one `balance.refresh` log line.
+## [0.1.0]
 
 ### Added
 
@@ -43,9 +39,10 @@
 - `vicarius self uninstall` stops the service and removes the agent, the plist and the
   SessionStart hook before it removes the binary.
 - `self config set port` restarts a loaded agent on the new port and rewrites
-  `ANTHROPIC_BASE_URL` once its status answers there; a port that does not answer leaves the
-  settings unchanged. `self config set max-context` rewrites `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when
-  it holds the value vicarius wrote; a hand-set value is kept.
+  `ANTHROPIC_BASE_URL` once its status answers there; a port that does not answer rolls
+  `config.json`, the loaded agent and the settings back to the old port. `self config set
+  max-context` rewrites `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when it holds the value vicarius wrote; a
+  hand-set value is kept.
 - Installable with `install.sh` and `install.ps1`, released by the release workflow as
   `vicarius-vX.Y.Z`.
 - The proxy answers 403 to any request that carries an `Origin` header or whose `Host` is not
@@ -54,8 +51,6 @@
   `counters.forbidden`.
 - A balance refresh that started before a DeepSeek 402 or 401 no longer reopens the route after
   the close.
-- `self config set port` rolls back when the new port does not answer: `config.json`, the loaded
-  agent and the settings return to the old port.
 - `self start` and `self setup` refuse a hand-set `ANTHROPIC_BASE_URL` or
   `CLAUDE_CODE_MAX_CONTEXT_TOKENS` that differs from the config, before writing or launching.
 - `self uninstall` off macOS runs neither `id -u` nor launchctl; it removes only the SessionStart
@@ -68,3 +63,9 @@
   loads a deferred tool moves into the request's `tools` array and the block is removed, because
   DeepSeek rejects it with a 422 that ends the subagent. A tool whose name is already in `tools` is
   not added twice. Anthropic requests are forwarded unchanged.
+
+### Fixed
+
+- `vicarius self start` no longer reads the DeepSeek balance twice when its refresh request
+  overlaps the service's own startup refresh; overlapping refreshes share one balance request
+  and one `balance.refresh` log line.
