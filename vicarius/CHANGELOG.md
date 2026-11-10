@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.2.1]
+
+### Changed
+
+- `vicarius self setup`, `self uninstall` and `self doctor` share their hook handling with the
+  other capsa tools. `vicarius self doctor` warns `outdated: <command>` with the command it found,
+  such as `vicarius hook session-start`, and `not registered` where it said `not installed`.
+
 ## [0.2.0]
 
 ### Added
