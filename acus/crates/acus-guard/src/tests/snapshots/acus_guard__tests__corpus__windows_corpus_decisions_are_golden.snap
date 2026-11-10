@@ -75,12 +75,12 @@ skipped 0 cases (grammar not built)
 0070 escape sed-i ⇒
 0071 escape sed-i ⇒
 0072 escape sed-i ⇒
-0073 hint edit-script ⇒
-0074 hint edit-script ⇒
+0073 deny edit-script ⇒
+0074 deny edit-script ⇒
 0075 hint edit-script ⇒
-0076 hint edit-script ⇒
-0077 hint edit-script ⇒
-0078 rewrite git-diff ⇒ cd C:\repo && python - <<'EOF'\np='pkg_a/mod_a/file_a.py'\nb=open(p,'rb').read().replace(b'\r\n',b'\n').replace(b'\n',b'\r\n')\nopen(p,'wb').write(b)\nEOF\nacus diff; acus show pkg_a/mod_a/file_a.py:385-420
+0076 deny edit-script ⇒
+0077 deny edit-script ⇒
+0078 deny edit-script ⇒
 0079 rewrite git-diff ⇒ acus diff -p
 0080 hint git-diff ⇒
 0081 hint git-diff ⇒
