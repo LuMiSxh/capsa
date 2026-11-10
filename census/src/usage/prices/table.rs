@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The providers whose chat models the table keeps.
-const PROVIDERS: [&str; 3] = ["anthropic", "deepseek", "openai"];
+pub const PROVIDERS: [&str; 3] = ["anthropic", "deepseek", "openai"];
 
 /// Cache prices as multiples of the input price where the source omits them: the Anthropic list
 /// ratios, cache read 0.1x, 5-minute write 1.25x and 1-hour write 2x.

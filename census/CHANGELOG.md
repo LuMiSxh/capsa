@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.6.0]
+
+### Added
+
+- `census usage --provider <PROVIDER>` keeps only the requests billed by `anthropic` (Claude),
+  `deepseek` or `openai` (Codex). It filters the requests before aggregation, so the totals, models,
+  sessions, providers, `--agents` and `--compare` follow it; `--by` remains `anthropic`-only.
+- `census usage --tools` adds `result-p50`, `result-p90` and `result-max`: the result characters of
+  a call in a category at each percentile and the largest, so a category that mixes small and huge
+  results shows it.
+- `census usage --tools --misses` lists the most frequent normalised commands of the categories
+  that bypass acus (`git diff --cached`, `cargo test | tail`, `sed -n`, `Read`), with the calls
+  that ran unguarded, the `intercepted` calls that the guard denied or rewrote, and their result
+  characters, at most `--top`. A command with no unguarded call is left out. The `--json` of
+  `--tools` is now an object with `tools`, plus `misses` when asked.
+
+### Fixed
+
+- `census context` and `census session` read `CLAUDE_CODE_SESSION_ID`, which Claude Code sets for
+  the running session, before the legacy `CLAUDE_SESSION_ID`. An agent that ran census no longer
+  gets the newest transcript of another chat in the same directory.
+- `census context` and `census session` name the variable they used when the session came from the
+  fallback: the label reads `(CLAUDE_SESSION_ID)` instead of always `(CLAUDE_CODE_SESSION_ID)`.
+
 ## [0.5.0]
 
 ### Added

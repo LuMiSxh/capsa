@@ -12,6 +12,7 @@ use crate::ledger::family_of;
 use capsa_core::paths::state_dir;
 use serde::Serialize;
 use std::sync::OnceLock;
+pub use table::PROVIDERS;
 use table::{Price, Table};
 
 /// Refreshes the cached price list when it is older than `days`. The usage, limit and session

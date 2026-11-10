@@ -117,11 +117,14 @@ pub(crate) fn parse(text: &str) -> FileStats {
                 if let Some(id) = p.call_id {
                     tool_of.insert(id.to_owned(), st.calls.len());
                 }
+                let hits = super::tools::codex_tool(&name, input);
                 st.calls.push(Call {
-                    categories: super::tools::codex_tool(&name, input),
+                    categories: hits.categories,
+                    commands: hits.commands,
                     input_chars: input.len() as u64,
                     explore: shell_explores(input),
                     name,
+                    intercepted: false,
                     result_chars: 0,
                 });
             }

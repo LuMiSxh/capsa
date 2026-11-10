@@ -17,8 +17,9 @@ subagents cost. For the main agent only; subagents do not run it.
 | Check the 5h and weekly windows, forecast, reset | `census limits` |
 | Summarize this session: requests, cost, subagents, context | `census session` |
 | Totals, cost, providers, top models, sessions, tools | `census usage` |
+| Only `anthropic`, `deepseek` or `openai` (Codex) requests | `census usage --provider deepseek` |
 | Spawns per role, models, cache hit rate, cache rewrites | `census usage --agents` |
-| How agents search, read, edit and build | `census usage --tools` |
+| How agents search, read, edit and build, and what the acus guard misses | `census usage --tools --misses` |
 | acus guard decisions per rule and calls that escaped it | `census usage --guard` |
 | Senior-worker spawns after a worker spawn ended | `census usage --handbacks` |
 | Requests before and after a UTC date, with the change | `census usage --compare 2026-10-01` |

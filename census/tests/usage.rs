@@ -164,6 +164,33 @@ fn result_chars_follow_their_call() {
 }
 
 #[test]
+fn category_result_sizes_have_quantiles_and_misses() {
+    let sizes = [1, 2, 3, 100];
+    let mut lines = vec![];
+    for (i, n) in sizes.iter().enumerate() {
+        lines.push(format!(
+            r#"{{"type":"assistant","message":{{"id":"m{i}","model":"opus","usage":{{"input_tokens":1,"output_tokens":1}},"content":[{{"type":"tool_use","id":"t{i}","name":"Bash","input":{{"command":"cat f{i}"}}}}]}}}}"#
+        ));
+        lines.push(format!(
+            r#"{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"t{i}","content":"{}"}}]}}}}"#,
+            "x".repeat(*n)
+        ));
+    }
+    let d = tempfile::tempdir().unwrap();
+    fs::write(d.path().join("s.jsonl"), lines.join("\n") + "\n").unwrap();
+    let r = claude_only(d.path());
+    let read = &r.categories["read"];
+    assert_eq!(read.sizes, [1, 2, 3, 100]);
+    // The percentile index matches the context percentiles: `len * q`.
+    assert_eq!(read.result_quantiles(), [3, 100, 100]);
+    let miss = r.misses.iter().find(|m| m.category == "read").unwrap();
+    assert_eq!(
+        (miss.command.as_str(), miss.calls, miss.result_chars),
+        ("cat", 4, 106)
+    );
+}
+
+#[test]
 fn escaped_codex_acus_call_is_counted() {
     let d = tempfile::tempdir().unwrap();
     fs::write(d.path().join("rollout-a.jsonl"), CODEX_JS).unwrap();
@@ -172,7 +199,7 @@ fn escaped_codex_acus_call_is_counted() {
         codex_root: Some(d.path().into()),
         ..Default::default()
     });
-    let s = r.categories["acus:find"];
+    let s = &r.categories["acus:find"];
     assert_eq!((s.calls, s.result_chars), ([0, 1], [0, 5]));
 }
 
@@ -320,6 +347,59 @@ fn providers_split_the_requests_and_each_model_names_its_provider() {
         "{total} vs {}",
         r.cost.usd
     );
+}
+
+#[test]
+fn provider_filter_keeps_only_the_matching_requests() {
+    let d = tempfile::tempdir().unwrap();
+    write(
+        d.path(),
+        "projects/app/s1.jsonl",
+        &[
+            r#"{"type":"user","cwd":"/x/Proj","message":{"role":"user","content":"hi"}}"#
+                .to_owned(),
+            request(
+                "2026-10-14T08:00:00.000Z",
+                "c1",
+                "claude-opus-5-5",
+                &usage(10, 0, 0, 0),
+            ),
+            request(
+                "2026-10-14T08:01:00.000Z",
+                "d1",
+                "deepseek-flash",
+                &usage(1000, 0, 0, 0),
+            ),
+            request(
+                "2026-10-14T08:02:00.000Z",
+                "x1",
+                "mystery-model",
+                &usage(1, 0, 0, 0),
+            ),
+        ],
+    );
+    let only = |provider: &'static str| {
+        report(&UsageOpts {
+            claude_root: Some(d.path().into()),
+            codex_root: Some(d.path().join("none")),
+            provider: Some(provider),
+            ..Default::default()
+        })
+    };
+
+    let deepseek = only("deepseek");
+    assert_eq!(deepseek.total.requests, 1);
+    assert_eq!(deepseek.models[0].model, "deepseek-flash");
+    assert_eq!(deepseek.providers[0].provider, "deepseek");
+
+    let anthropic = only("anthropic");
+    assert_eq!(anthropic.total.requests, 1);
+    assert_eq!(anthropic.models[0].model, "claude-opus-5-5");
+    assert_eq!(anthropic.providers[0].provider, "anthropic");
+
+    let openai = only("openai");
+    assert!(openai.sessions.is_empty());
+    assert_eq!(openai.prompts, 0);
 }
 
 #[test]

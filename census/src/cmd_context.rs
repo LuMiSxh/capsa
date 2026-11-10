@@ -14,7 +14,8 @@ use serde::Serialize;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// Session id. Defaults to `CLAUDE_SESSION_ID`, else the most recent session of this directory.
+    /// Session id. Defaults to `CLAUDE_CODE_SESSION_ID`, then `CLAUDE_SESSION_ID`, else the most
+    /// recent session of this directory.
     #[arg(long, value_name = "ID")]
     session: Option<String>,
 }

@@ -13,7 +13,7 @@ mod tools;
 mod walk;
 
 pub use handback::HandbackWeek;
-pub use prices::{Cost, knows_provider, refresh as refresh_prices};
+pub use prices::{Cost, PROVIDERS, knows_provider, refresh as refresh_prices};
 pub use time::{parse_date, parse_ts};
 pub use tools::group;
 
@@ -33,6 +33,8 @@ pub struct UsageOpts {
     pub days: Option<u64>,
     /// Case-insensitive substring of the session's working directory.
     pub project: Option<String>,
+    /// Only requests billed by this provider, as the price table names it.
+    pub provider: Option<&'static str>,
 }
 
 /// Relative cost in input-token equivalents (Anthropic list-price ratios):
@@ -167,6 +169,10 @@ pub struct Report {
     /// Tool-call categories → calls and result characters per agent `[claude, codex]`.
     #[serde(skip)]
     pub categories: BTreeMap<&'static str, CategoryStat>,
+    /// Normalised commands of the categories that bypass acus, with the calls that ran unguarded,
+    /// the intercepted calls and their result characters, most frequent first.
+    #[serde(skip)]
+    pub misses: Vec<MissStat>,
     /// Characters of all tool results.
     pub result_chars: u64,
     pub cost: Cost,
@@ -222,10 +228,37 @@ impl CacheStat {
 }
 
 /// Calls and tool-result characters of one category, per agent `[claude, codex]`.
-#[derive(Debug, Default, Clone, Copy, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct CategoryStat {
     pub calls: [u64; 2],
     pub result_chars: [u64; 2],
+    /// Result characters of each call that hits the category, sorted at the end of the report.
+    #[serde(skip)]
+    pub sizes: Vec<u64>,
+}
+
+impl CategoryStat {
+    /// The result characters of the calls at p50, p90 and the largest, or 0 each without calls.
+    pub fn result_quantiles(&self) -> [u64; 3] {
+        [
+            percentile(&self.sizes, 0.5),
+            percentile(&self.sizes, 0.9),
+            self.sizes.last().copied().unwrap_or(0),
+        ]
+    }
+}
+
+/// One normalised command whose category bypasses acus, with the calls that ran unguarded, the
+/// calls the guard denied or rewrote, and their result characters.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct MissStat {
+    pub category: &'static str,
+    pub command: String,
+    /// Calls that ran unguarded.
+    pub calls: u64,
+    /// Calls of the same shape that the guard denied or rewrote, so they never ran as sent.
+    pub intercepted: u64,
+    pub result_chars: u64,
 }
 
 /// What one transcript file contributes.
@@ -281,8 +314,13 @@ pub(crate) struct Call {
     pub input_chars: u64,
     /// Whether the call only searches or reads, see `is_explore_cmd`.
     pub explore: bool,
-    /// Categories the call hits, see `tools::classify`.
+    /// Categories the call hits, see `tools::classify_shaped`.
     pub categories: Vec<&'static str>,
+    /// Per category, the normalised shape of the shell segment that triggered it, or the
+    /// built-in tool's name.
+    pub commands: Vec<(&'static str, String)>,
+    /// Whether the acus guard denied the call or ran it rewritten, so it never ran as sent.
+    pub intercepted: bool,
     pub result_chars: u64,
 }
 
@@ -298,6 +336,14 @@ pub(crate) fn is_explore_cmd(cmd: &str) -> bool {
         }
     }
     false
+}
+
+/// The value at percentile `q` of `sorted`, or 0 when it is empty.
+pub fn percentile(sorted: &[u64], q: f64) -> u64 {
+    sorted
+        .get((sorted.len() as f64 * q) as usize)
+        .copied()
+        .unwrap_or(0)
 }
 
 /// Characters of a tool result's text: a JSON string, or the `text` blocks of a JSON array.
@@ -366,6 +412,13 @@ fn read_files(o: &UsageOpts) -> Vec<FileStats> {
     if let Some(q) = &o.project {
         let q = q.to_lowercase();
         files.retain(|f| f.cwd.to_lowercase().contains(&q));
+    }
+    if let Some(provider) = o.provider {
+        for f in &mut files {
+            f.requests
+                .retain(|q| prices::billed_by(&q.model) == provider);
+        }
+        files.retain(|f| !f.requests.is_empty());
     }
     // A session takes its project and model from its first file, so the main transcript goes first.
     files.sort_by(|a, b| {

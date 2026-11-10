@@ -4,8 +4,17 @@
 use super::time::parse_ts;
 use super::{Call, Compaction, FileStats, Request, SpawnCall, Tokens, is_explore_cmd, text_chars};
 use serde::Deserialize;
-use serde_json::value::RawValue;
-use std::collections::HashMap;
+use serde_json::{Value, value::RawValue};
+use std::collections::{HashMap, HashSet};
+
+/// The guard's note on a call it ran rewritten; Claude Code records it as an attachment tied to
+/// the call.
+const REWRITE_MARKER: &str = "The command was rewritten, not refused";
+
+/// Every acus guard refusal names the acus command to use instead. Another PreToolUse hook's
+/// refusal reaches the transcript with the same `hook error:` envelope, so this is what tells
+/// them apart.
+const GUARD_MARKER: &str = "acus ";
 
 #[derive(Deserialize)]
 struct Rec<'a> {
@@ -20,12 +29,34 @@ struct Rec<'a> {
     timestamp: Option<&'a str>,
     #[serde(rename = "compactMetadata")]
     compact: Option<CompactMeta>,
+    attachment: Option<Attachment>,
 }
 
 #[derive(Deserialize)]
 struct CompactMeta {
     #[serde(rename = "preTokens")]
     pre_tokens: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct Attachment {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    #[serde(rename = "toolUseID")]
+    tool_use_id: Option<String>,
+    content: Option<Vec<String>>,
+}
+
+impl Attachment {
+    /// Whether this is the guard's note that it ran the call in its rewritten form.
+    fn rewrote(&self) -> bool {
+        self.kind.as_deref() == Some("hook_additional_context")
+            && self
+                .content
+                .iter()
+                .flatten()
+                .any(|c| c.contains(REWRITE_MARKER))
+    }
 }
 
 #[derive(Deserialize)]
@@ -71,6 +102,19 @@ struct Block<'a> {
     content: Option<&'a RawValue>,
 }
 
+impl Block<'_> {
+    /// Whether the result is the guard's refusal, which Claude Code records as a hook error.
+    fn guard_denial(&self) -> bool {
+        let content = self.content.map(RawValue::get).unwrap_or("");
+        let Ok(v) = serde_json::from_str::<Value>(content) else {
+            return false;
+        };
+        v.as_str().is_some_and(|s| {
+            s.starts_with("PreToolUse:") && s.contains("hook error:") && s.contains(GUARD_MARKER)
+        })
+    }
+}
+
 #[derive(Deserialize)]
 struct BashInput<'a> {
     command: Option<&'a str>,
@@ -84,6 +128,7 @@ struct AgentInput<'a> {
 pub(crate) fn parse(text: &str) -> FileStats {
     let mut st = FileStats::default();
     let mut tool_of: HashMap<String, usize> = HashMap::new();
+    let mut intercepted: HashSet<String> = HashSet::new();
     let mut after_compact = false;
     for line in text.lines() {
         let Ok(r) = serde_json::from_str::<Rec>(line) else {
@@ -103,6 +148,9 @@ pub(crate) fn parse(text: &str) -> FileStats {
                 .unwrap_or_else(|| st.requests.last().map_or(0, |q| q.tokens.context()));
             st.compactions.push(Compaction { ts, pre_tokens });
             after_compact = true;
+        }
+        if let Some(id) = rewritten_call(&r.attachment) {
+            intercepted.insert(id.to_owned());
         }
         let Some(m) = r.message else { continue };
         let content = m.content.map(RawValue::get).unwrap_or("");
@@ -157,22 +205,41 @@ pub(crate) fn parse(text: &str) -> FileStats {
                         }
                         tool_of.insert(id.to_owned(), st.calls.len());
                     }
+                    let hits = super::tools::claude_tool(&name, input);
                     st.calls.push(Call {
-                        categories: super::tools::claude_tool(&name, input),
+                        categories: hits.categories,
+                        commands: hits.commands,
                         input_chars: input.len() as u64,
                         explore,
                         name,
+                        intercepted: false,
                         result_chars: 0,
                     });
                 }
             }
             Some("user") if r.is_meta != Some(true) => {
-                user_record(&mut st, &tool_of, content, ts);
+                user_record(&mut st, &tool_of, &mut intercepted, content, ts);
             }
             _ => {}
         }
     }
+    mark_intercepted(&mut st, &tool_of, &intercepted);
     st
+}
+
+/// The call whose rewrite an attachment records, when it is the guard's rewrite note.
+fn rewritten_call(attachment: &Option<Attachment>) -> Option<&str> {
+    let a = attachment.as_ref()?;
+    a.rewrote().then_some(a.tool_use_id.as_deref()).flatten()
+}
+
+/// Marks the calls that the guard's denial or rewrite notes name as intercepted.
+fn mark_intercepted(st: &mut FileStats, tool_of: &HashMap<String, usize>, ids: &HashSet<String>) {
+    for id in ids {
+        if let Some(&i) = tool_of.get(id) {
+            st.calls[i].intercepted = true;
+        }
+    }
 }
 
 fn blocks(content: &str) -> Vec<Block<'_>> {
@@ -184,7 +251,13 @@ fn blocks(content: &str) -> Vec<Block<'_>> {
 }
 
 /// A user record: a prompt, or the results of the tool calls it answers.
-fn user_record(st: &mut FileStats, tool_of: &HashMap<String, usize>, content: &str, ts: u64) {
+fn user_record(
+    st: &mut FileStats,
+    tool_of: &HashMap<String, usize>,
+    intercepted: &mut HashSet<String>,
+    content: &str,
+    ts: u64,
+) {
     if content.starts_with('"') {
         st.prompts += 1;
         return;
@@ -195,6 +268,11 @@ fn user_record(st: &mut FileStats, tool_of: &HashMap<String, usize>, content: &s
     }
     for b in bs.iter().filter(|b| b.kind == "tool_result") {
         let chars = b.content.map_or(0, |c| text_chars(c.get()));
+        if b.guard_denial()
+            && let Some(id) = b.tool_use_id
+        {
+            intercepted.insert(id.to_owned());
+        }
         match b.tool_use_id.and_then(|id| tool_of.get(id)) {
             Some(&i) => st.calls[i].result_chars += chars,
             None => st.orphan_result_chars += chars,

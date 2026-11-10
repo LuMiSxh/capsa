@@ -80,16 +80,29 @@ fn a_flag_or_the_environment_names_a_session_by_id() {
     let scratch = Scratch::new("ids");
     let roots = projects(&scratch);
     let cwd = Path::new("/nowhere");
-    let flag = resolve(&roots, cwd, Some("one"), Some("two")).expect("flag wins");
+    let flag = resolve(
+        &roots,
+        cwd,
+        Some("one"),
+        Some(("two", "CLAUDE_CODE_SESSION_ID")),
+    )
+    .expect("flag wins");
     assert_eq!((flag.id.as_str(), flag.picked), ("one", Picked::Flag));
-    let env = resolve(&roots, cwd, None, Some("two")).expect("env names a session");
-    assert_eq!((env.id.as_str(), env.picked), ("two", Picked::Env));
+    let env = resolve(&roots, cwd, None, Some(("two", "CLAUDE_CODE_SESSION_ID")))
+        .expect("env names a session");
+    assert_eq!(
+        (env.id.as_str(), env.picked),
+        ("two", Picked::Env("CLAUDE_CODE_SESSION_ID"))
+    );
+    let fallback = resolve(&roots, cwd, None, Some(("two", "CLAUDE_SESSION_ID")))
+        .expect("the fallback names a session");
+    assert_eq!(fallback.picked, Picked::Env("CLAUDE_SESSION_ID"));
     assert!(matches!(
         resolve(&roots, cwd, Some("missing"), None),
         Err(SessionError::UnknownId(id)) if id == "missing"
     ));
     assert!(matches!(
-        resolve(&roots, cwd, None, Some("")),
+        resolve(&roots, cwd, None, Some(("", "CLAUDE_CODE_SESSION_ID"))),
         Err(SessionError::NoSession(_))
     ));
 }

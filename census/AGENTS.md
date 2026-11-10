@@ -93,9 +93,9 @@ Shared rules: see root AGENTS.md.
   `agent_id`). Keep it free of `unwrap`, indexing and panics: `panic = "abort"` makes one a failed
   hook on every prompt. Limits are skipped after 150 ms. Levels are kept per session in
   `hints/<session>`, keyed with the window's `resets_at` so a new window shows them again.
-- The session is `--session`, then `CLAUDE_SESSION_ID`, then the newest main transcript whose
-  recorded directory is the current one, an ancestor or a descendant. Subagent transcripts are
-  never chosen.
+- The session is `--session`, then `CLAUDE_CODE_SESSION_ID`, then `CLAUDE_SESSION_ID`, then the
+  newest main transcript whose recorded directory is the current one, an ancestor or a descendant.
+  Subagent transcripts are never chosen.
 
 ## Gotchas
 

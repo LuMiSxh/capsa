@@ -3,7 +3,8 @@
 
 use super::prices::write_cost;
 use super::{
-    AgentStat, CacheStat, Cost, FileStats, Report, Session, SpawnCall, Tokens, ToolStat, handback,
+    AgentStat, CacheStat, Cost, FileStats, MissStat, Report, Session, SpawnCall, Tokens, ToolStat,
+    handback,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -54,6 +55,7 @@ struct Acc<'a> {
     compactions: Vec<u64>,
     roles: HashMap<String, Vec<Spawn>>,
     spawns: Vec<(&'a str, &'a SpawnCall)>,
+    misses: HashMap<(&'static str, String), MissAcc>,
 }
 
 impl<'a> Acc<'a> {
@@ -81,7 +83,7 @@ impl<'a> Acc<'a> {
         if s.project.is_empty() {
             s.project = project;
         }
-        add_calls(&mut self.r, &mut self.tools, f);
+        add_calls(&mut self.r, &mut self.tools, &mut self.misses, f);
         let ttl = if f.is_subagent {
             SUBAGENT_TTL
         } else {
@@ -204,6 +206,28 @@ impl<'a> Acc<'a> {
         r.result_chars = r.tools.iter().map(|t| t.result_chars).sum();
         r.tools
             .sort_by(|a, b| b.calls.cmp(&a.calls).then(a.name.cmp(&b.name)));
+        for s in r.categories.values_mut() {
+            s.sizes.sort_unstable();
+        }
+        let mut misses: Vec<MissStat> = self
+            .misses
+            .into_iter()
+            .filter(|(_, m)| m.calls > 0)
+            .map(|((category, command), m)| MissStat {
+                category,
+                command,
+                calls: m.calls,
+                intercepted: m.intercepted,
+                result_chars: m.result_chars,
+            })
+            .collect();
+        misses.sort_by(|a, b| {
+            b.calls
+                .cmp(&a.calls)
+                .then(a.category.cmp(b.category))
+                .then(a.command.cmp(&b.command))
+        });
+        r.misses = misses;
         for spawn in self.roles.values().flatten() {
             r.cache.add(&spawn.cache);
         }
@@ -243,12 +267,7 @@ impl Spawn {
 /// The 50th, 90th and 99th percentile of `values`, or 0 for each when there are none.
 fn quantiles(mut values: Vec<u64>) -> [u64; 3] {
     values.sort_unstable();
-    [0.5, 0.9, 0.99].map(|q| {
-        values
-            .get((values.len() as f64 * q) as usize)
-            .copied()
-            .unwrap_or(0)
-    })
+    [0.5, 0.9, 0.99].map(|q| super::percentile(&values, q))
 }
 
 fn agent_stats(roles: HashMap<String, Vec<Spawn>>, total: f64) -> Vec<AgentStat> {
@@ -300,7 +319,15 @@ fn median(mut v: Vec<f64>) -> f64 {
 }
 
 /// Adds one transcript's tool calls to the tool, category and chain statistics.
-fn add_calls(r: &mut Report, tools: &mut HashMap<String, ToolStat>, f: &FileStats) {
+///
+/// A miss counts the calls of a shape that ran unguarded; a call the guard denied or rewrote is
+/// tallied as intercepted and adds neither a call nor result characters.
+fn add_calls(
+    r: &mut Report,
+    tools: &mut HashMap<String, ToolStat>,
+    misses: &mut HashMap<(&'static str, String), MissAcc>,
+    f: &FileStats,
+) {
     let mut run = 0u64;
     let agent = usize::from(f.agent == "codex");
     for c in &f.calls {
@@ -316,6 +343,19 @@ fn add_calls(r: &mut Report, tools: &mut HashMap<String, ToolStat>, f: &FileStat
             let s = r.categories.entry(cat).or_default();
             s.calls[agent] += 1;
             s.result_chars[agent] += c.result_chars;
+            s.sizes.push(c.result_chars);
+            // Every category outside `acus:*` is a call the guard never sees.
+            if !cat.starts_with("acus:")
+                && let Some((_, command)) = c.commands.iter().find(|(c, _)| *c == cat)
+            {
+                let m = misses.entry((cat, command.clone())).or_default();
+                if c.intercepted {
+                    m.intercepted += 1;
+                } else {
+                    m.calls += 1;
+                    m.result_chars += c.result_chars;
+                }
+            }
         }
         if c.explore {
             run += 1;
@@ -333,6 +373,16 @@ fn add_calls(r: &mut Report, tools: &mut HashMap<String, ToolStat>, f: &FileStat
             })
             .result_chars += f.orphan_result_chars;
     }
+}
+
+/// The calls of one command shape that bypasses acus.
+#[derive(Default)]
+struct MissAcc {
+    /// Calls that ran unguarded.
+    calls: u64,
+    /// Calls the guard denied or rewrote.
+    intercepted: u64,
+    result_chars: u64,
 }
 
 fn close_chain(c: &mut super::Chains, run: &mut u64) {

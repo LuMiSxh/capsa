@@ -3,30 +3,64 @@
 
 use serde_json::Value;
 
+/// The categories of one tool call, and the command that names each in `--misses`.
+#[derive(Default)]
+pub(crate) struct Hits {
+    pub categories: Vec<&'static str>,
+    pub commands: Vec<(&'static str, String)>,
+}
+
+impl Hits {
+    fn named(category: &'static str, command: &str) -> Self {
+        Hits {
+            categories: vec![category],
+            commands: vec![(category, command.to_owned())],
+        }
+    }
+
+    fn shaped(pairs: Vec<(&'static str, Option<String>)>) -> Self {
+        let mut hits = Hits::default();
+        for (category, shape) in pairs {
+            hits.categories.push(category);
+            if let Some(shape) = shape {
+                hits.commands.push((category, shape));
+            }
+        }
+        hits
+    }
+}
+
 /// Categories of one Claude tool call (`input` is the raw tool input JSON).
-pub(crate) fn claude_tool(name: &str, input: &str) -> Vec<&'static str> {
+pub(crate) fn claude_tool(name: &str, input: &str) -> Hits {
     match name {
-        "Read" => vec!["read"],
-        "Grep" | "Glob" => vec!["search"],
-        "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => vec!["edit-builtin"],
+        "Read" => Hits::named("read", name),
+        "Grep" | "Glob" => Hits::named("search", name),
+        "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => Hits::named("edit-builtin", name),
         "Bash" => serde_json::from_str::<Value>(input)
             .ok()
-            .and_then(|v| v.get("command")?.as_str().map(classify))
+            .and_then(|v| {
+                let c = v.get("command")?.as_str()?;
+                Some(Hits::shaped(classify_shaped(c)))
+            })
             .unwrap_or_default(),
-        _ => vec![],
+        _ => Hits::default(),
     }
 }
 
 /// Categories of one Codex tool call (`input` is its arguments or custom input).
-pub(crate) fn codex_tool(name: &str, input: &str) -> Vec<&'static str> {
+pub(crate) fn codex_tool(name: &str, input: &str) -> Hits {
     if name == "apply_patch" {
-        return vec!["edit-builtin"];
+        return Hits::named("edit-builtin", name);
     }
-    let mut hits: Vec<&'static str> = vec![];
+    let mut hits = Hits::default();
     for c in codex_commands(input) {
-        for h in classify(&c) {
-            if !hits.contains(&h) {
-                hits.push(h);
+        for (category, shape) in classify_shaped(&c) {
+            if hits.categories.contains(&category) {
+                continue;
+            }
+            hits.categories.push(category);
+            if let Some(shape) = shape {
+                hits.commands.push((category, shape));
             }
         }
     }
@@ -268,6 +302,67 @@ fn base(w: &str) -> &str {
     w.rsplit('/').next().unwrap_or(w)
 }
 
+/// Programs whose first non-flag argument is a subcommand rather than a path.
+const SUBCOMMANDS: [&str; 11] = [
+    "acus", "bun", "cargo", "docker", "gh", "git", "go", "kubectl", "npm", "pnpm", "yarn",
+];
+
+/// Flags whose value is the next word, so the subcommand search skips it.
+const VALUE_FLAGS: [&str; 5] = ["-C", "-c", "--git-dir", "--namespace", "--work-tree"];
+
+/// The shape of one pipeline: the first real program with its subcommand and flags, the name of
+/// each pipe target, and ` >` when it redirects to a file. Paths, quoted strings and other
+/// arguments drop out, so equal commands group (`git diff --cached`, `cargo test | tail`,
+/// `cd x && sed -n`).
+fn shape_pipe(pipe: &[Vec<String>]) -> String {
+    if pipe
+        .first()
+        .and_then(|stage| program(stage).first())
+        .is_none_or(|w| base(w) == "cd")
+    {
+        return String::new();
+    }
+    let mut out = String::new();
+    for (n, stage) in pipe.iter().enumerate() {
+        let mut p = program(stage);
+        if p.first().is_some_and(|w| base(w) == "xargs") {
+            let skip = p[1..].iter().take_while(|a| a.starts_with('-')).count();
+            p = program(&p[1 + skip..]);
+        }
+        let Some(w) = p.first() else { continue };
+        let name = base(w);
+        if n > 0 {
+            out.push_str(" | ");
+            out.push_str(name);
+            continue;
+        }
+        out.push_str(name);
+        if SUBCOMMANDS.contains(&name) {
+            let mut it = p[1..].iter();
+            while let Some(a) = it.next() {
+                if !a.starts_with('-') {
+                    out.push(' ');
+                    out.push_str(a);
+                    break;
+                }
+                if VALUE_FLAGS.contains(&a.as_str()) {
+                    it.next();
+                }
+            }
+        }
+        for a in &p[1..] {
+            if a.starts_with('-') {
+                out.push(' ');
+                out.push_str(a);
+            }
+        }
+        if redirects(p) {
+            out.push_str(" >");
+        }
+    }
+    out
+}
+
 /// Drops env assignments and wrappers so the first word is the real program.
 fn program(stage: &[String]) -> &[String] {
     let mut s = stage;
@@ -295,6 +390,11 @@ fn writes_file(p: &[String]) -> bool {
             .iter()
             .any(|a| !a.starts_with('-') && a != "/dev/null");
     }
+    redirects(p)
+}
+
+/// Whether a stage redirects its output to a real file (`>` or `>>`).
+fn redirects(p: &[String]) -> bool {
     let mut words = p[1..].iter();
     while let Some(w) = words.next() {
         let Some(rest) = w
@@ -348,15 +448,12 @@ pub fn group(category: &str) -> &'static str {
     }
 }
 
-/// Every category a shell command hits, once each.
-pub(crate) fn classify(cmd: &str) -> Vec<&'static str> {
-    let mut hits: Vec<&'static str> = vec![];
-    let mut add = |c: &'static str| {
-        if !hits.contains(&c) {
-            hits.push(c);
-        }
-    };
+/// Every category a shell command hits, once each, with the shape of the pipeline that triggered
+/// it.
+pub(crate) fn classify_shaped(cmd: &str) -> Vec<(&'static str, Option<String>)> {
+    let mut hits: Vec<(&'static str, Option<String>)> = vec![];
     for pipe in pipelines(cmd) {
+        let shape = shape_pipe(&pipe);
         for (n, stage) in pipe.iter().enumerate() {
             let mut p = program(stage);
             // `find … | xargs grep` searches like a first stage.
@@ -368,8 +465,8 @@ pub(crate) fn classify(cmd: &str) -> Vec<&'static str> {
             }
             let Some(w) = p.first() else { continue };
             let args = &p[1..];
-            match base(w) {
-                "acus" => add(match args.first().map(String::as_str) {
+            let category = match base(w) {
+                "acus" => Some(match args.first().map(String::as_str) {
                     Some("find") => "acus:find",
                     Some("outline") => "acus:outline",
                     Some("show") => "acus:show",
@@ -380,30 +477,24 @@ pub(crate) fn classify(cmd: &str) -> Vec<&'static str> {
                     _ => "acus:other",
                 }),
                 "grep" | "egrep" | "fgrep" | "rg" | "ag" | "ack" | "find" | "fd" if first => {
-                    add("search");
+                    Some("search")
                 }
-                "cat" | "printf" | "echo" | "tee" if writes_file(p) => add("edit-shell"),
+                "cat" | "printf" | "echo" | "tee" if writes_file(p) => Some("edit-shell"),
                 "cat" | "head" | "tail" | "less" | "bat" | "nl" | "awk" if first => {
-                    if base(w) != "awk" || args.iter().any(|a| a.contains("print")) {
-                        add("read");
-                    }
+                    (base(w) != "awk" || args.iter().any(|a| a.contains("print"))).then_some("read")
                 }
                 "sed"
                     if has_short_flag(args, 'i')
                         || args.iter().any(|a| a.starts_with("--in-place")) =>
                 {
-                    add("edit-sed");
+                    Some("edit-sed")
                 }
-                "sed" if first && has_short_flag(args, 'n') => add("read"),
-                "perl" if has_short_flag(args, 'i') => add("edit-sed"),
-                "apply_patch" => add("edit-builtin"),
-                "git" => {
-                    if git_shows_diff(args) {
-                        add("diff");
-                    }
-                }
+                "sed" if first && has_short_flag(args, 'n') => Some("read"),
+                "perl" if has_short_flag(args, 'i') => Some("edit-sed"),
+                "apply_patch" => Some("edit-builtin"),
+                "git" => git_shows_diff(args).then_some("diff"),
                 b if b == "python" || b.starts_with("python3") || b == "python2" => {
-                    add(python_category(cmd));
+                    Some(python_category(cmd))
                 }
                 _ if is_build(p) => {
                     let filtered = pipe[n + 1..].iter().any(|s| {
@@ -412,22 +503,51 @@ pub(crate) fn classify(cmd: &str) -> Vec<&'static str> {
                             Some("grep" | "egrep" | "rg" | "tail" | "head")
                         )
                     });
-                    add(if filtered {
+                    Some(if filtered {
                         "build-filtered"
                     } else {
                         "build-unfiltered"
-                    });
+                    })
                 }
-                _ => {}
+                _ => None,
+            };
+            if let Some(category) = category {
+                add_hit(&mut hits, category, &shape);
             }
         }
     }
     hits
 }
 
+fn add_hit(hits: &mut Vec<(&'static str, Option<String>)>, category: &'static str, shape: &str) {
+    if !hits.iter().any(|(c, _)| *c == category) {
+        let command = if shape.is_empty() {
+            None
+        } else {
+            Some(shape.to_owned())
+        };
+        hits.push((category, command));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn categories(cmd: &str) -> Vec<&'static str> {
+        classify_shaped(cmd)
+            .into_iter()
+            .map(|(category, _)| category)
+            .collect()
+    }
+
+    fn shape(cmd: &str) -> String {
+        pipelines(cmd)
+            .iter()
+            .map(|pipe| shape_pipe(pipe))
+            .find(|s| !s.is_empty())
+            .unwrap_or_default()
+    }
 
     #[test]
     fn classifies() {
@@ -473,7 +593,29 @@ mod tests {
             ("ls", &[]),
         ];
         for (cmd, want) in t {
-            assert_eq!(&classify(cmd), want, "{cmd}");
+            assert_eq!(&categories(cmd), want, "{cmd}");
+        }
+    }
+
+    #[test]
+    fn shapes_follow_the_segment_that_triggered_the_category() {
+        let t: &[(&str, &str, &str)] = &[
+            (
+                "acus patch -q <<'P'\n*** Begin Patch\nP\n&& cargo test",
+                "build-unfiltered",
+                "cargo test",
+            ),
+            ("cd x && sed -n 1,5p f", "read", "sed -n"),
+            ("cat > f <<'EOF'\nhi\nEOF", "edit-shell", "cat >"),
+            ("python3 - <<'PY'", "python-other", "python3 -"),
+        ];
+        for &(cmd, category, want) in t {
+            let hits = classify_shaped(cmd);
+            let shape = hits
+                .iter()
+                .find(|(c, _)| *c == category)
+                .and_then(|(_, s)| s.as_deref());
+            assert_eq!(shape, Some(want), "{cmd}");
         }
     }
 
@@ -495,21 +637,48 @@ mod tests {
 
     #[test]
     fn builtin_tools() {
-        assert_eq!(claude_tool("Read", ""), ["read"]);
-        assert_eq!(claude_tool("Glob", ""), ["search"]);
-        assert_eq!(claude_tool("MultiEdit", ""), ["edit-builtin"]);
-        assert_eq!(claude_tool("Bash", r#"{"command":"rg x"}"#), ["search"]);
+        assert_eq!(claude_tool("Read", "").categories, ["read"]);
+        assert_eq!(claude_tool("Glob", "").categories, ["search"]);
+        assert_eq!(claude_tool("MultiEdit", "").categories, ["edit-builtin"]);
         assert_eq!(
-            codex_tool("shell", r#""{\"cmd\":\"sed -n 1p a\"}""#),
+            claude_tool("Bash", r#"{"command":"rg x"}"#).categories,
+            ["search"]
+        );
+        assert_eq!(
+            codex_tool("shell", r#""{\"cmd\":\"sed -n 1p a\"}""#).categories,
             ["read"]
         );
         assert_eq!(
-            codex_tool("shell", r#"{"command":["bash","-lc","git diff"]}"#),
+            codex_tool("shell", r#"{"command":["bash","-lc","git diff"]}"#).categories,
             ["diff"]
         );
         assert_eq!(
-            codex_tool("apply_patch", "*** Begin Patch"),
+            codex_tool("apply_patch", "*** Begin Patch").categories,
             ["edit-builtin"]
         );
+    }
+
+    #[test]
+    fn shapes_group_equal_commands() {
+        let t: &[(&str, &str)] = &[
+            ("git diff --cached", "git diff --cached"),
+            ("git diff HEAD~1 src/a.rs", "git diff"),
+            ("FOO=1 cargo test", "cargo test"),
+            ("cargo test 2>&1 | tail -20", "cargo test | tail"),
+            ("cd x && git diff", "git diff"),
+            ("cd x && npm run build | grep error", "npm run | grep"),
+            ("sed -n '1,5p' a.rs", "sed -n"),
+            ("cat a.rs | grep x", "cat | grep"),
+            ("grep -rn 'foo bar' src | head", "grep -rn | head"),
+            ("python3 script.py", "python3"),
+            ("cat a.rs", "cat"),
+            ("cat > f <<'EOF'\nx\nEOF", "cat >"),
+            ("cat <<'EOF' > f\nx\nEOF", "cat >"),
+            ("ls", "ls"),
+            ("cd x", ""),
+        ];
+        for (cmd, want) in t {
+            assert_eq!(shape(cmd), *want, "{cmd}");
+        }
     }
 }

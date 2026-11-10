@@ -397,21 +397,38 @@ struct ToolRow {
     share: f64,
     result_chars: u64,
     result_share: f64,
+    result_p50: u64,
+    result_p90: u64,
+    result_max: u64,
+}
+
+/// One command of a category that bypasses acus, as the `--misses` table's JSON.
+#[derive(Serialize)]
+struct MissRow {
+    category: String,
+    command: String,
+    /// Calls that ran unguarded.
+    calls: u64,
+    /// Calls of the same shape that the guard denied or rewrote.
+    intercepted: u64,
+    result_chars: u64,
 }
 
 #[derive(Serialize)]
-#[serde(transparent)]
 pub(crate) struct ToolsView {
     #[serde(skip)]
     sessions: usize,
-    rows: Vec<ToolRow>,
+    tools: Vec<ToolRow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    misses: Option<Vec<MissRow>>,
 }
 
 impl ToolsView {
-    pub(crate) fn new(r: &Report) -> Self {
+    pub(crate) fn new(r: &Report, misses: bool, top: usize) -> Self {
         ToolsView {
             sessions: r.sessions.len(),
-            rows: tool_rows(r),
+            tools: tool_rows(r),
+            misses: misses.then(|| miss_rows(r, top)),
         }
     }
 }
@@ -424,7 +441,7 @@ impl Render for ToolsView {
             self.sessions
         ));
         let rows = self
-            .rows
+            .tools
             .iter()
             .map(|t| {
                 vec![
@@ -435,6 +452,9 @@ impl Render for ToolsView {
                     format!("{:.0}%", 100.0 * t.share),
                     k(t.result_chars as f64),
                     format!("{:.0}%", 100.0 * t.result_share),
+                    k(t.result_p50 as f64),
+                    k(t.result_p90 as f64),
+                    k(t.result_max as f64),
                 ]
             })
             .collect();
@@ -447,10 +467,39 @@ impl Render for ToolsView {
                 "share-of-group",
                 "result-chars",
                 "result-share-of-group",
+                "result-p50",
+                "result-p90",
+                "result-max",
             ],
-            "lrrrrrr",
+            "lrrrrrrrrr",
             rows,
         ));
+        if let Some(misses) = &self.misses {
+            doc.section("commands that bypass acus");
+            let rows = misses
+                .iter()
+                .map(|m| {
+                    vec![
+                        m.category.clone(),
+                        m.command.clone(),
+                        m.calls.to_string(),
+                        m.intercepted.to_string(),
+                        k(m.result_chars as f64),
+                    ]
+                })
+                .collect();
+            doc.table(table(
+                &[
+                    "category",
+                    "command",
+                    "calls",
+                    "intercepted",
+                    "result-chars",
+                ],
+                "llrrr",
+                rows,
+            ));
+        }
     }
 }
 
@@ -459,26 +508,47 @@ fn tool_rows(r: &Report) -> Vec<ToolRow> {
     let mut rows: Vec<_> = r
         .categories
         .iter()
-        .map(|(c, s)| (group(c), *c, *s))
+        .map(|(c, s)| (group(c), *c, s))
         .collect();
-    rows.sort_by_key(|&(g, c, s)| (g, std::cmp::Reverse(total_calls(&s)), c));
+    rows.sort_by_key(|&(g, c, s)| (g, std::cmp::Reverse(total_calls(s)), c));
     let group_sum = |g: &str, f: fn(&CategoryStat) -> u64| {
         rows.iter()
             .filter(|row| row.0 == g)
-            .map(|row| f(&row.2))
+            .map(|row| f(row.2))
             .sum::<u64>()
             .max(1)
     };
     rows.iter()
-        .map(|&(g, c, s)| ToolRow {
-            group: g.to_owned(),
-            category: c.to_owned(),
-            claude: s.calls[0],
-            codex: s.calls[1],
-            total: total_calls(&s),
-            share: total_calls(&s) as f64 / group_sum(g, total_calls) as f64,
-            result_chars: total_chars(&s),
-            result_share: total_chars(&s) as f64 / group_sum(g, total_chars) as f64,
+        .map(|&(g, c, s)| {
+            let q = s.result_quantiles();
+            ToolRow {
+                group: g.to_owned(),
+                category: c.to_owned(),
+                claude: s.calls[0],
+                codex: s.calls[1],
+                total: total_calls(s),
+                share: total_calls(s) as f64 / group_sum(g, total_calls) as f64,
+                result_chars: total_chars(s),
+                result_share: total_chars(s) as f64 / group_sum(g, total_chars) as f64,
+                result_p50: q[0],
+                result_p90: q[1],
+                result_max: q[2],
+            }
+        })
+        .collect()
+}
+
+/// The most frequent bypassing commands, at most `top` of them.
+fn miss_rows(r: &Report, top: usize) -> Vec<MissRow> {
+    r.misses
+        .iter()
+        .take(top)
+        .map(|m| MissRow {
+            category: m.category.to_owned(),
+            command: m.command.clone(),
+            calls: m.calls,
+            intercepted: m.intercepted,
+            result_chars: m.result_chars,
         })
         .collect()
 }

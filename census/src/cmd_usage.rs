@@ -24,6 +24,9 @@ pub struct Args {
     /// Only sessions whose working directory contains this text.
     #[arg(long)]
     project: Option<String>,
+    /// Only requests billed by this provider: `anthropic` (Claude), `deepseek`, `openai` (Codex).
+    #[arg(long, value_name = "PROVIDER", value_parser = census::usage::PROVIDERS)]
+    provider: Option<String>,
     /// Rows per table.
     #[arg(long, default_value_t = 10)]
     top: usize,
@@ -36,6 +39,10 @@ pub struct Args {
     /// Count how agents search, read, edit and build (acus vs grep, sed, python, built-in tools).
     #[arg(long)]
     tools: bool,
+    /// With --tools: the most frequent commands of the categories that bypass acus, with their
+    /// calls and result characters.
+    #[arg(long, requires = "tools")]
+    misses: bool,
     /// Count `acus guard` decisions per rule and list the calls run through its escape.
     #[arg(long)]
     guard: bool,
@@ -73,7 +80,16 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     }
     let config = Config::load();
     refresh_prices(now_secs(), config.prices_refresh_days);
+    let provider = a.provider.as_deref().and_then(|name| {
+        census::usage::PROVIDERS
+            .iter()
+            .copied()
+            .find(|p| *p == name)
+    });
     if let Some(kind) = &a.by {
+        if provider.is_some_and(|p| p != "anthropic") {
+            return Ok(Outcome::Empty);
+        }
         return by(kind, out);
     }
     let opts = UsageOpts {
@@ -81,6 +97,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         codex_root: a.codex_dir,
         days: a.days,
         project: a.project,
+        provider,
     };
     if let Some(date) = &a.compare {
         let Some(cut) = parse_date(date) else {
@@ -102,7 +119,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         return Ok(Outcome::Empty);
     }
     if a.tools {
-        return emit(&ToolsView::new(&r), out.format);
+        return emit(&ToolsView::new(&r, a.misses, a.top), out.format);
     }
     if a.handbacks {
         return emit(&HandbacksView(&r.handbacks), out.format);

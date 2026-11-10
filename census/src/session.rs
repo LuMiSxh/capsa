@@ -13,14 +13,16 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// The environment variables that name the running session, in order of precedence.
+const SESSION_ENV: [&str; 2] = ["CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"];
+
 /// How a session was chosen.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Picked {
     /// The `--session` flag.
     Flag,
-    /// The `CLAUDE_SESSION_ID` environment variable.
-    Env,
+    /// The environment variable that named the session, one of `SESSION_ENV`.
+    Env(&'static str),
     /// The most recently modified transcript whose directory is the current one, an ancestor or a
     /// descendant of it.
     Recent,
@@ -31,9 +33,19 @@ impl Picked {
     pub fn label(self) -> &'static str {
         match self {
             Self::Flag => "--session",
-            Self::Env => "CLAUDE_SESSION_ID",
+            Self::Env(key) => key,
             Self::Recent => "most recent transcript for this directory",
         }
+    }
+}
+
+impl Serialize for Picked {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::Flag => "flag",
+            Self::Env(_) => "env",
+            Self::Recent => "recent",
+        })
     }
 }
 
@@ -68,8 +80,8 @@ impl Hint for SessionError {
     }
 }
 
-/// Chooses the session of this process: `--session`, else `CLAUDE_SESSION_ID`, else the most
-/// recent transcript for the current directory.
+/// Chooses the session of this process: `--session`, else `CLAUDE_CODE_SESSION_ID`, else
+/// `CLAUDE_SESSION_ID`, else the most recent transcript for the current directory.
 ///
 /// # Errors
 /// Fails when the current directory is unknown, the named session has no transcript, or no
@@ -77,13 +89,19 @@ impl Hint for SessionError {
 pub fn resolve_here(flag: Option<&str>) -> Result<Resolved, SessionError> {
     let cwd = std::env::current_dir().map_err(SessionError::Cwd)?;
     let roots = [context::claude_config_dir().join("projects")];
-    let env = std::env::var("CLAUDE_SESSION_ID").ok();
-    resolve(&roots, &cwd, flag, env.as_deref())
+    let env = SESSION_ENV.iter().find_map(|key| {
+        std::env::var(key)
+            .ok()
+            .filter(|id| !id.is_empty())
+            .map(|id| (id, *key))
+    });
+    let env = env.as_ref().map(|(id, key)| (id.as_str(), *key));
+    resolve(&roots, &cwd, flag, env)
 }
 
-/// Chooses the session among the transcripts under `roots`: `flag`, else `env`, else the most
-/// recently modified main transcript whose recorded directory is `cwd`, an ancestor or a descendant
-/// of it. Subagent transcripts are never chosen.
+/// Chooses the session among the transcripts under `roots`: `flag`, else `env` (the id and the
+/// variable it came from), else the most recently modified main transcript whose recorded directory
+/// is `cwd`, an ancestor or a descendant of it. Subagent transcripts are never chosen.
 ///
 /// # Errors
 /// Fails when a named session has no transcript, or no transcript matches `cwd`.
@@ -91,13 +109,13 @@ pub fn resolve(
     roots: &[PathBuf],
     cwd: &Path,
     flag: Option<&str>,
-    env: Option<&str>,
+    env: Option<(&str, &'static str)>,
 ) -> Result<Resolved, SessionError> {
     if let Some(id) = flag {
         return by_id(roots, id, Picked::Flag);
     }
-    match env.filter(|id| !id.is_empty()) {
-        Some(id) => by_id(roots, id, Picked::Env),
+    match env.filter(|(id, _)| !id.is_empty()) {
+        Some((id, key)) => by_id(roots, id, Picked::Env(key)),
         None => recent(roots, cwd),
     }
 }
