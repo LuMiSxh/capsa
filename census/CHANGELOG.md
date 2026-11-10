@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.6.1]
+
+### Changed
+
+- `census self setup` and `census self doctor` share their hook handling with the other capsa
+  tools. `census self doctor` reports each hook on its own, `SessionStart` included, and warns
+  `outdated: <command>` for a census entry that runs another command, where it said `registered`.
+  A `census hook` entry that you scoped with a matcher stays when you run `census self setup`.
+
 ## [0.6.0]
 
 ### Added
