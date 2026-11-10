@@ -148,7 +148,7 @@ and the [Agent Skills spec](https://agentskills.io/specification).
   when to use it, trigger words first, at most 1024 characters. All "when to use" text lives
   there, not in the body.
 - **Budget:** every line costs tokens in every session that triggers it. SKILL.md stays under 500
-  lines and about 5k tokens; `CORE.md` stays under 250 words (a test enforces it). Cut what an agent
+  lines and about 5k tokens; `CORE.md` stays under 300 words (a test enforces it). Cut what an agent
   already knows; keep what changes what it does.
 - **Shape of a CLI skill:** a task → command table, then one worked example for each command that
   is easy to get wrong, then "Common mistakes" with the reason for each. One default per task,
