@@ -8,21 +8,42 @@
 use crate::cmd_self::SKILL;
 use crate::out::Out;
 use anyhow::{Context, Result};
-use capsa_core::claude_settings::{self, Settings};
+use capsa_core::claude_settings::{self, runs};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::ResultExt;
+use capsa_core::hooks::{Agent, HookFile, HookSpec};
 use capsa_core::skill::{self, SkillState, Target};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-/// The events that get census's hook, in the order they are reported.
-const EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "PostToolUse"];
 /// The binary's name, as the commands in settings.json name it.
-const TOOL: &str = "census";
+pub const TOOL: &str = "census";
 /// The commands written into settings.json: bare names, which Claude Code resolves on PATH.
 const HOOK: &str = "census hook";
 const STATUS_LINE: &str = "census statusline --line";
+
+/// Claims every `census hook` command.
+fn owns_hook(command: &str) -> bool {
+    runs(command, TOOL, "hook")
+}
+
+const fn hook(event: &'static str) -> HookSpec {
+    HookSpec {
+        event,
+        matcher: None,
+        command: HOOK,
+        owns: owns_hook,
+        legacy: None,
+    }
+}
+
+/// The hooks census registers, in the order they are reported.
+pub const HOOKS: [HookSpec; 3] = [
+    hook("SessionStart"),
+    hook("UserPromptSubmit"),
+    hook("PostToolUse"),
+];
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -96,26 +117,26 @@ struct Report {
 /// Installs the skill and wires census into the settings, then prints what it did.
 pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     let home = std::env::home_dir().context("no home directory")?;
-    let mut settings = claude_settings::read(&claude_settings::path()).hinted()?;
-    let before = settings.value.clone();
+    let mut file = HookFile::open(Agent::ClaudeCode).hinted()?;
+    let before = file.value().clone();
     let skill_step = if skill::state(&home, &SKILL, Target::Claude) == SkillState::Current {
         Step::Set
     } else {
         Step::Install
     };
     let mut steps = vec![("skill".to_owned(), skill_step)];
-    steps.extend(wire(&mut settings, a.force));
+    steps.extend(wire(&mut file, a.force));
     if !a.dry_run {
         if skill_step.writes() {
             skill::install(&home, &SKILL, Target::Claude).hinted()?;
         }
-        if settings.value != before {
-            claude_settings::write(&settings).hinted()?;
+        if *file.value() != before {
+            file.write().hinted()?;
         }
     }
     let report = Report {
         dry_run: a.dry_run,
-        settings: settings.path.display().to_string(),
+        settings: file.path().display().to_string(),
         items: steps
             .into_iter()
             .map(|(name, step)| Item {
@@ -129,15 +150,13 @@ pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
 }
 
 /// Sets census's statusLine and hook for each event, returning what each item did.
-fn wire(settings: &mut Settings, force: bool) -> Vec<(String, Step)> {
+fn wire(file: &mut HookFile, force: bool) -> Vec<(String, Step)> {
     let mut steps = vec![(
         "statusLine".to_owned(),
-        wire_status_line(&mut settings.value, STATUS_LINE, force),
+        wire_status_line(file.value_mut(), STATUS_LINE, force),
     )];
-    for event in EVENTS {
-        let owns = |command: &str| claude_settings::runs(command, TOOL, "hook");
-        let step = claude_settings::set_hook(&mut settings.value, event, None, HOOK, owns);
-        steps.push((format!("hook {event}"), step.into()));
+    for spec in &HOOKS {
+        steps.push((format!("hook {}", spec.event), file.set(spec).into()));
     }
     steps
 }
@@ -146,9 +165,7 @@ fn wire_status_line(settings: &mut Value, line: &str, force: bool) -> Step {
     let step = match settings.get("statusLine") {
         None => Step::Install,
         Some(value) if command_of(value) == Some(line) => Step::Set,
-        Some(value)
-            if command_of(value).is_some_and(|c| claude_settings::runs(c, TOOL, "statusline")) =>
-        {
+        Some(value) if command_of(value).is_some_and(|c| runs(c, TOOL, "statusline")) => {
             Step::Replace
         }
         Some(_) if force => Step::ReplaceForeign,

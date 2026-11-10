@@ -103,10 +103,10 @@ Output is a compact agent format by default. `--agent`, `--human` and `--json` c
 
 Agents fall back to grep and cat when a skill is only listed by its description. Loading the skill at session start and letting a hook steer the rest fixes most of that.
 
-**Claude Code.** `acus self setup` installs the skill and registers both hooks in `settings.json` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), keeping a `.bak` of the old file; a rerun changes nothing when they are current. `--target claude|codex|all` picks the skill directories (`codex` is refused, since the hooks are Claude Code's), and `--dry-run` prints what would change.
+**Claude Code.** `acus self setup` installs the skill and registers the three hooks in `settings.json` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), keeping a `.bak` of the old file; a rerun changes nothing when they are current. `--target claude|codex|all` picks the skill directories (`codex` is refused, since the hooks are Claude Code's), and `--dry-run` prints what would change.
 
 - `SessionStart` (`acus hook`) prints the skill at every start, `/clear` and compaction. It has no project map, because [overviews in context files did not help agents find the relevant files and raised cost](https://arxiv.org/abs/2602.11988); agents run `acus map` for the layout.
-- `SubagentStart` (matcher of agent types, e.g. `Explore|Plan`, command `acus hook`) adds the skill to a subagent's context; `acus self setup` registers only the two hooks above.
+- `SubagentStart` (`acus hook`, no matcher, so every subagent) adds the skill to a subagent's context. `acus self setup` installs it; an entry already scoped to agent types, e.g. `Explore|Plan`, is kept as it is.
 - `PreToolUse` runs the guard (`acus hook`) on Bash, PowerShell, Read, Grep and Glob. It rewrites a command into an exact acus call when it can, and otherwise refuses it and names the acus command. Literal `sed -i` edits of one file become `acus patch`, `acus … | head -N` becomes `--head N`, and `cat`, `tail` and `grep` of a background task's output file become `acus ctx --log FILE`. The rules are in [docs/guard.md](docs/guard.md).
 
 Escape hatches: a refused command runs anyway with a `command ` prefix (Bash) or a trailing `# acus-skip` comment (both shells). Every decision, escapes included, is logged to `guard.jsonl` next to the config file; `census usage --guard` counts them per rule. The hook command ends in `|| true`, so calls pass when acus is missing or when `hook` is listed under `[commands] disabled`.

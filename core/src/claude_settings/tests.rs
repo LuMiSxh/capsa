@@ -7,9 +7,16 @@ use serde_json::{Value, json};
 use crate::hint::Hint;
 
 use super::{
-    Removal, Step, command_line, env_value, has_hook, read, remove_env, remove_hook, runs, set_env,
-    set_hook, write,
+    Removal, Step, command_line, env_value, event_entries, is_owned, items, matcher_of, read,
+    remove_env, remove_hook, runs, set_env, set_hook, write,
 };
+
+fn has_hook<'a>(v: &'a Value, event: &str, owns: impl Fn(&str) -> bool) -> Option<&'a str> {
+    event_entries(v, event)
+        .iter()
+        .find(|g| items(g).any(|i| is_owned(i, &owns)))
+        .map(|g| matcher_of(g).unwrap_or(""))
+}
 
 const COMMAND: &str = "demo-hook run";
 

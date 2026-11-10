@@ -5,8 +5,9 @@
 use crate::cmd_self::SKILL;
 use crate::out::Out;
 use anyhow::{Context, Result};
-use capsa_core::claude_settings::{self, has_hook};
+use capsa_core::claude_settings::runs;
 use capsa_core::exit::Outcome;
+use capsa_core::hooks::{Agent, HookFile};
 use capsa_core::log;
 use capsa_core::render::{Check, Doctor, Group, Status, emit};
 use capsa_core::skill::{self, SkillState, Target};
@@ -16,14 +17,11 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::path::Path;
 
-/// The binary's name, as the commands in settings.json name it.
-const TOOL: &str = "census";
-/// The events that get census's hook, in the order they are reported.
-const EVENTS: [&str; 2] = ["UserPromptSubmit", "PostToolUse"];
+use crate::setup::{HOOKS, TOOL};
 
 pub fn run(out: &Out) -> Result<Outcome> {
     let home = std::env::home_dir().context("no home directory")?;
-    let settings = claude_settings::path();
+    let settings = Agent::ClaudeCode.path();
     let groups = vec![
         install_group(),
         config_group(),
@@ -172,7 +170,7 @@ fn skill_check(home: &Path, claude_home: &Path) -> Check {
 }
 
 fn hooks_group(settings: &Path) -> Group {
-    let read = match claude_settings::read(settings) {
+    let file = match HookFile::open_at(Agent::ClaudeCode, settings) {
         Ok(read) => read,
         Err(e) => {
             return Group {
@@ -186,13 +184,13 @@ fn hooks_group(settings: &Path) -> Group {
             };
         }
     };
-    let command = read
-        .value
+    let command = file
+        .value()
         .get("statusLine")
         .and_then(|line| line.get("command"))
         .and_then(Value::as_str);
     let mut checks = vec![match command {
-        Some(c) if claude_settings::runs(c, TOOL, "statusline") => {
+        Some(c) if runs(c, TOOL, "statusline") => {
             check("statusLine", Status::Ok, "census statusline", None)
         }
         _ => check(
@@ -202,18 +200,11 @@ fn hooks_group(settings: &Path) -> Group {
             Some("run census self setup"),
         ),
     }];
-    for event in EVENTS {
-        let owned = |c: &str| claude_settings::runs(c, TOOL, "hook");
-        checks.push(match has_hook(&read.value, event, owned) {
-            Some(_) => check(format!("{event} hook"), Status::Ok, "registered", None),
-            None => check(
-                format!("{event} hook"),
-                Status::Warn,
-                "not registered",
-                Some("run census self setup"),
-            ),
-        });
-    }
+    checks.extend(
+        HOOKS
+            .iter()
+            .map(|spec| file.state(spec).check(spec, "census self setup")),
+    );
     Group {
         name: "hooks",
         checks,

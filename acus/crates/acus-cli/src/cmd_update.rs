@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! `acus self update`: replaces this binary with the latest release, then reinstalls the skill.
+//! `acus self update`: replaces this binary with the latest release, then reinstalls the skill and
+//! adds the hooks that release registers.
 
 use anyhow::Result;
 use capsa_core::exit::Outcome;
@@ -24,8 +25,27 @@ pub fn run(_: Args, _format: Format) -> Result<Outcome> {
 #[cfg(feature = "cmd-update")]
 pub fn run(a: Args, format: Format) -> Result<Outcome> {
     capsa_core::update::run(&crate::TOOL, a, format, |report| {
-        reinstall_skill(report, format)
+        let skill = reinstall_skill(report, format);
+        add_missing_hooks(report, format);
+        skill
     })
+}
+
+/// Adds the hooks that the new release registers and the old settings lack. The new binary runs
+/// this, because only it knows its hooks. It prints nothing when no hook is missing.
+///
+/// A failure leaves the update successful: the binary is already replaced, and the child's own
+/// `error:` and `hint:` lines reach stderr.
+#[cfg(feature = "cmd-update")]
+fn add_missing_hooks(report: &capsa_core::update::Report, format: Format) {
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new(&report.exe);
+    child.args(["self", "setup", "--add-missing"]);
+    if format == Format::Json {
+        child.stdout(Stdio::null());
+    }
+    let _status = child.status();
 }
 
 /// Reinstalls the skill in the agent directories that already hold it. The binary on disk carries

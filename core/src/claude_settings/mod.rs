@@ -105,21 +105,12 @@ pub fn read(path: &Path) -> Result<Settings, SettingsError> {
     })
 }
 
-/// Returns the matcher of the first hook entry of `event` that `owns` claims, or `None` when
-/// there is none. An entry without a matcher gives `Some("")`.
-pub fn has_hook<'a>(v: &'a Value, event: &str, owns: impl Fn(&str) -> bool) -> Option<&'a str> {
-    event_entries(v, event)
-        .iter()
-        .find(|g| items(g).any(|i| is_owned(i, &owns)))
-        .map(|g| matcher_of(g).unwrap_or(""))
-}
-
 /// Makes `event` run `command` under `matcher`, replacing any entry that `owns` claims.
 ///
 /// An entry already identical is left alone and gives `Step::Set`. Other hooks in the event,
 /// and entries that hold them, stay in place. `v` should come from `read`, which refuses
 /// `hooks` of the wrong shape; other shapes are replaced.
-pub fn set_hook(
+pub(crate) fn set_hook(
     v: &mut Value,
     event: &str,
     matcher: Option<&str>,
@@ -149,7 +140,7 @@ pub fn set_hook(
 
 /// Removes the entries of `event` that `owns` claims, with the groups and the event that they
 /// leave empty. Other hooks stay in place. Returns whether an entry was removed.
-pub fn remove_hook(v: &mut Value, event: &str, owns: impl Fn(&str) -> bool) -> bool {
+pub(crate) fn remove_hook(v: &mut Value, event: &str, owns: impl Fn(&str) -> bool) -> bool {
     if !event_entries(v, event)
         .iter()
         .any(|g| items(g).any(|i| is_owned(i, &owns)))
@@ -235,8 +226,8 @@ pub fn command_line(exe: &Path, sub: &str) -> String {
     }
 }
 
-/// Whether `command` runs `binary` with `sub`, in the plain, quoted or `.exe` form. Useful as the
-/// `owns` predicate of `set_hook` and `has_hook`.
+/// Whether `command` runs `binary` with `sub`, in the plain, quoted or `.exe` form. Useful in the
+/// `owns` claims of a `HookSpec`.
 pub fn runs(command: &str, binary: &str, sub: &str) -> bool {
     let plain = command
         .replace(['"', '\''], "")
@@ -281,14 +272,14 @@ fn check_hooks(value: &Value, path: &Path) -> Result<(), SettingsError> {
     }
 }
 
-fn event_entries<'a>(v: &'a Value, event: &str) -> &'a [Value] {
+pub(crate) fn event_entries<'a>(v: &'a Value, event: &str) -> &'a [Value] {
     v.get("hooks")
         .and_then(|h| h.get(event))
         .and_then(Value::as_array)
         .map_or(&[][..], Vec::as_slice)
 }
 
-fn event_entries_mut<'a>(v: &'a mut Value, event: &str) -> &'a mut Vec<Value> {
+pub(crate) fn event_entries_mut<'a>(v: &'a mut Value, event: &str) -> &'a mut Vec<Value> {
     let hooks = object_mut(v).entry("hooks").or_insert_with(|| json!({}));
     let entries = object_mut(hooks).entry(event).or_insert_with(|| json!([]));
     if !entries.is_array() {
@@ -310,7 +301,7 @@ fn object_mut(v: &mut Value) -> &mut Map<String, Value> {
     }
 }
 
-fn items(group: &Value) -> impl Iterator<Item = &Value> + '_ {
+pub(crate) fn items(group: &Value) -> impl Iterator<Item = &Value> + '_ {
     group
         .get("hooks")
         .and_then(Value::as_array)
@@ -318,7 +309,7 @@ fn items(group: &Value) -> impl Iterator<Item = &Value> + '_ {
         .flatten()
 }
 
-fn matcher_of(group: &Value) -> Option<&str> {
+pub(crate) fn matcher_of(group: &Value) -> Option<&str> {
     group.get("matcher").and_then(Value::as_str)
 }
 
@@ -346,7 +337,7 @@ fn is_identical(
             .any(|g| matcher_of(g) == matcher && items(g).any(|i| i == hook))
 }
 
-fn group(matcher: Option<&str>, hook: &Value) -> Value {
+pub(crate) fn group(matcher: Option<&str>, hook: &Value) -> Value {
     let mut group = Map::new();
     if let Some(matcher) = matcher {
         group.insert("matcher".to_owned(), json!(matcher));

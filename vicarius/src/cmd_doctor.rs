@@ -13,6 +13,7 @@ use capsa_core::claude_settings::{self, Settings, SettingsError};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::Hint;
+use capsa_core::hooks::{Agent, HookFile};
 use capsa_core::render::{Check, Doctor, Group, Status, emit};
 use capsa_core::which;
 use serde_json::Value;
@@ -274,7 +275,7 @@ fn settings_group(
                 .iter()
                 .map(|(key, value)| env_check(key, &settings.value, value))
                 .collect();
-            checks.push(hook_check(&settings.value));
+            checks.push(hook_check(&settings.path));
             checks
         }
     };
@@ -302,30 +303,12 @@ fn env_check(key: &'static str, settings: &Value, expected: &str) -> Check {
     }
 }
 
-fn hook_check(settings: &Value) -> Check {
-    let outdated = claude_settings::has_hook(settings, "SessionStart", |command| {
-        claude_settings::runs(command, TOOL, service::LEGACY_HOOK_ARGS)
-    });
-    if outdated.is_some() {
-        return check(
-            "SessionStart hook",
-            Status::Warn,
-            "outdated `vicarius hook session-start`",
-            Some("run `vicarius self setup`"),
-        );
-    }
-    let installed = claude_settings::has_hook(settings, "SessionStart", |command| {
-        claude_settings::runs(command, TOOL, service::HOOK_ARGS)
-    });
-    if installed.is_some() {
-        check("SessionStart hook", Status::Ok, "installed", None)
-    } else {
-        check(
-            "SessionStart hook",
-            Status::Warn,
-            "not installed",
-            Some("run `vicarius self setup`"),
-        )
+fn hook_check(settings: &Path) -> Check {
+    match HookFile::open_at(Agent::ClaudeCode, settings) {
+        Ok(file) => file
+            .state(&service::SESSION_HOOK)
+            .check(&service::SESSION_HOOK, "vicarius self setup"),
+        Err(e) => check("SessionStart hook", Status::Fail, e.to_string(), None),
     }
 }
 

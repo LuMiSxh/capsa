@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, ensure};
-use capsa_core::claude_settings::{self, Removal, Step};
+use capsa_core::claude_settings::{self, Removal, Step, runs};
 use capsa_core::hint::{Hinted, ResultExt};
+use capsa_core::hooks::{Agent, HookFile, HookSpec};
 use vicarius::config::Config;
 
 pub use plist::program_path;
@@ -29,10 +30,16 @@ pub const BASE_URL: &str = "ANTHROPIC_BASE_URL";
 pub const MAX_CONTEXT: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 /// The binary name that the settings hook runs, bare, as census does.
 pub const TOOL: &str = "vicarius";
-/// The arguments of the hook command.
-pub const HOOK_ARGS: &str = "hook";
-/// The arguments of the hook command that `vicarius hook` replaced; `self setup` rewrites it.
-pub const LEGACY_HOOK_ARGS: &str = "hook session-start";
+
+/// The SessionStart hook. The older `vicarius hook session-start` command is legacy, and
+/// `self setup` rewrites it.
+pub const SESSION_HOOK: HookSpec = HookSpec {
+    event: "SessionStart",
+    matcher: None,
+    command: "vicarius hook",
+    owns: owns_hook,
+    legacy: Some(owns_legacy_hook),
+};
 
 /// The files and the launchd domain of the agent.
 #[derive(Debug, Clone)]
@@ -303,12 +310,10 @@ pub fn replace_env_value(settings: &Path, key: &str, old: &str, new: &str) -> Re
 /// # Errors
 /// Fails when the settings file cannot be read or written.
 pub fn set_session_hook(settings: &Path, dry_run: bool) -> Result<Step> {
-    let mut file = claude_settings::read(settings).hinted()?;
-    let command = claude_settings::command_line(Path::new(TOOL), HOOK_ARGS);
-    let step =
-        claude_settings::set_hook(&mut file.value, "SessionStart", None, &command, hook_owns);
+    let mut file = HookFile::open_at(Agent::ClaudeCode, settings).hinted()?;
+    let step = file.set(&SESSION_HOOK);
     if !dry_run && step.writes() {
-        claude_settings::write(&file).hinted()?;
+        file.write().hinted()?;
     }
     Ok(step)
 }
@@ -318,16 +323,19 @@ pub fn set_session_hook(settings: &Path, dry_run: bool) -> Result<Step> {
 /// # Errors
 /// Fails when the settings file cannot be read or written.
 pub fn remove_session_hook(settings: &Path) -> Result<bool> {
-    let mut file = claude_settings::read(settings).hinted()?;
-    let removed = claude_settings::remove_hook(&mut file.value, "SessionStart", hook_owns);
+    let mut file = HookFile::open_at(Agent::ClaudeCode, settings).hinted()?;
+    let removed = file.remove(&SESSION_HOOK);
     if removed {
-        claude_settings::write(&file).hinted()?;
+        file.write().hinted()?;
     }
     Ok(removed)
 }
 
-// `runs` matches the `vicarius hook` prefix, so this claims and rewrites an old
-// `vicarius hook session-start` entry too.
-fn hook_owns(command: &str) -> bool {
-    claude_settings::runs(command, TOOL, HOOK_ARGS)
+// `runs` matches the `vicarius hook` prefix, so this claims the legacy command too.
+fn owns_hook(command: &str) -> bool {
+    runs(command, TOOL, "hook")
+}
+
+fn owns_legacy_hook(command: &str) -> bool {
+    runs(command, TOOL, "hook session-start")
 }

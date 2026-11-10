@@ -3,13 +3,13 @@
 //! check fails; warnings do not change the exit code.
 
 use crate::cmd_hook;
-use crate::cmd_setup::{owns_hook, owns_old_guard, owns_old_skill};
+use crate::cmd_setup::HOOKS;
 use crate::cmd_skill::SKILL_DEF;
 use crate::config::{self, Config};
 use anyhow::{Context, Result};
-use capsa_core::claude_settings::{self, has_hook};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::hooks::{Agent, HookFile, HookSpec, HookState};
 use capsa_core::render::{Check, Doctor, Group, Status, emit};
 use capsa_core::skill::{self, SkillState, Target};
 use serde_json::Value;
@@ -26,7 +26,7 @@ const LOG_ROTATE_BYTES: u64 = 4 * 1024 * 1024;
 pub fn run(format: Format) -> Result<Outcome> {
     let home = std::env::home_dir().context("no home directory")?;
     let (cfg, problem) = config::load_or_default();
-    let settings = claude_settings::path();
+    let settings = Agent::ClaudeCode.path();
     let groups = vec![
         install_group(),
         config_group(&cfg, problem.as_deref()),
@@ -197,8 +197,8 @@ fn skill_group(home: &Path, settings: &Path) -> Group {
 }
 
 fn hooks_group(settings: &Path) -> Group {
-    let read = match claude_settings::read(settings) {
-        Ok(read) => read,
+    let file = match HookFile::open_at(Agent::ClaudeCode, settings) {
+        Ok(file) => file,
         Err(e) => {
             return Group {
                 name: "hooks",
@@ -211,74 +211,41 @@ fn hooks_group(settings: &Path) -> Group {
             };
         }
     };
-    let session = if has_hook(&read.value, "SessionStart", owns_old_skill).is_some() {
-        outdated("SessionStart hook")
-    } else {
-        match has_hook(&read.value, "SessionStart", owns_hook) {
-            Some(matcher) => check(
-                "SessionStart hook",
-                Status::Ok,
-                format!("matcher {matcher:?}"),
-                None,
-            ),
-            None => check(
-                "SessionStart hook",
-                Status::Warn,
-                "not registered",
-                Some("run acus self setup"),
-            ),
-        }
-    };
-    let guard = if has_hook(&read.value, "PreToolUse", owns_old_guard).is_some() {
-        outdated("PreToolUse hook")
-    } else {
-        match has_hook(&read.value, "PreToolUse", owns_hook) {
-            Some(matcher) => {
-                let missing: Vec<&str> = GUARDED
-                    .into_iter()
-                    .filter(|tool| !covers(matcher, tool))
-                    .collect();
-                if missing.is_empty() {
-                    check(
-                        "PreToolUse hook",
-                        Status::Ok,
-                        format!("matcher {matcher:?}"),
-                        None,
-                    )
-                } else {
-                    check(
-                        "PreToolUse hook",
-                        Status::Warn,
-                        format!("matcher {matcher:?} does not cover {}", missing.join(", ")),
-                        Some("run acus self setup"),
-                    )
-                }
-            }
-            None => check(
-                "PreToolUse hook",
-                Status::Warn,
-                "not registered",
-                Some("run acus self setup"),
-            ),
-        }
-    };
     Group {
         name: "hooks",
-        checks: vec![session, guard],
+        checks: HOOKS
+            .iter()
+            .map(|spec| hook_check(spec, &file.state(spec)))
+            .collect(),
     }
 }
 
-/// Whether a `|`-separated matcher reaches `tool`. An empty matcher or `*` reaches every tool.
-/// The check for a hook entry from an older acus that setup replaces.
-fn outdated(name: &'static str) -> Check {
-    check(
-        name,
-        Status::Warn,
-        "outdated entry; acus hook replaces it",
-        Some("run acus self setup"),
-    )
+/// The check for one hook. A PreToolUse matcher that leaves a guarded tool out warns, because the
+/// guard never sees that tool.
+fn hook_check(spec: &HookSpec, state: &HookState) -> Check {
+    let matcher = match state {
+        HookState::Installed => Some(spec.matcher.unwrap_or("")),
+        HookState::CustomMatcher { matcher } => Some(matcher.as_deref().unwrap_or("")),
+        HookState::Outdated { .. } | HookState::Missing => None,
+    };
+    if let (Some(matcher), "PreToolUse") = (matcher, spec.event) {
+        let missing: Vec<&str> = GUARDED
+            .into_iter()
+            .filter(|tool| !covers(matcher, tool))
+            .collect();
+        if !missing.is_empty() {
+            return check(
+                "PreToolUse hook",
+                Status::Warn,
+                format!("matcher {matcher:?} does not cover {}", missing.join(", ")),
+                Some("run acus self setup"),
+            );
+        }
+    }
+    state.check(spec, "acus self setup")
 }
 
+/// Whether a `|`-separated matcher reaches `tool`. An empty matcher or `*` reaches every tool.
 fn covers(matcher: &str, tool: &str) -> bool {
     matcher.is_empty() || matcher == "*" || matcher.split('|').any(|m| m == tool)
 }

@@ -88,7 +88,7 @@ fn setup_dry_run_then_setup_twice_is_idempotent() {
     let v = json_line(&out);
     assert_eq!(v["dry_run"], true);
     let checks = v["checks"].as_array().unwrap();
-    assert_eq!(checks.len(), 3, "{out}");
+    assert_eq!(checks.len(), 4, "{out}");
     assert!(
         checks[1]["detail"]
             .as_str()
@@ -159,6 +159,7 @@ fn doctor_json_is_healthy_after_setup_and_fails_on_a_broken_config() {
     assert_eq!(status("claude skill").unwrap(), "ok");
     assert_eq!(status("SessionStart hook").unwrap(), "ok");
     assert_eq!(status("PreToolUse hook").unwrap(), "ok");
+    assert_eq!(status("SubagentStart hook").unwrap(), "ok");
 
     let bad = dir.path().join("acus.toml");
     std::fs::write(&bad, "[commands\ndisabled = 1\n").unwrap();
@@ -389,7 +390,7 @@ fn setup_replaces_the_old_hook_entries() {
         .flat_map(|group| group["hooks"].as_array().unwrap())
         .filter_map(|hook| hook["command"].as_str())
         .collect();
-    assert_eq!(commands.len(), 2, "{text}");
+    assert_eq!(commands.len(), 3, "{text}");
     assert!(
         commands
             .iter()
@@ -434,4 +435,173 @@ fn doctor_flags_the_old_hook_entries() {
             "{check}"
         );
     }
+}
+
+#[test]
+fn setup_registers_subagent_start_for_every_subagent() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+
+    let (code, _, err) = acus_env(&["self", "setup"], &env);
+    assert_eq!(code, 0, "{err}");
+    let text = std::fs::read_to_string(claude.join("settings.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let groups = v["hooks"]["SubagentStart"].as_array().unwrap();
+    assert_eq!(groups.len(), 1, "{text}");
+    assert!(groups[0].get("matcher").is_none(), "{text}");
+    assert_eq!(
+        groups[0]["hooks"][0]["command"], "acus hook 2>/dev/null || true",
+        "{text}"
+    );
+}
+
+#[test]
+fn setup_keeps_a_subagent_start_entry_with_a_custom_matcher() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    let scoped = r#"{"hooks":{"SubagentStart":[{"matcher":"Explore|reviewer",
+        "hooks":[{"type":"command","command":"acus hook 2>/dev/null || true"}]}]}}"#;
+    std::fs::write(claude.join("settings.json"), scoped).unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+
+    let (code, out, err) = acus_env(&["self", "setup", "--json"], &env);
+    assert_eq!(code, 0, "{err}");
+    let v = json_line(&out);
+    let hook = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "hook SubagentStart")
+        .unwrap();
+    assert!(
+        hook["detail"].as_str().unwrap().starts_with("already set"),
+        "{hook}"
+    );
+    let text = std::fs::read_to_string(claude.join("settings.json")).unwrap();
+    let settings: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let want: serde_json::Value = serde_json::from_str(scoped).unwrap();
+    assert_eq!(
+        settings["hooks"]["SubagentStart"], want["hooks"]["SubagentStart"],
+        "{text}"
+    );
+}
+
+#[test]
+fn setup_run_twice_writes_the_same_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+    assert_eq!(acus_env(&["self", "setup"], &env).0, 0);
+    let first = std::fs::read_to_string(claude.join("settings.json")).unwrap();
+
+    let (code, out, err) = acus_env(&["self", "setup", "--json"], &env);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        std::fs::read_to_string(claude.join("settings.json")).unwrap(),
+        first
+    );
+    let v = json_line(&out);
+    let hooks: Vec<_> = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"].as_str().is_some_and(|n| n.starts_with("hook ")))
+        .collect();
+    assert_eq!(hooks.len(), 3, "{out}");
+    for hook in hooks {
+        assert!(
+            hook["detail"].as_str().unwrap().starts_with("already set"),
+            "{hook}"
+        );
+    }
+}
+
+#[test]
+fn doctor_warns_when_subagent_start_is_not_registered() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(claude.join("settings.json"), "{}").unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+
+    let (code, out, _) = acus_env(&["self", "doctor", "--json"], &env);
+    assert_eq!(code, 0, "a warning is not a failure: {out}");
+    let v = json_line(&out);
+    let subagent = v["groups"][3]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "SubagentStart hook")
+        .unwrap();
+    assert_eq!(subagent["status"], "warn", "{subagent}");
+    assert!(
+        subagent["hint"].as_str().unwrap().contains("self setup"),
+        "{subagent}"
+    );
+}
+
+#[test]
+fn setup_add_missing_adds_only_the_hooks_that_are_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+    assert_eq!(acus_env(&["self", "setup"], &env).0, 0);
+    let path = claude.join("settings.json");
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["hooks"]["PreToolUse"][0]["matcher"] = "Bash".into();
+    v["hooks"].as_object_mut().unwrap().remove("SubagentStart");
+    std::fs::write(&path, v.to_string()).unwrap();
+
+    let (code, out, err) = acus_env(&["self", "setup", "--add-missing", "--json"], &env);
+    assert_eq!(code, 0, "{err}");
+    let report = json_line(&out);
+    let names: Vec<_> = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["hook SubagentStart"], "{out}");
+    let after: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(after["hooks"]["PreToolUse"][0]["matcher"], "Bash");
+    assert_eq!(after["hooks"]["SubagentStart"].as_array().unwrap().len(), 1);
+
+    let (code, out, err) = acus_env(&["self", "setup", "--add-missing"], &env);
+    assert_eq!(
+        (code, out.as_str()),
+        (0, ""),
+        "second run prints nothing: {err}"
+    );
+}
+
+#[test]
+fn setup_add_missing_writes_nothing_before_a_setup() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(claude.join("settings.json"), "{}").unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+
+    let (code, out, err) = acus_env(&["self", "setup", "--add-missing"], &env);
+    assert_eq!((code, out.as_str()), (0, ""), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(claude.join("settings.json")).unwrap(),
+        "{}"
+    );
 }
