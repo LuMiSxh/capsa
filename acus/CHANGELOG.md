@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.22.1]
+
+### Added
+
+- `acus self setup` also registers `acus hook` for `SubagentStart` with no matcher, so every
+  subagent gets the skill without a hand-written entry. An entry already scoped with a matcher,
+  such as `Explore|Plan`, is kept as it is and reported as `already set`; setup never adds a
+  second acus entry. `acus self doctor` reports `SubagentStart hook`, and warns with
+  `run acus self setup` when it is missing. `acus self uninstall` leaves all hooks in place, as
+  it does for the others.
+- `acus self update` runs `acus self setup --add-missing` with the new binary, which adds the
+  hooks of the new release that the settings lack, such as `SubagentStart`. It keeps every acus
+  entry already there, whatever its matcher, replaces the entries of the older `acus skill` and
+  `acus guard` forms, and prints nothing when no hook is missing. It writes nothing unless acus
+  was set up for Claude Code.
+
+### Changed
+
+- `acus self doctor` reports each hook on its own state: `outdated: <command>` for an acus entry
+  that runs another command, `not registered` when it is missing, each with
+  `run acus self setup`. The PreToolUse matcher check stays.
+
 ## [0.22.0]
 
 ### Added
