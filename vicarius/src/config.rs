@@ -14,6 +14,15 @@ const FILE: &str = "config.json";
 /// The smallest context window, in tokens, that the settings accept.
 const MIN_CONTEXT_TOKENS: u64 = 1000;
 
+/// The DeepSeek model ids vicarius knows. An id outside the list is saved with a warning rather
+/// than refused, because DeepSeek adds models without a vicarius release.
+pub const KNOWN_MODELS: &[&str] = &["deepseek-flash", "deepseek-v4-pro"];
+
+/// Returns whether `model` is one of `KNOWN_MODELS`.
+pub fn known_model(model: &str) -> bool {
+    KNOWN_MODELS.contains(&model)
+}
+
 /// The settings in `config.json`. Missing keys keep their default.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -67,6 +76,9 @@ pub struct Agent {
     /// The effort override, or `keep` to preserve the source agent's setting.
     #[serde(default)]
     pub effort: Effort,
+    /// Whether the derived file is withdrawn while the entry stays configured.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suspended: bool,
 }
 
 /// Lists what can go wrong with the config file or a change to it.
@@ -147,6 +159,7 @@ impl Default for Config {
                 from: "senior-worker".to_owned(),
                 model: "deepseek-flash".to_owned(),
                 effort: Effort::Keep,
+                suspended: false,
             }],
         }
     }
@@ -237,6 +250,28 @@ impl Config {
         Ok(())
     }
 
+    /// Suspends or activates the agent named `from`, keeping the rest of its entry.
+    ///
+    /// # Errors
+    /// Fails when no agent of that name is configured.
+    pub fn set_suspended(&mut self, from: &str, suspended: bool) -> Result<(), ConfigError> {
+        let Some(agent) = self.agents.iter_mut().find(|a| a.from == from) else {
+            return Err(ConfigError::NoSuchAgent {
+                from: from.to_owned(),
+                known: self.agents.iter().map(|a| a.from.clone()).collect(),
+            });
+        };
+        agent.suspended = suspended;
+        Ok(())
+    }
+
+    /// Suspends or activates every configured agent.
+    pub fn set_all_suspended(&mut self, suspended: bool) {
+        for agent in &mut self.agents {
+            agent.suspended = suspended;
+        }
+    }
+
     /// Writes the config to `path`, creating its directory. The text goes to a temporary file in
     /// the same directory first and is renamed over the file, so a reader sees the old config or
     /// the new one, never a part of either.
@@ -304,6 +339,7 @@ mod tests {
             from: from.to_owned(),
             model: model.to_owned(),
             effort: Effort::Keep,
+            suspended: false,
         }
     }
 
@@ -343,6 +379,28 @@ mod tests {
         let config =
             Config::parse(r#"{"agents":[{"from":"worker","model":"deepseek-flash"}]}"#).unwrap();
         assert_eq!(config.agents[0].effort, Effort::Keep);
+    }
+
+    #[test]
+    fn an_agent_config_without_suspended_is_active() {
+        let config =
+            Config::parse(r#"{"agents":[{"from":"worker","model":"deepseek-flash"}]}"#).unwrap();
+        assert!(!config.agents[0].suspended);
+    }
+
+    #[test]
+    fn a_suspended_agent_round_trips_and_an_active_one_leaves_the_key_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let mut c = Config::default();
+        c.save_to(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("suspended"), "{text}");
+        c.agents[0].suspended = true;
+        c.save_to(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"suspended\": true"), "{text}");
+        assert_eq!(Config::load_from(&path).unwrap(), c);
     }
 
     #[test]
@@ -462,6 +520,36 @@ mod tests {
         let mut c = Config::default();
         let err = c.remove_agent("nobody").unwrap_err();
         assert!(matches!(err, ConfigError::NoSuchAgent { .. }));
+        assert_eq!(
+            err.hint().as_deref(),
+            Some("configured agents: senior-worker")
+        );
+    }
+
+    #[test]
+    fn suspending_keeps_the_entry_and_activating_restores_it() {
+        let mut c = Config::default();
+        c.set_suspended("senior-worker", true).unwrap();
+        assert!(c.agents[0].suspended);
+        assert_eq!(c.agents[0].model, "deepseek-flash");
+        c.set_suspended("senior-worker", false).unwrap();
+        assert!(!c.agents[0].suspended);
+    }
+
+    #[test]
+    fn suspending_all_marks_every_agent() {
+        let mut c = Config::default();
+        c.add_agent(agent("consultant", "deepseek-v4-pro")).unwrap();
+        c.set_all_suspended(true);
+        assert!(c.agents.iter().all(|a| a.suspended));
+        c.set_all_suspended(false);
+        assert!(c.agents.iter().all(|a| !a.suspended));
+    }
+
+    #[test]
+    fn suspending_an_unknown_agent_names_the_configured_ones() {
+        let mut c = Config::default();
+        let err = c.set_suspended("nobody", true).unwrap_err();
         assert_eq!(
             err.hint().as_deref(),
             Some("configured agents: senior-worker")

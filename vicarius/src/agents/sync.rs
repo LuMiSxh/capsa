@@ -55,15 +55,18 @@ pub enum Outcome {
 ///
 /// When `available`, each agent gets a `<from>-ds.md` written from `<from>.md`, and derived files of
 /// agents that are no longer configured are removed. When not, every derived file is removed.
-/// A derived file whose source is missing is removed. Hand-written files are never written or
-/// removed. The directory is created only when a file is
-/// written.
+/// A suspended agent is treated as not configured, so its derived file is removed. A derived file
+/// whose source is missing is removed. Hand-written files are never written or removed. The
+/// directory is created only when a file is written.
 pub fn sync(dir: &Path, agents: &[Agent], available: bool) -> SyncReport {
     let mut report = SyncReport::default();
     if available {
-        report
-            .entries
-            .extend(agents.iter().map(|agent| sync_agent(dir, agent)));
+        report.entries.extend(
+            agents
+                .iter()
+                .filter(|agent| !agent.suspended)
+                .map(|agent| sync_agent(dir, agent)),
+        );
         remove_derived(dir, agents, &mut report);
     } else {
         remove_derived(dir, &[], &mut report);
@@ -143,7 +146,10 @@ fn remove_derived(dir: &Path, agents: &[Agent], report: &mut SyncReport) {
         }
     };
     for (agent, file) in files {
-        if agents.iter().any(|configured| configured.from == agent) {
+        if agents
+            .iter()
+            .any(|configured| !configured.suspended && configured.from == agent)
+        {
             continue;
         }
         let path = dir.join(&file);

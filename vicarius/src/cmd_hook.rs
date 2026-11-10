@@ -79,7 +79,11 @@ fn agents_line(config: &Config, status: &ServiceStatus) -> Option<String> {
         .filter(|entry| matches!(entry.outcome_name(), "written" | "unchanged"))
         .filter_map(|entry| {
             let agent = &entry.agent;
-            let model = &config.agents.iter().find(|a| &a.from == agent)?.model;
+            let model = &config
+                .agents
+                .iter()
+                .find(|a| &a.from == agent && !a.suspended)?
+                .model;
             Some(format!("{agent}-ds ({model}, variant of {agent})"))
         })
         .collect();
@@ -91,7 +95,56 @@ fn agents_line(config: &Config, status: &ServiceStatus) -> Option<String> {
         format!(" (balance {money})")
     });
     Some(format!(
-        "vicarius: DeepSeek agents available{balance}: {}. Prefer them over their Claude source agents for delegated work and report the cost afterwards (vicarius status). Do not pass a model parameter when spawning one.",
+        "vicarius: DeepSeek agents available{balance}: {}. Use a healthy mix with their Claude source agents: a -ds agent for well-scoped tasks with a clear check, the Claude agent for work that needs judgement or after a -ds result needed rework; report the DeepSeek cost afterwards (vicarius status) and do not pass a model parameter when spawning one.",
         entries.join(", ")
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use vicarius::config::{Agent, Config, Effort};
+
+    use super::agents_line;
+    use crate::status_client::{AgentStatus, AgentsStatus, GateStatus, ServiceStatus};
+
+    fn agent(from: &str, suspended: bool) -> Agent {
+        Agent {
+            from: from.to_owned(),
+            model: "deepseek-flash".to_owned(),
+            effort: Effort::Keep,
+            suspended,
+        }
+    }
+
+    fn written(agent: &str) -> AgentStatus {
+        AgentStatus {
+            agent: agent.to_owned(),
+            file: format!("{agent}-ds.md"),
+            outcome: json!("written"),
+        }
+    }
+
+    #[test]
+    fn a_suspended_agent_is_not_advertised_from_a_stale_report() {
+        let config = Config {
+            agents: vec![agent("worker", false), agent("reviewer", true)],
+            ..Config::default()
+        };
+        let status = ServiceStatus {
+            gate: GateStatus {
+                open: true,
+                ..GateStatus::default()
+            },
+            agents: Some(AgentsStatus {
+                entries: vec![written("worker"), written("reviewer")],
+            }),
+            ..ServiceStatus::default()
+        };
+
+        let line = agents_line(&config, &status).unwrap();
+
+        assert!(line.contains("worker-ds (deepseek-flash, variant of worker)"));
+        assert!(!line.contains("reviewer-ds"));
+    }
 }

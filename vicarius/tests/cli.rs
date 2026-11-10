@@ -25,6 +25,7 @@ fn vicarius(home: &Path, args: &[&str]) -> Output {
         .env("XDG_CONFIG_HOME", home.join("config"))
         .env("APPDATA", home.join("config"))
         .env("VICARIUS_LAUNCHCTL", "/usr/bin/false")
+        .env_remove("CLAUDE_CONFIG_DIR")
         .output()
         .expect("start vicarius")
 }
@@ -294,6 +295,72 @@ fn agent_add_saves_custom_effort_and_defaults_to_keep() {
         );
         assert_eq!(invalid.status.code(), Some(2), "{unsupported}");
     }
+}
+
+#[test]
+fn an_unknown_model_is_saved_with_a_warning() {
+    let home = tempfile::tempdir().expect("scratch home");
+    let out = vicarius(
+        home.path(),
+        &[
+            "self",
+            "config",
+            "agent",
+            "add",
+            "critic",
+            "--model",
+            "deepseek-next",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(stdout.contains("unknown model id"), "{stdout}");
+    assert!(stdout.contains("deepseek-flash"), "{stdout}");
+    assert_eq!(saved(home.path())["agents"][1]["model"], "deepseek-next");
+}
+
+#[test]
+fn agent_suspend_and_activate_change_the_flag_and_refuse_unknown_names() {
+    let home = tempfile::tempdir().expect("scratch home");
+    let suspended = vicarius(
+        home.path(),
+        &["self", "config", "agent", "suspend", "senior-worker"],
+    );
+    assert_eq!(
+        suspended.status.code(),
+        Some(0),
+        "{}",
+        text(&suspended.stderr)
+    );
+    assert_eq!(saved(home.path())["agents"][0]["suspended"], true);
+    assert!(
+        text(&suspended.stdout).contains("suspended"),
+        "{}",
+        text(&suspended.stdout)
+    );
+
+    let unknown = vicarius(
+        home.path(),
+        &["self", "config", "agent", "suspend", "nobody"],
+    );
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(
+        text(&unknown.stderr).contains("senior-worker"),
+        "{}",
+        text(&unknown.stderr)
+    );
+
+    let activated = vicarius(
+        home.path(),
+        &["self", "config", "agent", "activate", "--all"],
+    );
+    assert_eq!(
+        activated.status.code(),
+        Some(0),
+        "{}",
+        text(&activated.stderr)
+    );
+    assert!(saved(home.path())["agents"][0].get("suspended").is_none());
 }
 
 #[test]

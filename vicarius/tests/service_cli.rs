@@ -18,7 +18,7 @@ const SENIOR: &str = r#"[{"from":"senior-worker","model":"deepseek-flash"}]"#;
 
 const OPEN: &str = r#"{"started_at":1,"gate":{"open":true,"reason":null,"reason_text":null,"balance":18.4,"currency":"USD","checked_at":1793723161},"counters":{"anthropic":{"requests":3,"refused":0,"input_tokens":10,"cache_creation_tokens":1,"cache_read_tokens":2,"output_tokens":4},"deepseek":{"requests":2,"refused":1,"input_tokens":100,"cache_creation_tokens":0,"cache_read_tokens":50,"output_tokens":20}},"agents":{"entries":[{"agent":"senior-worker","file":"senior-worker-ds.md","outcome":"written"}]},"refresh":{"last_ok_at":1793723161,"last_error":null,"next_at":1793723761}}"#;
 
-const ONE_AGENT_LINE: &str = r#"{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"vicarius: DeepSeek agents available (balance $18.40): senior-worker-ds (deepseek-flash, variant of senior-worker). Prefer them over their Claude source agents for delegated work and report the cost afterwards (vicarius status). Do not pass a model parameter when spawning one."}}"#;
+const ONE_AGENT_LINE: &str = r#"{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"vicarius: DeepSeek agents available (balance $18.40): senior-worker-ds (deepseek-flash, variant of senior-worker). Use a healthy mix with their Claude source agents: a -ds agent for well-scoped tasks with a clear check, the Claude agent for work that needs judgement or after a -ds result needed rework; report the DeepSeek cost afterwards (vicarius status) and do not pass a model parameter when spawning one."}}"#;
 
 const SESSION_START: &str = r#"{"hook_event_name":"SessionStart","session_id":"s1"}"#;
 

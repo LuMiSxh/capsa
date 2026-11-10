@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! `vicarius serve`: runs the proxy, the balance refresh and the agent sync in the foreground
-//! until SIGTERM or SIGINT, then withdraws the derived agents.
+//! `vicarius serve`: runs the proxy in the foreground until SIGTERM or SIGINT. The refresher task
+//! owns the balance refresh, the gate and the derived agent files; shutdown withdraws the agents.
 
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;

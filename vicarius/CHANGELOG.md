@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.2.0]
+
+### Added
+
+- `vicarius self config agent suspend <from>`/`--all` and `agent activate` keep or withdraw a
+  derived agent without dropping its model or effort; `self config` marks it `suspended`.
+- `self config agent add` warns when the model id is outside the ids vicarius knows
+  (`deepseek-flash`, `deepseek-v4-pro`) and saves it anyway, so a new upstream model keeps working.
+
+### Changed
+
+- The SessionStart hook tells the main agent to use a healthy mix of the DeepSeek agents and their
+  Claude source agents, and to report the DeepSeek cost afterwards.
+
+### Fixed
+
+- `self config agent add`, `remove`, `suspend` and `activate` sync the derived files at once instead
+  of waiting for the service's next 60 s tick; when the service is not running, the output says the
+  files are written when it starts.
+
 ## [0.1.0]
 
 ### Added

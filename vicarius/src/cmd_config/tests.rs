@@ -3,16 +3,24 @@
 use std::path::Path;
 use std::time::Duration;
 
+use clap::Parser;
 use serde_json::{Value, json};
-use vicarius::config::Config;
+use vicarius::agents::{Entry, Outcome};
+use vicarius::config::{Config, KNOWN_MODELS, known_model};
 
-use super::{Key, apply_steps};
+use super::{Action, AgentAction, AgentArgs, Key, TargetArgs, apply_steps, sync_agents, sync_step};
 use crate::cmd_service::Item;
 use crate::service::{Install, base_url};
 use crate::test_support::{FakeLaunchctl, free_port, install_in, serve};
 
 const STATUS: &str = r#"{"started_at":1,"gate":{"open":true}}"#;
 const WAIT: Duration = Duration::from_secs(2);
+
+#[derive(Parser)]
+struct TestCli {
+    #[command(subcommand)]
+    action: Action,
+}
 
 fn read_json(path: &Path) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
@@ -28,6 +36,73 @@ fn status_of(items: &[Item], name: &str) -> String {
         .find(|item| item.name == name)
         .map(|item| item.status.clone())
         .unwrap_or_default()
+}
+
+#[test]
+fn suspend_and_activate_take_a_name_or_all_but_not_both() {
+    let parsed = TestCli::try_parse_from(["vicarius", "agent", "suspend", "reviewer"]).unwrap();
+    assert!(matches!(
+        &parsed.action,
+        Action::Agent(AgentArgs {
+            action: AgentAction::Suspend(TargetArgs {
+                from: Some(from),
+                all: false,
+            }),
+        }) if from.as_str() == "reviewer"
+    ));
+
+    let parsed = TestCli::try_parse_from(["vicarius", "agent", "activate", "--all"]).unwrap();
+    assert!(matches!(
+        &parsed.action,
+        Action::Agent(AgentArgs {
+            action: AgentAction::Activate(TargetArgs {
+                from: None,
+                all: true,
+            }),
+        })
+    ));
+
+    assert!(TestCli::try_parse_from(["vicarius", "agent", "suspend"]).is_err());
+    assert!(
+        TestCli::try_parse_from(["vicarius", "agent", "suspend", "reviewer", "--all"]).is_err()
+    );
+}
+
+#[test]
+fn a_stopped_service_skips_the_sync_and_notes_when_the_files_arrive() {
+    let config = Config {
+        port: free_port(),
+        ..Config::default()
+    };
+    let (steps, note) = sync_agents(&config);
+    assert!(steps.is_empty());
+    assert!(note.unwrap().contains("written when it starts"));
+}
+
+#[test]
+fn a_sync_entry_becomes_a_named_step() {
+    let written = Entry {
+        agent: "reviewer".to_owned(),
+        file: "reviewer-ds.md".to_owned(),
+        outcome: Outcome::Written,
+    };
+    let item = sync_step(&written);
+    assert_eq!(item.name, "reviewer-ds");
+    assert_eq!(item.status, "written");
+
+    let missing = Entry {
+        outcome: Outcome::SourceMissing,
+        ..written
+    };
+    assert_eq!(sync_step(&missing).status, "source missing");
+}
+
+#[test]
+fn the_known_models_cover_the_documented_ids() {
+    assert!(known_model("deepseek-flash"));
+    assert!(known_model("deepseek-v4-pro"));
+    assert!(!known_model("deepseek-next"));
+    assert_eq!(KNOWN_MODELS, &["deepseek-flash", "deepseek-v4-pro"]);
 }
 
 #[test]

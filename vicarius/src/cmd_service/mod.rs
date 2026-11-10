@@ -48,14 +48,14 @@ pub struct SetupArgs {
 /// One step of a command and what it did.
 #[derive(Debug, Serialize)]
 pub(crate) struct Item {
-    pub(crate) name: &'static str,
+    pub(crate) name: String,
     pub(crate) status: String,
 }
 
 impl Item {
-    pub(crate) fn new(name: &'static str, status: impl Into<String>) -> Self {
+    pub(crate) fn new(name: impl Into<String>, status: impl Into<String>) -> Self {
         Self {
-            name,
+            name: name.into(),
             status: status.into(),
         }
     }
@@ -74,7 +74,7 @@ impl Render for Report {
     fn doc(&self, doc: &mut Doc) {
         doc.title(self.title);
         for step in &self.steps {
-            doc.row(step.name).text(step.status.as_str());
+            doc.row(step.name.as_str()).text(step.status.as_str());
         }
         if self.dry_run {
             doc.line("dry run: nothing was written or run");

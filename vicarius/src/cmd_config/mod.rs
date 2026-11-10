@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! `vicarius self config`: shows the settings, and changes one scalar or the derived agents.
+//! `vicarius self config`: shows the settings, and changes one scalar or the derived agents,
+//! syncing them at once.
 
 use anyhow::Result;
 use capsa_core::exit::Outcome;
@@ -9,10 +10,19 @@ use capsa_core::render::{Doc, Render, emit};
 use serde::Serialize;
 use std::str::FromStr;
 use std::time::Duration;
-use vicarius::config::{Agent, Config, ConfigError, Effort};
+use vicarius::agents::{self, Entry, Outcome as SyncOutcome};
+use vicarius::config::{Agent, Config, ConfigError, Effort, KNOWN_MODELS, known_model};
+use vicarius::refresh;
 
 use crate::cmd_service::{self, Item, RESTART_NOTE, WAIT};
 use crate::service::{self, Install, Launchctl, Replacement, System};
+use crate::status_client;
+
+/// The timeout of the status probe that decides whether the gate is open.
+const SYNC_TIMEOUT: Duration = Duration::from_millis(300);
+/// The note when the service does not answer, so the files wait for its next sync.
+const SERVICE_DOWN: &str =
+    "The service is not running; the derived files are written when it starts.";
 
 #[cfg(test)]
 mod tests;
@@ -85,6 +95,20 @@ enum AgentAction {
         /// The source agent of the entry to remove.
         from: String,
     },
+    /// Withdraw the derived agent of `<from>`, or every agent with `--all`, keeping the settings.
+    Suspend(TargetArgs),
+    /// Restore a suspended derived agent of `<from>`, or every agent with `--all`.
+    Activate(TargetArgs),
+}
+
+#[derive(clap::Args)]
+struct TargetArgs {
+    /// The source agent of the entry.
+    #[arg(required_unless_present = "all", conflicts_with = "all")]
+    from: Option<String>,
+    /// Apply to every configured agent.
+    #[arg(long, required_unless_present = "from", conflicts_with = "from")]
+    all: bool,
 }
 
 #[derive(Serialize)]
@@ -115,15 +139,20 @@ impl Render for ConfigOut<'_> {
             doc.row("agents").dim("none");
         }
         for agent in &c.agents {
-            doc.row(format!("agent {}", agent.from)).text(format!(
-                "{}-ds on {} (effort: {})",
+            let mut text = format!(
+                "{}-ds on {} (effort: {}",
                 agent.from,
                 agent.model,
                 agent.effort.as_str()
-            ));
+            );
+            if agent.suspended {
+                text.push_str(", suspended");
+            }
+            text.push(')');
+            doc.row(format!("agent {}", agent.from)).text(text);
         }
         for step in &self.steps {
-            doc.row(step.name).text(step.status.as_str());
+            doc.row(step.name.as_str()).text(step.status.as_str());
         }
         if let Some(note) = self.note {
             doc.line(note);
@@ -136,8 +165,16 @@ pub fn run(a: Args, format: Format) -> Result<Outcome> {
     let path = Config::path();
     let mut config = Config::load_from(&path).hinted()?;
     let mut steps = Vec::new();
+    let mut note = None;
     if let Some(action) = a.action {
         let old = config.clone();
+        let agent_action = matches!(&action, Action::Agent(_));
+        let new_model = match &action {
+            Action::Agent(AgentArgs {
+                action: AgentAction::Add { model, .. },
+            }) => Some(model.clone()),
+            _ => None,
+        };
         let key = match &action {
             Action::Set(set) => Some(set.key),
             Action::Agent(_) => None,
@@ -148,7 +185,21 @@ pub fn run(a: Args, format: Format) -> Result<Outcome> {
                 let install = Install::current()?;
                 steps = apply_steps(&install, &System, key, &old, &config, WAIT)?;
             }
-            None => config.save_to(&path).hinted()?,
+            None => {
+                config.save_to(&path).hinted()?;
+                if agent_action {
+                    (steps, note) = sync_agents(&config);
+                }
+            }
+        }
+        if let Some(model) = new_model.filter(|model| !known_model(model)) {
+            steps.push(Item::new(
+                "model",
+                format!(
+                    "unknown model id `{model}`; known: {}",
+                    KNOWN_MODELS.join(", ")
+                ),
+            ));
         }
     }
     let changed = steps
@@ -158,7 +209,7 @@ pub fn run(a: Args, format: Format) -> Result<Outcome> {
         config: &config,
         path: path.display().to_string(),
         steps,
-        note: changed.then_some(RESTART_NOTE),
+        note: note.or_else(|| changed.then_some(RESTART_NOTE)),
     };
     emit(&body, format)
 }
@@ -181,10 +232,68 @@ fn change(config: &mut Config, action: Action) -> Result<(), ConfigError> {
             from,
             model,
             effort,
+            suspended: false,
         }),
         Action::Agent(AgentArgs {
             action: AgentAction::Remove { from },
         }) => config.remove_agent(&from),
+        Action::Agent(AgentArgs {
+            action: AgentAction::Suspend(target),
+        }) => set_suspended(config, &target, true),
+        Action::Agent(AgentArgs {
+            action: AgentAction::Activate(target),
+        }) => set_suspended(config, &target, false),
+    }
+}
+
+/// Suspends or activates the agent `target` names, or every agent with `--all`.
+fn set_suspended(
+    config: &mut Config,
+    target: &TargetArgs,
+    suspended: bool,
+) -> Result<(), ConfigError> {
+    match &target.from {
+        Some(from) => config.set_suspended(from, suspended),
+        None => {
+            config.set_all_suspended(suspended);
+            Ok(())
+        }
+    }
+}
+
+/// Syncs the derived files now, as the service's tick would. Returns the steps and, when the
+/// service does not answer, the note that says so.
+fn sync_agents(config: &Config) -> (Vec<Item>, Option<&'static str>) {
+    let Some(fetched) = status_client::fetch(config.port, SYNC_TIMEOUT) else {
+        return (Vec::new(), Some(SERVICE_DOWN));
+    };
+    let report = agents::sync(
+        &refresh::claude_agents_dir(),
+        &config.agents,
+        fetched.status.gate.open,
+    );
+    (report.entries.iter().map(sync_step).collect(), None)
+}
+
+/// Turns one sync entry into the step that shows it.
+fn sync_step(entry: &Entry) -> Item {
+    let name = if entry.agent.is_empty() {
+        entry.file.clone()
+    } else {
+        format!("{}-ds", entry.agent)
+    };
+    Item::new(name, outcome_text(&entry.outcome))
+}
+
+fn outcome_text(outcome: &SyncOutcome) -> String {
+    match outcome {
+        SyncOutcome::Written => "written".to_owned(),
+        SyncOutcome::Unchanged => "unchanged".to_owned(),
+        SyncOutcome::Removed => "removed".to_owned(),
+        SyncOutcome::SourceMissing => "source missing".to_owned(),
+        SyncOutcome::Unparsable(e) => format!("unparsable: {e}"),
+        SyncOutcome::Conflict => "conflict: not written".to_owned(),
+        SyncOutcome::Error(e) => format!("error: {e}"),
     }
 }
 

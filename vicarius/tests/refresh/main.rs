@@ -286,6 +286,7 @@ async fn sync_reads_the_config_again_for_added_agents() {
         from: "worker".to_owned(),
         model: "deepseek-flash".to_owned(),
         effort: Effort::Max,
+        suspended: false,
     });
     config.save_to(&rig.config_file).unwrap();
     rig.refresher.sync_agents();

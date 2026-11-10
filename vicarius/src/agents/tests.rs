@@ -267,6 +267,7 @@ fn agent(from: &str) -> Agent {
         from: from.to_owned(),
         model: "deepseek-flash".to_owned(),
         effort: Effort::Keep,
+        suspended: false,
     }
 }
 
@@ -360,6 +361,21 @@ fn derived_files_of_unconfigured_agents_are_removed() {
         file_names(dir.path()),
         ["old.md", "worker-ds.md", "worker.md"]
     );
+}
+
+#[test]
+fn a_suspended_agent_is_withdrawn_and_its_source_stays() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("worker.md"), WORKER).unwrap();
+    let mut agents = [agent("worker")];
+    sync(dir.path(), &agents, true);
+    agents[0].suspended = true;
+    let report = sync(dir.path(), &agents, true);
+    assert_eq!(
+        report.entries,
+        [entry("worker", "worker-ds.md", Outcome::Removed)]
+    );
+    assert_eq!(file_names(dir.path()), ["worker.md"]);
 }
 
 #[test]

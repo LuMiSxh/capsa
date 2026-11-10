@@ -21,7 +21,8 @@ Paths are relative to `vicarius/`. vicarius depends on `capsa-core` only.
   `proxy.jsonl`), `headers.rs` (hop-by-hop and the log allowlist), `local.rs` (`/vicarius/*`).
 - `tests/proxy/`: the proxy against mock upstreams on 127.0.0.1.
 - `src/agents/`: derives `<from>-ds.md` from each configured agent file. `frontmatter.rs` does the
-  line-based edit, `sync.rs` writes, refreshes and removes the files, `tests.rs` tests both.
+  line-based edit, `sync.rs` writes, refreshes and removes the files, treating a suspended agent as
+  not configured, and `tests.rs` tests both.
 - `src/balance.rs`: parses the `/user/balance` answer and decides availability; tested in
   `tests/balance.rs`.
 - `src/refresh.rs`: `Refresher` fetches `/user/balance`, sets the gate, syncs the agent files and
@@ -36,7 +37,7 @@ Paths are relative to `vicarius/`. vicarius depends on `capsa-core` only.
 - `src/cmd_self.rs`: `self update` and `self uninstall` (feature `cmd-update`, on by default) and
   `self config`.
 - `src/cmd_config.rs`: `self config` shows the settings; `set <key> <value>` changes a scalar;
-  `agent add` and `agent remove` edit the derived agents.
+  `agent add`, `remove`, `suspend` and `activate` edit the derived agents and sync them at once.
 - `src/config.rs`: `config.json` in the vicarius config directory, its defaults, its rules and the
   atomic save.
 - `tests/cli.rs`: the binary, run with its config directory under a scratch home.
@@ -75,7 +76,9 @@ Shared rules: see the root CLAUDE.md.
 
 - macOS takes the config directory from `$HOME/Library/Application Support`, not from
   `XDG_CONFIG_HOME`; the tests set both.
-- `agent add` does not read `~/.claude/agents/<from>.md`; it checks the name and the model only.
+- `agent add` does not read `~/.claude/agents/<from>.md`; it checks the name and the model only,
+  then syncs and reports a missing source. A model outside `deepseek-flash` and `deepseek-v4-pro`
+  is saved with a warning, so a new upstream id keeps working.
 - `set port` saves `config.json` before the restart, because the agent reads it at boot; a port
   that does not answer rolls the config, the agent and the settings back to the old port. Every
   other setting is re-read on each sync.
