@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! `acus hook`: reads one hook event from stdin. `SessionStart` prints the core skill;
-//! `PreToolUse`, and a Codex payload without an event, runs the guard; another event does nothing.
+//! `acus hook`: reads one hook event from stdin. `SessionStart` and `SubagentStart` print the
+//! core skill; `PreToolUse`, and a Codex payload without an event, runs the guard; another event
+//! does nothing.
 
 use crate::config::Config;
 use acus_guard::{BashDecision, GuardConfig, Scope, Verdict};
@@ -44,6 +45,7 @@ pub fn run(a: Args, cfg: &Config, config_problem: Option<&str>) -> Result<Outcom
     let v: Value = serde_json::from_str(&text).unwrap_or_default();
     match v["hook_event_name"].as_str() {
         Some("SessionStart") => session_start(&v, cfg),
+        Some("SubagentStart") => subagent_start(),
         Some("PreToolUse") | None => answer(&v, cfg, config_problem),
         Some(_) => Ok(Outcome::Found),
     }
@@ -59,6 +61,16 @@ fn session_start(v: &Value, cfg: &Config) -> Result<Outcome> {
         );
     }
     outprint!("{}", crate::cmd_skill::CORE);
+    Ok(Outcome::Found)
+}
+
+/// Prints the core skill as context for a SubagentStart, which does not see SessionStart output.
+fn subagent_start() -> Result<Outcome> {
+    let hook = serde_json::json!({
+        "hookEventName": "SubagentStart",
+        "additionalContext": crate::cmd_skill::CORE,
+    });
+    println!("{}", serde_json::json!({ "hookSpecificOutput": hook }));
     Ok(Outcome::Found)
 }
 

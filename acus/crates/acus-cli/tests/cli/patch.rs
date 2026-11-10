@@ -263,6 +263,114 @@ fn patch_notes_a_search_matched_ignoring_indentation() {
 }
 
 #[test]
+fn patch_fuzzy_matches_whitespace_and_reports_the_range() {
+    let d = tempfile::tempdir().unwrap();
+    let file = d.path().join("src/a.rs");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "fn f() {\n\tlet  x = 1;\n}\n").unwrap();
+    let p = "*** Update File: src/a.rs\n<<<<<<< SEARCH\nfn f() {\n\n    let x = 1;\n}\n=======\nfn f() {\n    let x = 2;\n}\n>>>>>>> REPLACE\n";
+    let (code, _, err) = acus_in(d.path(), &["patch", "-q"], p);
+    assert_eq!(code, 2, "the fuzzy pass needs the flag");
+    assert!(err.contains("SEARCH not found"), "{err}");
+    let (code, out, err) = acus_in(d.path(), &["patch", "-q", "--fuzzy"], p);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    let _dropguard = snapshot_settings().bind_to_scope();
+    insta::assert_snapshot!("cli__patch_notes_fuzzy", out);
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fn f() {\n    let x = 2;\n}\n"
+    );
+}
+
+#[test]
+fn patch_config_fuzzy_applies_until_no_fuzzy_is_given() {
+    let d = tempfile::tempdir().unwrap();
+    let cfg = d.path().join("acus.toml");
+    std::fs::write(&cfg, "[patch]\nfuzzy = true\n").unwrap();
+    let env = [("ACUS_CONFIG", cfg.to_str().unwrap())];
+    let file = d.path().join("src/a.rs");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let before = "fn f() {\n\tlet  x = 1;\n}\n";
+    std::fs::write(&file, before).unwrap();
+    let p = "*** Update File: src/a.rs\n<<<<<<< SEARCH\nfn f() {\n\n    let x = 1;\n}\n=======\nfn f() {\n    let x = 2;\n}\n>>>>>>> REPLACE\n";
+    let (code, out, err) = acus_in_env(d.path(), &["patch", "-q"], p, &env);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    assert_eq!(
+        out,
+        "M src/a.rs +1 -1\nnote: matched fuzzily (whitespace): src/a.rs block 1 at 1-3\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fn f() {\n    let x = 2;\n}\n"
+    );
+    std::fs::write(&file, before).unwrap();
+    let (code, out, err) = acus_in_env(d.path(), &["patch", "-q", "--no-fuzzy"], p, &env);
+    assert_eq!(code, 2, "{out}");
+    assert!(err.contains("SEARCH not found"), "{err}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+}
+
+#[test]
+fn patch_fuzzy_check_writes_nothing_and_notes_the_match() {
+    let d = tempfile::tempdir().unwrap();
+    let file = d.path().join("src/a.rs");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let before = "fn f() {\n\tlet  x = 1;\n}\n";
+    std::fs::write(&file, before).unwrap();
+    let p = "*** Update File: src/a.rs\n<<<<<<< SEARCH\nfn f() {\n\n    let x = 1;\n}\n=======\nfn f() {\n    let x = 2;\n}\n>>>>>>> REPLACE\n";
+    let (code, out, err) = acus_in(d.path(), &["patch", "-q", "--fuzzy", "--check"], p);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    assert_eq!(
+        out,
+        "would update src/a.rs +1 -1\n\
+         note: matched fuzzily (whitespace): src/a.rs block 1 at 1-3\n\
+         (check only, nothing written)\n"
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+}
+
+#[test]
+fn patch_fuzzy_diff_shows_the_diff_and_the_note() {
+    let d = tempfile::tempdir().unwrap();
+    let file = d.path().join("src/a.rs");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "fn f() {\n\tlet  x = 1;\n}\n").unwrap();
+    let p = "*** Update File: src/a.rs\n<<<<<<< SEARCH\nfn f() {\n\n    let x = 1;\n}\n=======\nfn f() {\n    let x = 2;\n}\n>>>>>>> REPLACE\n";
+    let (code, out, err) = acus_in(d.path(), &["patch", "--fuzzy", "--diff"], p);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    assert!(out.starts_with("--- a/src/a.rs\n+++ b/src/a.rs\n"), "{out}");
+    assert!(
+        out.contains("note: matched fuzzily (whitespace): src/a.rs block 1 at 1-3"),
+        "{out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fn f() {\n    let x = 2;\n}\n"
+    );
+}
+
+#[test]
+fn patch_fuzzy_json_carries_the_note() {
+    let d = tempfile::tempdir().unwrap();
+    let file = d.path().join("src/a.rs");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "fn f() {\n\tlet  x = 1;\n}\n").unwrap();
+    let p = "*** Update File: src/a.rs\n<<<<<<< SEARCH\nfn f() {\n\n    let x = 1;\n}\n=======\nfn f() {\n    let x = 2;\n}\n>>>>>>> REPLACE\n";
+    let (code, out, err) = acus_in(d.path(), &["patch", "--fuzzy", "--json"], p);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        v["notes"],
+        serde_json::json!(["note: matched fuzzily (whitespace): src/a.rs block 1 at 1-3"])
+    );
+    assert_eq!(v["written"], true);
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fn f() {\n    let x = 2;\n}\n"
+    );
+}
+
+#[test]
 fn patch_reports_every_failing_block_in_one_run() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("a.rs"), "fn a() {}\n").unwrap();

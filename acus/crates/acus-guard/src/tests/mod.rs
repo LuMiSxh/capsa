@@ -13,6 +13,8 @@ mod captured;
 mod conversions;
 mod corpus;
 #[cfg(any(feature = "bash", feature = "zsh"))]
+mod file_write;
+#[cfg(any(feature = "bash", feature = "zsh"))]
 mod folds;
 mod never_panics;
 mod powershell;

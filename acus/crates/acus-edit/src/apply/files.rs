@@ -68,6 +68,8 @@ pub(super) struct Files<'a> {
     pub(super) numbered: Vec<String>,
     pub(super) trailing: Vec<String>,
     pub(super) indented: Vec<String>,
+    pub(super) fuzzy_matches: Vec<String>,
+    pub(super) fuzzy: bool,
     pub(super) skipped: Vec<usize>,
     pub(super) crlf: Vec<String>,
 }

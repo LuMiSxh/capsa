@@ -247,10 +247,20 @@ fn hints_at_edit_scripts() {
         "cd /w && cat > .tmp_e.py <<'EOF'\nfrom pathlib import Path\np = Path(\"a/b.py\")\np.write_text(p.read_text().replace('x', 'y'))\nEOF\npython .tmp_e.py && rm .tmp_e.py",
         "tee fix.rb <<'EOF'\nf = 'a.rb'\nFile.write(f, File.read(f).gsub('a', 'b'))\nEOF",
     ] {
-        assert!(matches!(check(cmd), Some(Verdict::Hint(..))), "{cmd}");
+        assert!(matches!(check(cmd), Some(Verdict::Deny(..))), "{cmd}");
     }
-    // A script file that does not edit sources stays unhinted.
-    assert!(check("cat > run.py <<'EOF'\nprint('hi')\nEOF").is_none());
+    // A literal outside the repository keeps the hint.
+    let scope = Scope::fixed("/repo");
+    let outside = "python3 - <<'EOF'\np='/tmp/a.rs'\ns=open(p).read()\nopen(p,'w').write(s.replace('a','b'))\nEOF";
+    assert!(matches!(
+        check_in(outside, false, Some(&scope)),
+        Some(Verdict::Hint(Rule::EditScript, _))
+    ));
+    // A script file is a source file like any other.
+    assert!(matches!(
+        check("cat > run.py <<'EOF'\nprint('hi')\nEOF"),
+        Some(Verdict::Deny(Rule::FileWrite, _))
+    ));
 }
 
 #[test]

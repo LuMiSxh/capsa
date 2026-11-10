@@ -109,9 +109,16 @@ fn update(
     chunks: &[Chunk],
 ) -> Result<Change> {
     files.lines(path)?;
+    let fuzzy = files.fuzzy;
     let f = files.get(path)?;
-    let (mut numbered, mut trailing, mut indented, mut skipped, mut crlf) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut numbered, mut trailing, mut indented, mut skipped, mut crlf, mut fuzzy_matches) = (
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
     let (mut added, mut removed) = (0, 0);
     let mut failed = Vec::new();
     for (i, c) in chunks.iter().enumerate() {
@@ -122,6 +129,7 @@ fn update(
             c,
             path,
             i + 1,
+            fuzzy,
         );
         let (edit, fix) = match block {
             Ok(found) => found,
@@ -142,6 +150,9 @@ fn update(
             Some(Fix::Numbers) => numbered.push(name),
             Some(Fix::Trailing) => trailing.push(name),
             Some(Fix::Indent) => indented.push(name),
+            Some(Fix::Fuzzy) => {
+                fuzzy_matches.push(format!("{name} at {}-{}", edit.at + 1, edit.at + edit.old));
+            }
             None => {}
         }
         added += edit.added;
@@ -154,6 +165,7 @@ fn update(
     files.numbered.extend(numbered);
     files.trailing.extend(trailing);
     files.indented.extend(indented);
+    files.fuzzy_matches.extend(fuzzy_matches);
     files.skipped.extend(skipped);
     files.crlf.extend(crlf);
     files.get(path)?.dirty = true;

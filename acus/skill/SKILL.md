@@ -5,19 +5,19 @@ description: Code search, read, patch and git-summary CLI for coding agents. Use
 
 # acus
 
-One call replaces search → read → read: output is line-numbered, grouped by symbol, and every truncation names the next command.
+One call replaces search → read: line-numbered, grouped by symbol; every truncation names the next command.
 
 ## Instead of … run
 
 | Instead of | Run |
 |---|---|
-| grep, rg, find | `acus find 'PAT' [PATH…]`; `--block` adds the code |
+| grep, rg, find | `acus find 'PAT' [PATH…]`; `--block` adds code |
 | grep on a range | `acus find 'PAT' PATH:A-B` or `PATH#Sym` |
 | cat, head, tail, sed -n, Read | `acus show PATH#Sym PATH:A-B`; `acus outline PATH` |
 | ls -R, tree | `acus map [DIR…]` |
 | Glob, find -name, ls, fd, git ls-files | `acus files [PATH…] [-g GLOB]`; `--lines` adds counts |
 | sed -i, perl -pi, Edit | `acus patch` (below) |
-| cargo test, npm test | `acus ctx 'CMD'`; failures plus the code they name |
+| cargo test, npm test | `acus ctx 'CMD'`; failures plus their code |
 | git status, git diff | `acus diff [REV]`; `-p` adds the changed lines |
 | git log | `acus log [-n N] [REV] [PATH…]` |
 | git blame | `acus blame PATH#Sym` |
@@ -52,10 +52,12 @@ acus patch <<'PATCH'
 PATCH
 ```
 
-- SEARCH is the exact text without the `acus show` line numbers; it must occur once, so add a line when ambiguous. A miss shows the nearest lines.
-- All or nothing: reports every failing block; fix all and resend once.
+- SEARCH is the exact text without `acus show` line numbers; it must occur once, so add a line when ambiguous. A miss shows nearest lines.
+- All or nothing: reports every failing block; fix all, resend once.
+- Output shows the written lines with new numbers; don't re-read them.
+- One patch holds the whole change set; never write files with `cat >`, `printf >` or Python scripts.
 - `acus patch --check` validates a large patch without writing, and `acus patch --check --diff` shows the result. `acus patch --fmt` formats the written files; add it only where the project requires it.
-- `acus patch -q` prints only the summary.
+- `acus patch -q`: summary only.
 - `*** Append File`, `*** Delete Lines` and `*** Move Lines` (both with `*** Expect:`), `*** Resolve Conflict`, symbol moves and `*** Replace All` are in [patch](reference/patch.md).
 
 ## Addresses
@@ -73,7 +75,7 @@ acus blame src/parser.rs#Parser::parse
 
 ## Batch lookups
 
-Batch lookups in one `acus run`.
+Batch lookups with `acus run`.
 
 ```bash
 acus run <<'EOF'
@@ -94,8 +96,9 @@ EOF
 ## Common mistakes
 
 - A SEARCH block that is not found: read every block the error reports, fix them all and resend once. Use `--check` first on a large patch; an error writes nothing.
+- A SEARCH block that differs from the file only in whitespace (tabs vs spaces, extra spaces or blank lines) misses: add `--fuzzy` after the exact forms fail; it still refuses two matches.
 - A pattern that starts with `-` is read as a flag: use `acus find -e '-x' PATH`.
-- Piping to `head` or `tail` throws work away and the hook rewrites it: use `--head N`, `--tail N` or `-q`.
+- Don't pipe: `--head N` (`find`, `show`, `outline`, `diff`); `acus ctx --tail/--grep/--drop`; the guard rewrites it anyway.
 - `-A` and `-C` print grep-style context; `--block` prints the enclosing symbol, which is usually what you want.
 - `PATH:A:B` is not a range and fails; the range is `PATH:A-B`.
 - Paths are relative to the current directory, not the repository root, unless the output prints them from there.
@@ -104,4 +107,4 @@ EOF
 - Patterns are Rust regex, so `foo(` fails; use `-F` for literal text.
 - Symbols exist for Rust, Swift, TS/JS, Svelte, Python, Shell, C, CSS, SCSS, HTML, XML/plist, Markdown and TOML/JSON/YAML keys; on other files use `find` and `show PATH:A-B`.
 
-More flags: `acus self skill --full`, `--topic <topic>`.
+More: `acus self skill --full`, `--topic <topic>`.

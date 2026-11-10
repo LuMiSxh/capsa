@@ -27,13 +27,6 @@ pub(super) fn script_writer(seg: &str) -> Option<&'static str> {
 /// Matches a script that reads a source file, replaces text in it and writes it back: a hand-made
 /// patch.
 pub(super) fn is_edit_script(s: &str) -> bool {
-    #[expect(
-        clippy::unwrap_used,
-        reason = "a constant pattern built from the code extensions"
-    )]
-    static CODE_PATH: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(&format!(r#"['"][^'"\s]+\.({})['"]"#, CODE.join("|"))).unwrap()
-    });
     ["write(", "write_text(", "writeFileSync(", "writeFile("]
         .iter()
         .any(|w| s.contains(w))
@@ -47,15 +40,40 @@ pub(super) fn is_edit_script(s: &str) -> bool {
         ]
         .iter()
         .any(|r| s.contains(r))
-        && CODE_PATH.is_match(s)
+        && code_paths(s).next().is_some()
 }
 
-/// Edit scripts are only hinted at: telling them apart from data processing is a heuristic.
-pub(super) fn script_hint(interp: &str) -> Verdict {
-    Verdict::Hint(
+/// Yields the quoted literals of `s` that name a file with a code extension.
+fn code_paths(s: &str) -> impl Iterator<Item = &str> {
+    #[expect(
+        clippy::unwrap_used,
+        reason = "a constant pattern built from the code extensions"
+    )]
+    static CODE_PATH: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(&format!(r#"['"][^'"\s]+\.({})['"]"#, CODE.join("|"))).unwrap()
+    });
+    CODE_PATH.find_iter(s).map(|m| m.as_str())
+}
+
+/// Returns the verdict for an edit script `s` run by `interp`, or `None` when `s` is not one. A
+/// script whose every code-file literal is a source file inside the repository is refused; any
+/// other one is only hinted at, because telling it from data processing is a heuristic.
+pub(super) fn script_verdict(interp: &str, s: &str, scope: Option<&Scope>) -> Option<Verdict> {
+    if !is_edit_script(s) {
+        return None;
+    }
+    if code_paths(s).all(|p| is_repo_source(p, scope)) {
+        return Some(Verdict::Deny(
+            Rule::EditScript,
+            format!(
+                "Use acus instead of a {interp} script that edits source files: one `acus patch` with SEARCH/REPLACE blocks or `*** Replace All: PATHS` (literal or REGEX) edits every file at once, all or nothing, and prints the written lines. {ESCAPE}"
+            ),
+        ));
+    }
+    Some(Verdict::Hint(
         Rule::EditScript,
         format!(
             "acus hint: this {interp} script edits source files. Next time use one `acus patch` with SEARCH/REPLACE blocks or `*** Replace All: PATHS` (literal or REGEX): it edits every file at once, all or nothing, and prints the written lines."
         ),
-    )
+    ))
 }

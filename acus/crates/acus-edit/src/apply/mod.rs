@@ -96,6 +96,9 @@ pub struct Applied {
     /// `path block N` of every SEARCH block that matched only ignoring leading indentation; its
     /// REPLACE was written in the file's indentation.
     pub indented: Vec<String>,
+    /// `path block N at A-B` of every SEARCH block that matched only ignoring whitespace
+    /// differences (`--fuzzy`); its REPLACE was written as given.
+    pub fuzzy: Vec<String>,
     /// Patch line of every SEARCH block whose SEARCH equals its REPLACE: checked, left as it is.
     pub skipped: Vec<usize>,
     /// `path block N` of every multi-line SEARCH matched in a CRLF file, whose text is compared
@@ -116,21 +119,54 @@ impl Applied {
     }
 }
 
+/// Options for one apply pass.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ApplyOptions {
+    /// Validate and report; write nothing.
+    pub check: bool,
+    /// Write a file that gains syntax errors.
+    pub allow_broken: bool,
+    /// Accept SEARCH blocks that differ from the file only in whitespace.
+    pub fuzzy: bool,
+}
+
 /// Validates and applies every op in memory, then writes all files atomically.
 /// With `check`, stops before writing. Relative paths resolve against `root`.
 pub fn apply(ops: &[Op], root: &Path, check: bool) -> Result<Applied> {
-    apply_with(ops, root, check, false)
+    apply_with_options(
+        ops,
+        root,
+        &ApplyOptions {
+            check,
+            ..ApplyOptions::default()
+        },
+    )
 }
 
 /// `apply`, but with `allow_broken` a file whose syntax gets worse is written instead of
 /// failing.
 pub fn apply_with(ops: &[Op], root: &Path, check: bool, allow_broken: bool) -> Result<Applied> {
+    apply_with_options(
+        ops,
+        root,
+        &ApplyOptions {
+            check,
+            allow_broken,
+            ..ApplyOptions::default()
+        },
+    )
+}
+
+/// Applies every op with `options`; see [`apply`].
+pub fn apply_with_options(ops: &[Op], root: &Path, options: &ApplyOptions) -> Result<Applied> {
     let mut files = Files {
         root,
         map: BTreeMap::new(),
         numbered: Vec::new(),
         trailing: Vec::new(),
         indented: Vec::new(),
+        fuzzy_matches: Vec::new(),
+        fuzzy: options.fuzzy,
         skipped: Vec::new(),
         crlf: Vec::new(),
     };
@@ -191,8 +227,8 @@ pub fn apply_with(ops: &[Op], root: &Path, check: bool, allow_broken: bool) -> R
             }),
         })
         .collect();
-    let (broken, unchecked) = check_syntax(&files, allow_broken)?;
-    if !check {
+    let (broken, unchecked) = check_syntax(&files, options.allow_broken)?;
+    if !options.check {
         commit(root, std::mem::take(&mut files.map))?;
     }
     Ok(Applied {
@@ -201,6 +237,7 @@ pub fn apply_with(ops: &[Op], root: &Path, check: bool, allow_broken: bool) -> R
         numbered: files.numbered,
         trailing: files.trailing,
         indented: files.indented,
+        fuzzy: files.fuzzy_matches,
         skipped: files.skipped,
         crlf: files.crlf,
         broken,

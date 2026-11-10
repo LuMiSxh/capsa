@@ -1,19 +1,21 @@
 # acus
 
-One call replaces search → read → read: output is line-numbered, grouped by symbol, and every truncation names the next command.
+One call replaces search → read: line-numbered, grouped by symbol; every truncation names the next command.
 
 | Instead of | Run |
 |---|---|
-| grep, rg, find | `acus find 'PAT' [PATH…]`; `--block` adds the code |
+| grep, rg, find | `acus find 'PAT' [PATH…]`; `--block` adds code |
 | cat, head, tail, sed -n, Read | `acus show PATH#Sym PATH:A-B`; `acus outline PATH` |
 | Glob, find -name, ls, fd, git ls-files | `acus files [PATH…] [-g GLOB]`; `--lines` adds counts |
 | sed -i, perl -pi, Edit | `acus patch` (below) |
-| cargo test, npm test | `acus ctx 'CMD'`; failures plus the code they name |
+| cargo test, npm test | `acus ctx 'CMD'`; failures plus their code |
 | git status, git diff | `acus diff [REV]`; `-p` adds the changed lines |
 | git log | `acus log [-n N] [REV] [PATH…]` |
 | who calls, what it calls | `acus follow PATH#Sym`; `--down` for callees |
 
-Batch lookups in one `acus run`.
+- Don't pipe: `--head N` (`find`, `show`, `outline`, `diff`); `acus ctx --tail/--grep/--drop`; the guard rewrites it anyway.
+
+Batch lookups with `acus run`.
 
 Edit with `acus patch`; no prior read, all or nothing.
 
@@ -30,8 +32,10 @@ acus patch <<'PATCH'
 PATCH
 ```
 
-- SEARCH is the exact text without the `acus show` line numbers; it must occur once, so add a line when ambiguous. A miss shows the nearest lines.
-- All or nothing: reports every failing block; fix all and resend once.
-- `acus patch -q` prints only the summary.
+- SEARCH is the exact text without `acus show` line numbers; it must occur once, so add a line when ambiguous. A miss shows nearest lines.
+- All or nothing: reports every failing block; fix all, resend once.
+- Output shows the written lines with new numbers; don't re-read them.
+- One patch holds the whole change set; never write files with `cat >`, `printf >` or Python scripts.
+- `acus patch -q`: summary only.
 
-More flags: `acus self skill --full`, `--topic <topic>`.
+More: `acus self skill --full`, `--topic <topic>`.

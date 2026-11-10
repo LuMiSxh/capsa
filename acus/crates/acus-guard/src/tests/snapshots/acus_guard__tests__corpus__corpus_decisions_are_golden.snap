@@ -1,6 +1,5 @@
 ---
 source: acus/crates/acus-guard/src/tests/corpus.rs
-assertion_line: 63
 expression: out
 ---
 skipped 0 cases (grammar not built)
@@ -94,8 +93,8 @@ skipped 0 cases (grammar not built)
 0088 rewrite grep ⇒ acus find "it's" 'a.rs' -F
 0089 rewrite read-shell ⇒ acus show 'my notes.md'
 0090 rewrite grep ⇒ acus find 'fn main' src/*.rs
-0091 pass - ⇒
-0092 hint edit-script ⇒
+0091 deny file-write ⇒
+0092 deny edit-script ⇒
 0093 deny sed-i ⇒
 0094 rewrite read-shell ⇒ acus show 'src/lib.rs:1-20'
 0095 rewrite read-shell ⇒ acus show 'src/lib.rs:1-40'

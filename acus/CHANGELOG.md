@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [0.22.0]
+
+### Added
+
+- The guard refuses a shell write into a source file inside the repository (`cat`, `printf` or
+  `echo` with `>` or `>>`, heredoc or not, and `tee`) under the new rule `file-write`, and names
+  `acus patch` (`*** Add File:` / `*** Update File:`) or the Write tool instead. Targets outside
+  the repository or under a `$VAR`, data files, Markdown, `/dev/null`, fd redirects and `cat FILE
+  > OUT` copies pass; a write in a loop or group is a hint and `command ` escapes. A python or
+  node edit script (rule `edit-script`) is now refused instead of hinted when every code file it
+  names is a source file in the repository. A segment without `>` or `tee` returns after one
+  substring check; there is no guard benchmark, so no timing is claimed.
+- `acus patch --fuzzy` adds a final, opt-in matching pass that ignores whitespace-only
+  differences: tabs vs spaces, runs of horizontal whitespace and blank lines. It must match
+  once, REPLACE is written as given, and the output notes each block as
+  `matched fuzzily (whitespace): PATH block N at A-B`; `[patch] fuzzy = true` sets it by default,
+  and `--no-fuzzy` turns that default off.
+- `acus hook` handles `SubagentStart`: it prints the core skill as `additionalContext` for a
+  subagent, which does not see `SessionStart` output. `acus self setup` does not register that
+  hook entry.
+- `skill/CORE.md` must stay under 300 words (was 250), and the skill says not to re-read `acus
+  patch` output and to send the whole change set in one patch.
+
+### Changed
+
+- The skill tells agents to call `--head`, `--tail`, `--grep` and `--drop` instead of piping
+  `acus` output: the guard rewrites such a pipe anyway, so it only costs a call and a notice.
+
 ## [0.21.1]
 
 ### Fixed

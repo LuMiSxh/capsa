@@ -30,11 +30,12 @@ pub enum Rule {
     AcusPipe,
     TaskLog,
     PatchQuiet,
+    FileWrite,
 }
 
 impl Rule {
     #[cfg(test)]
-    pub(super) const ALL: [Rule; 18] = [
+    pub(super) const ALL: [Rule; 19] = [
         Rule::Grep,
         Rule::GrepTool,
         Rule::ReadShell,
@@ -53,6 +54,7 @@ impl Rule {
         Rule::AcusPipe,
         Rule::TaskLog,
         Rule::PatchQuiet,
+        Rule::FileWrite,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -75,6 +77,7 @@ impl Rule {
             Rule::AcusPipe => "acus-pipe",
             Rule::TaskLog => "task-log",
             Rule::PatchQuiet => "patch-quiet",
+            Rule::FileWrite => "file-write",
         }
     }
 
@@ -164,7 +167,7 @@ pub(super) fn rule(
     let (mut head, mut words) = head(seg)?;
     if is_interpreter(head) {
         // Inline `-c` / `-e` scripts sit in the segment itself.
-        return is_edit_script(seg).then(|| script_hint(head));
+        return script_verdict(head, seg, scope);
     }
     let via_xargs = head == "xargs";
     if via_xargs {
@@ -412,6 +415,7 @@ mod rule_names {
                 "acus-pipe",
                 "task-log",
                 "patch-quiet",
+                "file-write",
             ]
         );
         for r in Rule::ALL {

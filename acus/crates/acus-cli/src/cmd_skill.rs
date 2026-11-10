@@ -119,7 +119,7 @@ mod tests {
     fn core_stays_short_and_points_to_the_full_skill() {
         assert!(super::CORE.starts_with("# acus"));
         assert!(super::CORE.contains("acus self skill --full"));
-        assert!(super::CORE.split_whitespace().count() < 250);
+        assert!(super::CORE.split_whitespace().count() < 300);
     }
 
     /// The frontmatter keys and values, which must be `name` and `description` only.

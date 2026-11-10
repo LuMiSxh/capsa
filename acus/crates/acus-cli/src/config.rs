@@ -39,6 +39,8 @@ pub struct Ctx {
 pub struct Patch {
     /// Run the file's formatter after every patch, as if `--fmt` was given.
     pub fmt: bool,
+    /// Match SEARCH blocks that differ only in whitespace, as if `--fuzzy` was given.
+    pub fuzzy: bool,
 }
 
 #[derive(Deserialize)]

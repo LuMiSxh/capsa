@@ -45,6 +45,13 @@ pub struct Args {
     /// Write a file even if the patch gives it more syntax errors than it had.
     #[arg(long)]
     allow_broken: bool,
+    /// Match SEARCH blocks that differ only in whitespace: tabs vs spaces, whitespace runs and
+    /// blank lines; REPLACE is written as given, and two matches still fail.
+    #[arg(long, overrides_with = "no_fuzzy")]
+    fuzzy: bool,
+    /// Skip fuzzy matching even if `[patch] fuzzy = true` is configured.
+    #[arg(long)]
+    no_fuzzy: bool,
 }
 
 /// Written lines shown per region; longer regions end with a `show` hint.
@@ -79,8 +86,8 @@ pub fn run(a: Args, out: &Out, nested: bool, cfg: &Config) -> Result<Outcome> {
         .into());
     }
     let ops = acus_edit::parse(&text).hinted()?;
-    let mut applied =
-        acus_edit::apply_with(&ops, Path::new(""), a.check, a.allow_broken).hinted()?;
+    let options = apply_options(&a, cfg);
+    let mut applied = acus_edit::apply_with_options(&ops, Path::new(""), &options).hinted()?;
     let long_bodies = long_symbol_bodies(&ops);
     let mut fmt_notes = Vec::new();
     if (a.fmt || cfg.patch.fmt) && !a.no_fmt && !a.check {
@@ -107,6 +114,12 @@ pub fn run(a: Args, out: &Out, nested: bool, cfg: &Config) -> Result<Outcome> {
             notes.push(format!("note: {what} in {}", list.join(", ")));
         }
     }
+    notes.extend(
+        applied
+            .fuzzy
+            .iter()
+            .map(|n| format!("note: matched fuzzily (whitespace): {n}")),
+    );
     if !applied.broken.is_empty() {
         notes.push(format!(
             "note: --allow-broken: wrote {} with more syntax errors than before",
@@ -150,6 +163,15 @@ pub fn run(a: Args, out: &Out, nested: bool, cfg: &Config) -> Result<Outcome> {
         outln!("(check only, nothing written)");
     }
     Ok(Outcome::Found)
+}
+
+/// The apply options from the flags and the `[patch]` config.
+fn apply_options(a: &Args, cfg: &Config) -> acus_edit::ApplyOptions {
+    acus_edit::ApplyOptions {
+        check: a.check,
+        allow_broken: a.allow_broken,
+        fuzzy: (a.fuzzy || cfg.patch.fuzzy) && !a.no_fuzzy,
+    }
 }
 
 /// The patch text, from `--file` or standard input.

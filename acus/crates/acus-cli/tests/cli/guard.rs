@@ -359,3 +359,26 @@ fn hook_dispatches_on_the_event() {
     assert!(codex.contains(r#""permissionDecision":"deny""#), "{codex}");
     assert!(!codex.contains("updatedInput"), "{codex}");
 }
+
+/// A SubagentStart gets the core skill as `additionalContext`, since a subagent does not see
+/// SessionStart output.
+#[test]
+fn hook_gives_a_subagent_the_core_skill() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let out = run_hook(
+        &config,
+        &["hook"],
+        serde_json::json!({
+            "hook_event_name": "SubagentStart",
+            "agent_type": "Explore",
+        }),
+    );
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let hook = &v["hookSpecificOutput"];
+    assert_eq!(hook["hookEventName"], "SubagentStart");
+    assert_eq!(
+        hook["additionalContext"].as_str().unwrap(),
+        include_str!("../../../../skill/CORE.md")
+    );
+}

@@ -34,7 +34,10 @@ PATCH
   shows the nearest lines; on several it lists their line numbers, so add a neighbouring line.
 - When the text is not found as written, a form with line-number prefixes stripped, trailing
   whitespace ignored or leading indentation ignored (tabs against spaces) is accepted with a
-  `note:`; REPLACE then takes the file's indentation.
+  `note:`; REPLACE then takes the file's indentation. `acus patch --fuzzy` adds a final pass
+  that ignores tabs vs spaces, runs of whitespace and blank lines, and must still match once;
+  REPLACE is written as given. It never runs without the flag (or `[patch] fuzzy = true`);
+  `--no-fuzzy` turns that default off.
 - No `+` prefixes SEARCH or REPLACE text. `+` prefixes only Replace Symbol, Insert Before/After
   and Add File bodies.
 - A multi-line SEARCH matches a CRLF file as LF text with a `note:`; the file stays CRLF.

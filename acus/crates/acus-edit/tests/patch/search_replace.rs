@@ -389,6 +389,66 @@ fn exact_search_wins_over_an_indentation_match() {
 }
 
 #[test]
+fn fuzzy_search_ignores_tabs_and_space_runs_only_with_the_option() {
+    let d = dir(&[("a.rs", "fn f() {\n\tlet  x = 1;\n}\n")]);
+    let patch = "*** Update File: a.rs\n<<<<<<< SEARCH\nfn f() {\n    let x = 1;\n}\n=======\nfn f() {\n    let x = 2;\n}\n>>>>>>> REPLACE\n";
+    let e = run(d.path(), patch).unwrap_err().shown();
+    assert!(e.contains("SEARCH not found"), "{e}");
+    let a = apply_with_options(
+        &parse(patch).unwrap(),
+        d.path(),
+        &ApplyOptions {
+            fuzzy: true,
+            ..ApplyOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(read(d.path(), "a.rs"), "fn f() {\n    let x = 2;\n}\n");
+    assert_eq!(a.fuzzy, ["a.rs block 1 at 1-3"]);
+}
+
+#[test]
+fn fuzzy_search_skips_blank_lines_and_reports_the_window() {
+    let d = dir(&[("a.rs", "fn f() {\n    a();\n\n    b();\n}\n")]);
+    let patch = "*** Update File: a.rs\n<<<<<<< SEARCH\nfn f() {\n    a();\n    b();\n}\n=======\nfn f() {\n    c();\n}\n>>>>>>> REPLACE\n";
+    let a = apply_with_options(
+        &parse(patch).unwrap(),
+        d.path(),
+        &ApplyOptions {
+            fuzzy: true,
+            ..ApplyOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(read(d.path(), "a.rs"), "fn f() {\n    c();\n}\n");
+    assert_eq!(a.fuzzy, ["a.rs block 1 at 1-5"]);
+}
+
+#[test]
+fn fuzzy_search_must_match_once() {
+    let d = dir(&[(
+        "a.rs",
+        "fn a() {\n\tlet  x = 1;\n}\n\nfn b() {\n\tlet  x = 1;\n}\n",
+    )]);
+    let patch = "*** Update File: a.rs\n<<<<<<< SEARCH\n    let x = 1;\n=======\n    let x = 2;\n>>>>>>> REPLACE\n";
+    let e = apply_with_options(
+        &parse(patch).unwrap(),
+        d.path(),
+        &ApplyOptions {
+            fuzzy: true,
+            ..ApplyOptions::default()
+        },
+    )
+    .unwrap_err()
+    .shown();
+    assert!(e.contains("SEARCH matches 2 times (lines 2, 6)"), "{e}");
+    assert_eq!(
+        read(d.path(), "a.rs"),
+        "fn a() {\n\tlet  x = 1;\n}\n\nfn b() {\n\tlet  x = 1;\n}\n"
+    );
+}
+
+#[test]
 fn search_matches_across_crlf_lines_and_keeps_crlf() {
     let d = dir(&[("w.txt", "a\r\nb\r\nc\r\n")]);
     let a = apply(

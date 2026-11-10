@@ -1,0 +1,6 @@
+---
+source: crates/acus-cli/tests/cli/patch.rs
+expression: out
+---
+M src/a.rs +1 -1
+note: matched fuzzily (whitespace): src/a.rs block 1 at 1-3

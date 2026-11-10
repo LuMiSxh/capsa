@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! SEARCH-block matching: exact first, then with line-number prefixes, trailing whitespace or
-//! leading indentation ignored.
+//! leading indentation ignored; `--fuzzy` adds a final pass over whitespace-only differences.
 
 use crate::Chunk;
 use crate::error::{EditError, Result};
@@ -13,6 +13,8 @@ pub(super) enum Fix {
     Trailing,
     /// Leading indentation is ignored, and REPLACE is written in the file's indentation.
     Indent,
+    /// Tabs, runs of spaces and blank lines are ignored.
+    Fuzzy,
 }
 
 /// One replacement of a SEARCH block: the `old` lines from `at` become `new`.
@@ -226,14 +228,72 @@ fn indented_edits(lines: &[String], c: &Chunk) -> Vec<Edit> {
         .collect()
 }
 
+/// A line reduced to the text fuzzy matching compares: runs of horizontal whitespace become one
+/// space, and leading and trailing whitespace is dropped, so tabs and spaces are equal.
+fn fuzzy_key(line: &str) -> String {
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Every window of `lines` whose non-blank lines equal the SEARCH block's under `fuzzy_key`,
+/// with blank lines on either side skipped. The window runs from its first to its last matched
+/// line, and REPLACE is written as given, not re-indented.
+fn fuzzy_edits(lines: &[String], c: &Chunk) -> Vec<Edit> {
+    let want: Vec<String> = c
+        .old
+        .iter()
+        .map(|l| fuzzy_key(l))
+        .filter(|l| !l.is_empty())
+        .collect();
+    if want.is_empty() {
+        return Vec::new();
+    }
+    let keys: Vec<String> = lines.iter().map(|l| fuzzy_key(l)).collect();
+    let mut out = Vec::new();
+    for (start, key) in keys.iter().enumerate() {
+        if key != &want[0] {
+            continue;
+        }
+        let mut next = 1;
+        let mut end = start;
+        for (j, key) in keys.iter().enumerate().skip(start + 1) {
+            if next == want.len() {
+                break;
+            }
+            if key.is_empty() {
+                continue;
+            }
+            if key != &want[next] {
+                break;
+            }
+            next += 1;
+            end = j;
+        }
+        if next < want.len() {
+            continue;
+        }
+        let old = &lines[start..=end];
+        let new = c.new.clone();
+        let (added, removed) = change_stats(old, &new);
+        out.push(Edit {
+            at: start,
+            old: old.len(),
+            new,
+            added,
+            removed,
+        });
+    }
+    out
+}
+
 /// Applies the SEARCH block `c` (block `n` of its file) to `lines`: its text must occur exactly
 /// once in the file. Each fallback runs only when the attempt before it found nothing, and each
-/// must also give exactly one match.
+/// must also give exactly one match. The fuzzy pass runs only with `fuzzy`.
 pub(super) fn search_block(
     lines: &[String],
     c: &Chunk,
     path: &str,
     n: usize,
+    fuzzy: bool,
 ) -> Result<(Edit, Option<Fix>)> {
     let (search, replace) = (c.old.join("\n"), c.new.join("\n"));
     let mut found = search_edits(lines, &search, &replace, false);
@@ -261,6 +321,12 @@ pub(super) fn search_block(
         if indented.len() == 1 {
             found = indented;
             fix = Some(Fix::Indent);
+        }
+    }
+    if found.is_empty() && fuzzy {
+        found = fuzzy_edits(lines, c);
+        if !found.is_empty() {
+            fix = Some(Fix::Fuzzy);
         }
     }
     match found.len() {

@@ -8,7 +8,7 @@ mod replace_all;
 mod search_replace;
 mod symbols;
 
-use acus_edit::{Change, EditError, apply, apply_with, parse};
+use acus_edit::{ApplyOptions, Change, EditError, apply, apply_with, apply_with_options, parse};
 use capsa_core::hint::Hint;
 use std::fs;
 use std::path::Path;

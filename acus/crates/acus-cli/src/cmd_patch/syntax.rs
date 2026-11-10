@@ -37,7 +37,9 @@ PATCH FORMAT (stdin or --file; all or nothing, nothing is written on an error):
   one run reports every one of them, each with its nearest match; nothing is written. If the
   text is not found as written, acus also accepts it with line-number prefixes stripped,
   ignoring trailing whitespace, or ignoring leading indentation (REPLACE is then written in
-  the file's indentation), and prints a `note:`.
+  the file's indentation), and prints a `note:`. With --fuzzy a final pass ignores tabs vs
+  spaces, runs of whitespace and blank lines (REPLACE is written as given) and must match once;
+  it never runs unless the flag or [patch] fuzzy is set, and --no-fuzzy turns that off.
   Written files must not get more syntax errors (tree-sitter) than they had, or the patch fails
   and names the line; --allow-broken writes them anyway.
 

@@ -13,6 +13,7 @@ mod acus_pipe;
 mod ast;
 mod build;
 mod convert;
+mod file_write;
 mod files;
 mod git;
 pub mod hints;
@@ -32,6 +33,7 @@ mod tests;
 
 use ast::*;
 use build::*;
+use file_write::*;
 use files::*;
 use git::*;
 use read::*;
@@ -234,7 +236,8 @@ fn check_parsed(cmd: &str, p: &Parsed, ps: bool, scope: Option<&Scope>) -> Optio
     let Parsed { segs, docs } = p;
     let mut found = segment_verdicts(cmd, segs, ps, scope);
     found.extend(filtered_verdicts(segs, ps));
-    found.extend(script_hints(docs).into_iter().map(|v| (v, 0, 0)));
+    found.extend(script_hints(docs, scope).into_iter().map(|v| (v, 0, 0)));
+    found.extend(write_verdicts(segs, ps, scope));
     // The refusals by the segment each names: a compound refusal names one that has no rewrite.
     let refusals: Vec<(usize, Rule, String)> = found
         .iter()
@@ -337,8 +340,31 @@ fn filtered_verdicts(segs: &[Segment], ps: bool) -> Vec<Found> {
         .collect()
 }
 
-/// Returns the hints for the edit scripts that an interpreter runs from a heredoc or inline body.
-fn script_hints(docs: &[Doc]) -> Vec<Verdict> {
+/// Returns the verdicts about shell writes into source files. They run before the capture check
+/// of `segment_verdicts`, because a redirected segment is captured. Inside a loop or group a
+/// refusal becomes a hint.
+fn write_verdicts(segs: &[Segment], ps: bool, scope: Option<&Scope>) -> Vec<Found> {
+    if ps {
+        return Vec::new();
+    }
+    segs.iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            let (esc, seg) = s.low_unescaped();
+            let v = file_write(seg, scope)?;
+            let v = if s.nest == Nest::Top {
+                v
+            } else {
+                loop_hint(v, seg, scope)?
+            };
+            Some((escaped_if(esc, v), i, i))
+        })
+        .collect()
+}
+
+/// Returns the verdicts for the edit scripts that an interpreter runs from a heredoc or inline
+/// body.
+fn script_hints(docs: &[Doc], scope: Option<&Scope>) -> Vec<Verdict> {
     docs.iter()
         .filter_map(|Doc { openers, body }| {
             let interp = openers.iter().find_map(|opener| {
@@ -347,7 +373,7 @@ fn script_hints(docs: &[Doc]) -> Vec<Verdict> {
                     .filter(|h| is_interpreter(h))
                     .or_else(|| script_writer(opener).map(str::to_owned))
             })?;
-            is_edit_script(body).then(|| script_hint(&interp))
+            script_verdict(&interp, body, scope)
         })
         .collect()
 }

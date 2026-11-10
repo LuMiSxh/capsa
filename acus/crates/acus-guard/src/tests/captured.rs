@@ -41,7 +41,7 @@ fn captured_segments_run_unchanged() {
         "head -3 a.md > b",
         "tail -n 3 a.md >b",
         "gh release view v1 --json body --jq .body > old.md && { cat <<'EOF'\nnew\nEOF\ncat old.md; } > new.md && gh release edit v1 --notes-file new.md",
-        "cat > x.sh <<'EOF'\ngrep foo a.md\nEOF",
+        "cat > x.txt <<'EOF'\ngrep foo a.md\nEOF",
     ] {
         runs_unchanged(cmd);
     }
