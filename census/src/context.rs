@@ -2,7 +2,7 @@
 //! Owns the context size of a session against the point where Claude Code compacts it.
 
 use crate::transcript;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Context window of models that do not have the large one.
@@ -123,13 +123,19 @@ pub fn claude_config_dir() -> PathBuf {
         .unwrap_or_default()
 }
 
+/// The field of `settings.json` that census reads.
+#[derive(Deserialize)]
+struct Settings {
+    #[serde(rename = "autoCompactWindow")]
+    auto_compact_window: Option<u64>,
+}
+
 /// Returns the `autoCompactWindow` set in `dir/settings.json`, if any.
 pub fn settings_window(dir: &Path) -> Option<u64> {
     let text = std::fs::read_to_string(dir.join("settings.json")).ok()?;
-    serde_json::from_str::<serde_json::Value>(&text)
+    serde_json::from_str::<Settings>(&text)
         .ok()?
-        .get("autoCompactWindow")?
-        .as_u64()
+        .auto_compact_window
 }
 
 /// Bytes read from the end of a transcript to find its last API request and its last compaction.

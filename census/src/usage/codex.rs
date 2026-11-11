@@ -63,7 +63,7 @@ pub(crate) fn parse(text: &str) -> FileStats {
         let Ok(r) = serde_json::from_str::<Rec>(line) else {
             continue;
         };
-        let ts = r.timestamp.map_or(0, parse_ts);
+        let ts = r.timestamp.and_then(parse_ts).unwrap_or(0);
         if r.kind == "compacted" {
             let pre_tokens = st.requests.last().map_or(0, |q| q.tokens.context());
             st.compactions.push(Compaction { ts, pre_tokens });

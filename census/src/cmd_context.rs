@@ -45,7 +45,7 @@ impl Render for ContextOut<'_> {
             c.threshold.source
         ));
         doc.row("model")
-            .text(c.model.as_deref().unwrap_or("unknown").to_owned());
+            .text(c.model.as_deref().unwrap_or(census::UNKNOWN).to_owned());
         doc.row("session")
             .text(format!("{} ({})", self.session, self.picked.label()));
     }

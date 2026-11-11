@@ -5,19 +5,17 @@
 use crate::cmd_self::SKILL;
 use crate::out::Out;
 use anyhow::{Context, Result};
-use capsa_core::claude_settings::runs;
 use capsa_core::exit::Outcome;
-use capsa_core::hooks::{Agent, HookFile};
+use capsa_core::hooks::{Agent, HookFile, StatusLineState};
 use capsa_core::log;
 use capsa_core::render::{Check, Doctor, Group, Status, emit};
 use capsa_core::skill::{self, SkillState, Target};
 use census::config::Config;
 use census::hook::{self, ErrorLine};
-use serde_json::Value;
 use std::borrow::Cow;
 use std::path::Path;
 
-use crate::setup::{HOOKS, TOOL};
+use crate::setup::{HOOKS, STATUS_LINE, TOOL};
 
 pub fn run(out: &Out) -> Result<Outcome> {
     let home = std::env::home_dir().context("no home directory")?;
@@ -184,13 +182,8 @@ fn hooks_group(settings: &Path) -> Group {
             };
         }
     };
-    let command = file
-        .value()
-        .get("statusLine")
-        .and_then(|line| line.get("command"))
-        .and_then(Value::as_str);
-    let mut checks = vec![match command {
-        Some(c) if runs(c, TOOL, "statusline") => {
+    let mut checks = vec![match file.status_line(&STATUS_LINE) {
+        StatusLineState::Installed | StatusLineState::Outdated { .. } => {
             check("statusLine", Status::Ok, "census statusline", None)
         }
         _ => check(
@@ -259,7 +252,10 @@ fn writable(dir: &Path) -> std::io::Result<()> {
 
 /// Reports the errors the hook has logged, the newest last. Past errors warn; they do not fail.
 fn hook_log_check(file: &Path) -> Check {
-    let entries = log::read::<ErrorLine>(file);
+    let entries = match log::read::<ErrorLine>(file) {
+        Ok(entries) => entries,
+        Err(e) => return check("hook log", Status::Warn, e.to_string(), None),
+    };
     let Some(last) = entries.last() else {
         return check("hook log", Status::Ok, "no errors", None);
     };

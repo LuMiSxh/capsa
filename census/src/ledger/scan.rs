@@ -13,29 +13,6 @@ use std::time::Instant;
 /// Bytes read between two looks at the deadline; the first chunk is always read.
 const CHUNK: u64 = 2 << 20;
 
-/// Lists the `*.jsonl` files below the roots, subagent transcripts included.
-pub(super) fn list_files(roots: &[PathBuf]) -> Vec<(PathBuf, Metadata)> {
-    let mut out = Vec::new();
-    let mut stack: Vec<PathBuf> = roots.to_vec();
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for e in entries.flatten() {
-            let Ok(ft) = e.file_type() else { continue };
-            if ft.is_dir() {
-                stack.push(e.path());
-            } else if ft.is_file()
-                && e.path().extension().is_some_and(|x| x == "jsonl")
-                && let Ok(meta) = e.metadata()
-            {
-                out.push((e.path(), meta));
-            }
-        }
-    }
-    out
-}
-
 #[cfg(unix)]
 fn file_id(meta: &Metadata) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt;

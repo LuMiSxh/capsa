@@ -3,6 +3,7 @@
 //! The snapshot built into the binary serves a first run that has no cache.
 
 use super::table::{self, Table};
+use capsa_core::fs::write_atomic;
 use capsa_core::log::{self, Level};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -113,19 +114,8 @@ fn write_cache(dir: &Path, t: &Table) -> Result<(), PriceError> {
     let path = dir.join(CACHE);
     let write = |e| PriceError::Write(path.clone(), e);
     let bytes = serde_json::to_vec(t).map_err(|e| write(io::Error::other(e)))?;
+    std::fs::create_dir_all(dir).map_err(write)?;
     write_atomic(&path, &bytes).map_err(write)
-}
-
-/// Replaces the file at `path` with `bytes`, creating its directory. The bytes go to a temporary file
-/// that is renamed over the file, so a reader sees the old contents or the new ones.
-fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)
 }
 
 /// Appends why a refresh failed to `prices.jsonl`.

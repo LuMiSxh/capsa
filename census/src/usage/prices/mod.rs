@@ -56,7 +56,7 @@ pub(crate) fn billed_by(model: &str) -> &'static str {
     provider(model).unwrap_or(if model.starts_with("claude") {
         "anthropic"
     } else {
-        "unknown"
+        crate::UNKNOWN
     })
 }
 

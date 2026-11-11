@@ -4,12 +4,13 @@
 
 use super::error::LedgerError;
 use super::model::{Hourly, Row};
+use capsa_core::lock;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 type Result<T> = std::result::Result<T, LedgerError>;
 
@@ -89,22 +90,9 @@ pub(super) fn save_index(path: &Path, index: &Index) -> Result<()> {
     write_atomic(path, &serde_json::to_vec(index)?)
 }
 
-/// Replaces `path` with `bytes` through a temporary file, flushed to disk before the rename.
+/// Replaces `path` with `bytes` through a temporary file, so a reader sees the old file or the new.
 pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("tmp");
-    let mut f = File::create(&tmp).map_err(io_at(&tmp))?;
-    f.write_all(bytes).map_err(io_at(&tmp))?;
-    f.sync_all().map_err(io_at(&tmp))?;
-    drop(f);
-    std::fs::rename(&tmp, path).map_err(io_at(path))?;
-    #[cfg(unix)]
-    if let Some(dir) = path.parent()
-        && let Ok(d) = File::open(dir)
-    {
-        // Best effort: a directory that cannot be flushed leaves the rename durable only later.
-        let _ = d.sync_all();
-    }
-    Ok(())
+    capsa_core::fs::write_atomic(path, bytes).map_err(io_at(path))
 }
 
 fn read_file(path: &Path) -> Result<Vec<u8>> {
@@ -251,52 +239,13 @@ pub(super) fn rewrite_rows(path: &Path, rows: &[Row]) -> Result<()> {
     write_atomic(path, &body)
 }
 
-/// Holds the exclusive writer lock until dropped.
-pub(super) struct Lock(#[expect(dead_code, reason = "the open file keeps the lock")] File);
-
-/// Holds a shared reader lock until dropped.
-pub(super) struct SharedLock(#[expect(dead_code, reason = "the open file keeps the lock")] File);
-
 /// Takes the shared lock, retrying until `wait` has passed. `None` means a writer holds it or the
 /// lock file cannot be opened; the caller then reads without it.
-pub(super) fn lock_shared(path: &Path, wait: Duration) -> Option<SharedLock> {
-    let f = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(path)
-        .ok()?;
-    let start = Instant::now();
-    loop {
-        match f.try_lock_shared() {
-            Ok(()) => return Some(SharedLock(f)),
-            Err(std::fs::TryLockError::WouldBlock) if start.elapsed() < wait => {
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            Err(_) => return None,
-        }
-    }
+pub(super) fn lock_shared(path: &Path, wait: Duration) -> Option<lock::Lock> {
+    lock::shared(path, wait).ok().flatten()
 }
 
 /// Takes the lock, retrying until `wait` has passed; `None` means another process holds it.
-pub(super) fn try_lock(path: &Path, wait: Duration) -> Result<Option<Lock>> {
-    let f = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(path)
-        .map_err(io_at(path))?;
-    let start = Instant::now();
-    loop {
-        match f.try_lock() {
-            Ok(()) => return Ok(Some(Lock(f))),
-            Err(std::fs::TryLockError::WouldBlock) => {
-                if start.elapsed() >= wait {
-                    return Ok(None);
-                }
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            Err(std::fs::TryLockError::Error(e)) => return Err(io_at(path)(e)),
-        }
-    }
+pub(super) fn try_lock(path: &Path, wait: Duration) -> Result<Option<lock::Lock>> {
+    lock::exclusive(path, wait).map_err(io_at(path))
 }

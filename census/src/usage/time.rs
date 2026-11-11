@@ -4,9 +4,9 @@
 
 const DAY_MS: u64 = 86_400_000;
 
-/// Milliseconds since the epoch of a transcript timestamp such as `2026-10-14T07:53:43.386Z`,
-/// or 0 when it does not parse.
-pub fn parse_ts(s: &str) -> u64 {
+/// Milliseconds since the epoch of an ISO timestamp such as `2026-10-14T07:53:43.386Z`, or `None`
+/// when it does not parse or lies before the epoch.
+pub fn parse_ts(s: &str) -> Option<u64> {
     let num = |r: std::ops::Range<usize>| s.get(r).and_then(|t| t.parse::<i64>().ok());
     let (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(se)) = (
         num(0..4),
@@ -16,8 +16,11 @@ pub fn parse_ts(s: &str) -> u64 {
         num(14..16),
         num(17..19),
     ) else {
-        return 0;
+        return None;
     };
+    if s.as_bytes().get(10) != Some(&b'T') {
+        return None;
+    }
     let frac: String = s
         .get(19..)
         .and_then(|t| t.strip_prefix('.'))
@@ -28,7 +31,7 @@ pub fn parse_ts(s: &str) -> u64 {
         .collect();
     let ms = format!("{frac:0<3}").parse::<i64>().unwrap_or(0);
     let secs = days_from_civil(y, mo, d) * 86_400 + h * 3_600 + mi * 60 + se;
-    (secs * 1000 + ms).max(0) as u64
+    u64::try_from(secs * 1000 + ms).ok()
 }
 
 /// Milliseconds since the epoch at 00:00 UTC of a `YYYY-MM-DD` date.
@@ -97,9 +100,22 @@ mod tests {
     }
 
     #[test]
+    fn timestamp_matches_known_unix_times() {
+        assert_eq!(parse_ts("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(
+            parse_ts("2026-10-21T11:55:40.658Z"),
+            Some(1_792_583_740_658)
+        );
+        assert_eq!(parse_ts("2024-02-29T23:59:59Z"), Some(1_709_251_199_000));
+        assert_eq!(parse_ts("2026-10-21 11:55:40Z"), None);
+        assert_eq!(parse_ts("garbage"), None);
+    }
+
+    #[test]
     fn weeks_follow_iso_years() {
         // 2026-10-14 is a Wednesday of week 42; 2027-01-01 is a Friday of week 53 of 2026.
-        assert_eq!(iso_week(parse_ts("2026-10-14T00:00:00Z")), "2026-W42");
-        assert_eq!(iso_week(parse_ts("2027-01-01T12:00:00Z")), "2026-W53");
+        let week = |s| iso_week(parse_ts(s).unwrap());
+        assert_eq!(week("2026-10-14T00:00:00Z"), "2026-W42");
+        assert_eq!(week("2027-01-01T12:00:00Z"), "2026-W53");
     }
 }

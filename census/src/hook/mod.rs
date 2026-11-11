@@ -10,8 +10,8 @@ pub use state::{ErrorLine, error_log, log_error};
 use crate::config::Config;
 use crate::context;
 use crate::limits::{DailyStatus, LimitStatus, MonthStatus};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, de::IgnoredAny};
+use serde_json::json;
 use std::path::PathBuf;
 
 /// The longest `additionalContext` the hook emits, in characters.
@@ -32,7 +32,7 @@ struct Input {
     hook_event_name: Option<String>,
     session_id: Option<String>,
     transcript_path: Option<PathBuf>,
-    agent_id: Option<Value>,
+    agent_id: Option<IgnoredAny>,
 }
 
 /// Reads, decides and records the shown levels under the session's lock, so two concurrent calls

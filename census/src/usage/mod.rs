@@ -10,13 +10,13 @@ pub(crate) mod prices;
 mod read;
 pub(crate) mod time;
 mod tools;
-mod walk;
 
 pub use handback::HandbackWeek;
 pub use prices::{Cost, PROVIDERS, knows_provider, refresh as refresh_prices};
 pub use time::{parse_date, parse_ts};
 pub use tools::group;
 
+use crate::transcript;
 use merge::Side;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
@@ -402,7 +402,8 @@ fn read_files(o: &UsageOpts) -> Vec<FileStats> {
         let Some(root) = root.filter(|r| r.is_dir()) else {
             continue;
         };
-        jobs.extend(walk::jsonl_files(&root).into_iter().map(|path| read::Job {
+        let files = transcript::list_files(std::slice::from_ref(&root));
+        jobs.extend(files.into_iter().map(|(path, _)| read::Job {
             agent,
             root: root.clone(),
             path,

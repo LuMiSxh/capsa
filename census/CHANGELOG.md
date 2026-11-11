@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `census self doctor` warns when it cannot read the hook log. It reported no errors before.
+
 ## [0.6.1]
 
 ### Changed

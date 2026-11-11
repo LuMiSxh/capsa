@@ -7,6 +7,7 @@ use super::model::{Row, floor_hour};
 use super::scan;
 use super::state::{self, Layout};
 use super::{Opts, UpdateReport};
+use crate::transcript;
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -20,7 +21,7 @@ pub(super) fn run(layout: &Layout, opts: &Opts) -> Result<UpdateReport> {
     let mut index = state::load_index(&layout.index);
     let folded_before = state::folded_before(&layout.hourly);
     let target = floor_hour(opts.now.saturating_sub(opts.retention_s));
-    let (todo, mut dirty) = scan::pending(scan::list_files(&opts.roots), &mut index);
+    let (todo, mut dirty) = scan::pending(transcript::list_files(&opts.roots), &mut index);
     let mut fresh = Vec::new();
     let mut before = None;
     if !todo.is_empty() {
