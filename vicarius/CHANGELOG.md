@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `config.json` and the derived agent files are written through a temporary file with a name
+  unique to each write, so two concurrent writers no longer overwrite each other's temporary file.
+- A failing write to `proxy.jsonl` prints one `vicarius: cannot write <file>` line on stderr
+  instead of being dropped silently; proxying continues.
+
 ## [0.2.1]
 
 ### Changed

@@ -17,7 +17,7 @@ cmd-update = ["capsa-core/update"]
 
 [dependencies]
 anyhow.workspace = true
-capsa-core = { workspace = true, features = ["clap"] }
+capsa-core = { workspace = true, features = ["clap", "process-async"] }
 clap.workspace = true
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["http1", "server"] }

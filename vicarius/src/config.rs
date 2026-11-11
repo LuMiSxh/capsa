@@ -283,13 +283,7 @@ impl Config {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(io)?;
         }
-        let temp = path.with_extension("json.tmp");
-        let written =
-            std::fs::write(&temp, self.to_json()).and_then(|()| std::fs::rename(&temp, path));
-        if written.is_err() {
-            let _ = std::fs::remove_file(&temp);
-        }
-        written.map_err(io)
+        capsa_core::fs::write_atomic(path, self.to_json().as_bytes()).map_err(io)
     }
 
     /// Returns the JSON text of the config file.

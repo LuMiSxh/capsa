@@ -120,12 +120,7 @@ fn remove_orphan(path: &Path) -> Outcome {
 
 fn write_atomic(dir: &Path, file: &str, content: &str) -> io::Result<()> {
     fs::create_dir_all(dir)?;
-    let temp = dir.join(format!(".{file}.tmp"));
-    let result = fs::write(&temp, content).and_then(|()| fs::rename(&temp, dir.join(file)));
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
+    capsa_core::fs::write_atomic(&dir.join(file), content.as_bytes())
 }
 
 fn read_lossy(path: &Path) -> io::Result<String> {

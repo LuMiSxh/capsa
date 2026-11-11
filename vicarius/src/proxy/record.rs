@@ -6,9 +6,10 @@ use super::usage::Usage;
 use capsa_core::log::{self, Level};
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 /// The size past which `proxy.jsonl` rotates to `proxy.jsonl.old`.
@@ -132,6 +133,7 @@ pub struct Recorder {
     anthropic: RouteCounters,
     deepseek: RouteCounters,
     forbidden: AtomicU64,
+    log_failing: AtomicBool,
 }
 
 impl Recorder {
@@ -142,6 +144,7 @@ impl Recorder {
             anthropic: RouteCounters::default(),
             deepseek: RouteCounters::default(),
             forbidden: AtomicU64::new(0),
+            log_failing: AtomicBool::new(false),
         }
     }
 
@@ -191,10 +194,28 @@ impl Recorder {
             .write
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(dir) = self.file.parent() {
-            let _ = std::fs::create_dir_all(dir);
+        let written = self
+            .file
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| log::append(&self.file, LOG_LIMIT, level, "proxy.request", line));
+        self.report_log_failure(written.err());
+    }
+
+    /// Names a failing log write on stderr once per run of failures, so a full disk or a bad
+    /// path does not go unseen and does not flood stderr either. The request is never failed.
+    fn report_log_failure(&self, error: Option<std::io::Error>) {
+        let Some(error) = error else {
+            self.log_failing.store(false, Ordering::Relaxed);
+            return;
+        };
+        if !self.log_failing.swap(true, Ordering::Relaxed) {
+            let _ = writeln!(
+                std::io::stderr(),
+                "vicarius: cannot write {}: {error}",
+                self.file.display()
+            );
         }
-        let _ = log::append(&self.file, LOG_LIMIT, level, "proxy.request", line);
     }
 
     /// Returns a copy of the counters.
