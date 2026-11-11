@@ -3,6 +3,7 @@
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::render::{Render, emit_to};
+use serde_json::json;
 
 use super::*;
 
@@ -284,17 +285,18 @@ fn explicit_commands_skip_the_check_and_text_and_json_show_it() {
     assert!(text(&view, true).contains('\x1b'));
     assert!(matches!(view.outcome(), Outcome::Empty));
     let v: Value = serde_json::from_str(&json_of(&view)).unwrap();
+    assert_eq!(v["tool"], "pons");
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(v["ok"], false);
     assert_eq!(v["groups"][0]["name"], "launcher");
     assert_eq!(v["groups"][0]["checks"][1]["status"], "fail");
-    assert_eq!(v["launcher"]["adapter"]["status"], "fail");
     assert!(
-        v["launcher"]["adapter"]["detail"]
+        v["groups"][0]["checks"][1]["detail"]
             .as_str()
             .is_some_and(|d| d.starts_with("not found"))
     );
     assert_eq!(
-        v["launcher"]["adapter"]["hint"],
+        v["groups"][0]["checks"][1]["hint"],
         format!("install Node.js, then run: npm install -g {PACKAGE}")
     );
 }
@@ -328,8 +330,10 @@ fn the_report_is_ascii_and_survives_missing_everything() {
     let json = json_of(&view);
     assert!(json.is_ascii());
     let v: Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(v["pons"]["version"], env!("CARGO_PKG_VERSION"));
-    assert!(v["launcher"]["would_run"].is_null());
+    assert_eq!(v["tool"], "pons");
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(v["groups"][0]["checks"][0]["name"], "would run");
+    assert_eq!(v["groups"][0]["checks"][0]["status"], "fail");
 }
 
 #[test]
@@ -410,107 +414,4 @@ fn json_of(view: &View) -> String {
     let mut out = Vec::new();
     emit_to(view, Format::Json, false, &mut out).unwrap();
     String::from_utf8(out).unwrap()
-}
-
-/// A machine with a launcher-found adapter, a Zed entry, a registry adapter, a wire log and
-/// one running proxy.
-fn fixture() -> Report {
-    Report {
-        version: env!("CARGO_PKG_VERSION"),
-        platform: "linux",
-        arch: "x86_64",
-        explicit_command: false,
-        would_run: Ok((
-            "npx".to_owned(),
-            "/bin/npx -y @agentclientprotocol/claude-agent-acp".to_owned(),
-        )),
-        candidates: vec![(
-            "npx -y @agentclientprotocol/claude-agent-acp".to_owned(),
-            Some("/bin/npx".to_owned()),
-        )],
-        searched_dirs: 3,
-        configured_adapter: None,
-        adapter: AdapterCheck {
-            status: "ok",
-            detail: "claude-agent-acp at /bin/claude-agent-acp (version 0.85.1)".to_owned(),
-            hint: None,
-        },
-        settings_path: Some("/h/.config/zed/settings.json".to_owned()),
-        settings: Some(Settings::Servers(vec![Server {
-            name: "claude-pons".to_owned(),
-            command: "/bin/pons".to_owned(),
-            args: vec!["--log".to_owned(), "/tmp/x".to_owned()],
-        }])),
-        registry_adapter: Some((
-            Some("0.85.1".to_owned()),
-            "/h/.local/share/zed/external_agents/registry/npx/claude-acp".to_owned(),
-        )),
-        log: Some(LogReport {
-            path: "/tmp/pons.log".to_owned(),
-            summary: Some(summarize_log(&wire_line(
-                "pons",
-                "background subagent A launched, card kept open",
-            ))),
-            size: Some(100),
-            rotated_size: None,
-        }),
-        processes: vec![Proc {
-            pid: 7,
-            age_secs: 60,
-        }],
-        exe_age_secs: Some(3600),
-    }
-}
-
-#[test]
-fn json_keeps_every_key_of_the_report() {
-    let mut v: Value = serde_json::from_str(&json_of(&View::new(fixture()))).unwrap();
-    assert_eq!(v["ok"], true);
-    assert_eq!(v["groups"].as_array().map(Vec::len), Some(4));
-    let object = v.as_object_mut().unwrap();
-    object.remove("ok");
-    object.remove("groups");
-    assert_eq!(
-        v,
-        json!({
-            "pons": {"version": env!("CARGO_PKG_VERSION"), "platform": "linux", "arch": "x86_64"},
-            "launcher": {
-                "explicit_command": false,
-                "would_run": "npx",
-                "command": "/bin/npx -y @agentclientprotocol/claude-agent-acp",
-                "error": null,
-                "candidates": [{"name": "npx -y @agentclientprotocol/claude-agent-acp", "path": "/bin/npx"}],
-                "searched_dirs": 3,
-                "adapter": {"status": "ok", "detail": "claude-agent-acp at /bin/claude-agent-acp (version 0.85.1)", "hint": null},
-                "configured_adapter": null,
-            },
-            "zed": {
-                "settings_path": "/h/.config/zed/settings.json",
-                "settings": {"servers": [{"name": "claude-pons", "command": "/bin/pons", "args": ["--log", "/tmp/x"]}]},
-                "registry_adapter": {"version": "0.85.1", "dir": "/h/.local/share/zed/external_agents/registry/npx/claude-acp"},
-            },
-            "processes": [{"pid": 7, "age_secs": 60, "stale": false}],
-            "exe_age_secs": 3600,
-            "log": {
-                "path": "/tmp/pons.log",
-                "size": 100,
-                "rotated_size": null,
-                "summary": {
-                    "lines": 1,
-                    "cancels_seen": 0,
-                    "cancels_dropped": 0,
-                    "cancels_forwarded": 0,
-                    "stop_escapes": 0,
-                    "subagents_tracked": 1,
-                    "subagents_finished": 0,
-                    "subagents_provisional": 0,
-                    "fail_safe_events": 0,
-                    "notifications_dropped": 0,
-                    "stepped_aside": false,
-                    "last_exit": null,
-                    "last_notes": ["background subagent A launched, card kept open"],
-                },
-            },
-        })
-    );
 }

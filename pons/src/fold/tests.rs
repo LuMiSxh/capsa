@@ -682,3 +682,54 @@ fn an_empty_or_missing_input_keeps_the_stored_one() {
     e.note_input(&json!({"toolCallId": "P"}));
     assert_eq!(e.roster_name(), "worker - Fix it");
 }
+
+#[test]
+fn a_view_reads_fields_of_the_wrong_type_as_absent() {
+    let v = json!({"sessionUpdate": 1, "toolCallId": ["x"], "status": null, "title": 5,
+        "kind": {}, "name": false, "_meta": {"claudeCode": {"toolName": 7}}});
+    let u = UpdateView::new(&v);
+    assert!(u.session_update.is_none() && u.tool_call_id.is_none() && u.status.is_none());
+    assert!(u.title.is_none() && u.kind.is_none() && u.name.is_none() && u.tool_name.is_none());
+    assert!(u.has_title_key());
+    assert!(!u.is_terminal());
+}
+
+#[test]
+fn a_view_takes_the_parent_from_the_update_before_the_message() {
+    let msg = json!({"params": {"_meta": {"claudeCode": {"parentToolUseId": "M"}},
+        "update": {"_meta": {"claudeCode": {"parentToolUseId": "U"}}}}});
+    assert_eq!(
+        UpdateView::of_message(&msg).parent_tool_use_id(&msg),
+        Some("U")
+    );
+    let msg = json!({"params": {"_meta": {"claudeCode": {"parentToolUseId": "M"}}, "update": {}}});
+    assert_eq!(
+        UpdateView::of_message(&msg).parent_tool_use_id(&msg),
+        Some("M")
+    );
+    // A non-text id in the update ends the lookup; the message's id is not tried.
+    let msg = json!({"params": {"_meta": {"claudeCode": {"parentToolUseId": "M"}},
+        "update": {"_meta": {"claudeCode": {"parentToolUseId": 3}}}}});
+    assert_eq!(UpdateView::of_message(&msg).parent_tool_use_id(&msg), None);
+}
+
+#[test]
+fn a_view_reads_inputs_and_monitor_timeouts() {
+    let v = json!({"title": "Monitor", "rawInput": {"timeout_ms": 5000}});
+    let u = UpdateView::new(&v);
+    assert!(u.is_monitor() && u.has_input());
+    assert_eq!(u.monitor_timeout(), Some(Duration::from_secs(5)));
+    for empty in [
+        json!({"rawInput": {}}),
+        json!({"rawInput": ""}),
+        json!({"rawInput": null}),
+    ] {
+        assert!(!UpdateView::new(&empty).has_input());
+    }
+    assert!(UpdateView::new(&json!({"rawInput": 0})).has_input());
+    assert!(
+        UpdateView::new(&json!({"rawInput": {}}))
+            .input_object()
+            .is_none()
+    );
+}

@@ -264,7 +264,7 @@ pons self uninstall [--dry-run]
 
 ### pons self doctor
 
-`pons self doctor [--json|--human|--agent] [--log FILE] [--log-dir DIR] [--agent-cmd CMD...]` prints a report. Its checks are in four groups (launcher, zed, processes, wire log), each `ok`, `warn` or `fail`, followed by the details behind them. It exits 1 when a check fails and 0 when none does. `--json` prints the same data as one JSON object: every key of the earlier output is kept, and `ok` (false when a check fails) and `groups` are added. `--human` colours the text on a terminal. `--agent` is the plain default. The output flags also work on `pons self` itself.
+`pons self doctor [--json|--human|--agent] [--log FILE] [--log-dir DIR] [--agent-cmd CMD...]` prints a report. Its checks are in four groups (launcher, zed, processes, wire log), each `ok`, `warn` or `fail`, followed by the details behind them. It exits 1 when a check fails and 0 when none does. `--json` prints one JSON line in the shared doctor shape: `tool`, `version`, `ok` (false when a check fails) and `groups`, where each check has `name`, `status`, `detail` and, when it has one, `hint`. `--human` colours the text on a terminal. `--agent` is the plain default. The output flags also work on `pons self` itself.
 
 The report covers:
 

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::log::Entry;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::launcher::{self, LAUNCHERS, PACKAGE};
 use crate::log::WireFields;
@@ -171,8 +171,6 @@ pub struct Report {
     pub would_run: Result<(String, String), String>,
     pub candidates: Vec<(String, Option<String>)>,
     pub searched_dirs: usize,
-    /// Version and manifest of the adapter the launcher would run.
-    pub configured_adapter: Option<(String, String)>,
     /// Whether the adapter can be started through the launcher's discovery.
     pub adapter: AdapterCheck,
     pub settings_path: Option<String>,
@@ -255,7 +253,6 @@ pub fn gather(
         would_run,
         candidates,
         searched_dirs: which::search_dirs(env, fs).len(),
-        configured_adapter,
         adapter,
         settings_path: settings_path.map(|p| p.display().to_string()),
         settings,

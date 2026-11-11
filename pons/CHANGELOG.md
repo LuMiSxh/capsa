@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- `pons self doctor --json` no longer prints the hand-built object of earlier versions (`pons`, `launcher`, `zed`, `processes`, `exe_age_secs`, `log`). It prints the shared doctor JSON like the other tools (`tool`, `version`, `ok`, `groups`); read each check and its detail from `groups` instead.
+
 ## [0.10.1]
 
 ### Fixed

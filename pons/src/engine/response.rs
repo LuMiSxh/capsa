@@ -124,15 +124,15 @@ impl Engine {
         forward: Action,
         now: Instant,
     ) -> Vec<Action> {
-        let is_response = msg.get("result").is_some() || msg.get("error").is_some();
-        let Some(id) = msg.get("id").filter(|_| is_response) else {
+        let view = ResponseView::new(msg);
+        let Some(id) = view.response_id() else {
             return vec![forward];
         };
         let key = id.to_string();
         let mut out = Vec::new();
         if self.init_id.as_deref() == Some(key.as_str()) {
             self.init_id = None;
-            if msg.pointer("/result/_meta/steering/supported") == Some(&Value::Bool(true)) {
+            if view.steering_supported {
                 self.steering = true;
                 out.push(Action::Note(
                     "the agent advertised steering (_meta.steering.supported)".into(),
@@ -161,8 +161,7 @@ impl Engine {
                 "replay of {sid} done, {skipped} update(s) seen, no subagent state kept{tail}"
             )));
         }
-        let cancelled =
-            msg.pointer("/result/stopReason").and_then(Value::as_str) == Some("cancelled");
+        let cancelled = view.cancelled;
         if let Some(sp) = self.steers.values_mut().find(|sp| sp.old_key == key) {
             sp.ended = Some(msg.clone());
             out.push(Action::Note(format!(

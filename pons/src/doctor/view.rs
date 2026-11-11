@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The doctor result in the shared doctor model: four groups of checks, the pons facts that
-//! are not a check as detail lines, and the JSON object `self doctor --json` prints.
+//! The doctor result in the shared doctor model: four groups of checks, and the pons facts
+//! that are not a check as detail lines.
 
 use capsa_core::exit::Outcome;
 use capsa_core::render::{Check, Doc, Doctor, Group, Render, Status};
@@ -33,15 +33,10 @@ impl Render for View {
     }
 }
 
-/// Keeps every key of the report before the shared model, and adds `ok` and `groups`.
+/// Serializes as the shared doctor model: `tool`, `version`, `ok` and `groups`.
 impl Serialize for View {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut value = legacy_json(&self.report);
-        if let Value::Object(map) = &mut value {
-            map.insert("ok".to_owned(), Value::Bool(self.doctor.ok));
-            map.insert("groups".to_owned(), json!(self.doctor.groups));
-        }
-        value.serialize(serializer)
+        self.doctor.serialize(serializer)
     }
 }
 
@@ -294,74 +289,4 @@ fn details(r: &Report, doc: &mut Doc) {
             }
         }
     }
-}
-
-/// The JSON keys of `self doctor --json` before the shared model, by section.
-fn legacy_json(r: &Report) -> Value {
-    let settings = match &r.settings {
-        None => Value::Null,
-        Some(Settings::Servers(list)) => json!({
-            "servers": list.iter().map(|s| json!({
-                "name": s.name, "command": s.command, "args": s.args,
-            })).collect::<Vec<_>>(),
-        }),
-        Some(Settings::Unparsed { mentions }) => json!({"unparsed": true, "mentions": mentions}),
-    };
-    let log = r.log.as_ref().map(|l| {
-        let summary = l.summary.as_ref().map(|s| {
-            json!({
-                "lines": s.lines,
-                "cancels_seen": s.cancels_seen,
-                "cancels_dropped": s.cancels_dropped,
-                "cancels_forwarded": s.cancels_forwarded(),
-                "stop_escapes": s.stop_escapes,
-                "subagents_tracked": s.subagents_tracked,
-                "subagents_finished": s.subagents_finished,
-                "subagents_provisional": s.subagents_provisional,
-                "fail_safe_events": s.fail_safe_events,
-                "notifications_dropped": s.notifications_dropped,
-                "stepped_aside": s.stepped_aside,
-                "last_exit": s.last_exit,
-                "last_notes": s.last_notes,
-            })
-        });
-        json!({
-            "path": l.path,
-            "size": l.size,
-            "rotated_size": l.rotated_size,
-            "summary": summary,
-        })
-    });
-    let processes: Vec<Value> = r
-        .processes
-        .iter()
-        .map(
-            |p| json!({"pid": p.pid, "age_secs": p.age_secs, "stale": is_stale(p, r.exe_age_secs)}),
-        )
-        .collect();
-    let (would_run, command, error) = match &r.would_run {
-        Ok((how, cmd)) => (json!(how), json!(cmd), Value::Null),
-        Err(e) => (Value::Null, Value::Null, json!(e)),
-    };
-    json!({
-        "pons": {"version": r.version, "platform": r.platform, "arch": r.arch},
-        "launcher": {
-            "explicit_command": r.explicit_command,
-            "would_run": would_run,
-            "command": command,
-            "error": error,
-            "candidates": r.candidates.iter().map(|(n, p)| json!({"name": n, "path": p})).collect::<Vec<_>>(),
-            "searched_dirs": r.searched_dirs,
-            "adapter": {"status": r.adapter.status, "detail": r.adapter.detail, "hint": r.adapter.hint},
-            "configured_adapter": r.configured_adapter.as_ref().map(|(v, m)| json!({"version": v, "manifest": m})),
-        },
-        "zed": {
-            "settings_path": r.settings_path,
-            "settings": settings,
-            "registry_adapter": r.registry_adapter.as_ref().map(|(v, d)| json!({"version": v, "dir": d})),
-        },
-        "processes": processes,
-        "exe_age_secs": r.exe_age_secs,
-        "log": log,
-    })
 }

@@ -64,18 +64,19 @@ impl FoldEntry {
 
     /// Tracks the subagent's `Monitor` calls, which keep streaming after the call itself
     /// completed. A later update of the call may carry the timeout its input lacked.
-    pub(super) fn note_monitor(&mut self, update: &Value, now: Instant) {
-        let Some(id) = str_field(update, "toolCallId") else {
+    pub(super) fn note_monitor<'a>(&mut self, update: impl Into<UpdateView<'a>>, now: Instant) {
+        let update = update.into();
+        let Some(id) = update.tool_call_id else {
             return;
         };
-        if str_field(update, "sessionUpdate") == Some("tool_call") && is_monitor(update) {
+        if update.session_update == Some("tool_call") && update.is_monitor() {
             self.monitors.retain(|_, m| m.deadline() > now);
             self.monitors.entry(id.to_owned()).or_insert(Monitor {
                 started: now,
                 timeout: None,
             });
         }
-        if let Some(timeout) = monitor_timeout(update)
+        if let Some(timeout) = update.monitor_timeout()
             && let Some(monitor) = self.monitors.get_mut(id)
         {
             monitor.timeout = Some(timeout);
@@ -171,10 +172,11 @@ impl FoldEntry {
         }
     }
 
-    pub(super) fn apply_tool(&mut self, update: &Value, is_call: bool) {
-        let id = str_field(update, "toolCallId");
-        let status = str_field(update, "status");
-        let title = str_field(update, "title")
+    pub(super) fn apply_tool(&mut self, update: UpdateView<'_>, is_call: bool) {
+        let id = update.tool_call_id;
+        let status = update.status;
+        let title = update
+            .title
             .map(one_line)
             .filter(|t| !t.is_empty())
             .map(|t| clip_head(&t, MAX_TITLE_CHARS));
@@ -192,7 +194,7 @@ impl FoldEntry {
                 }
             }
             (None, title) => {
-                let Some(title) = title.or_else(|| tool_name(update).map(str::to_owned)) else {
+                let Some(title) = title.or_else(|| update.tool_name.map(str::to_owned)) else {
                     return;
                 };
                 self.lines.push_back(Line {
@@ -211,12 +213,13 @@ impl FoldEntry {
         self.dirty = true;
     }
 
-    pub(super) fn apply_child(&mut self, update: &Value) {
-        match str_field(update, "sessionUpdate") {
+    pub(super) fn apply_child<'a>(&mut self, update: impl Into<UpdateView<'a>>) {
+        let update = update.into();
+        match update.session_update {
             Some("tool_call") => self.apply_tool(update, true),
             Some("tool_call_update") => self.apply_tool(update, false),
             Some("agent_message_chunk") => {
-                if let Some(text) = update.pointer("/content/text").and_then(Value::as_str) {
+                if let Some(text) = update.chunk_text() {
                     self.text.push_str(text);
                     let room = MAX_RESULT_BUFFER.saturating_sub(self.head.chars().count());
                     self.head.extend(text.chars().take(room));
@@ -348,21 +351,16 @@ impl FoldEntry {
         }
     }
 
-    pub(super) fn note_input(&mut self, update: &Value) {
-        if let Some(input) = update
-            .get("rawInput")
-            .filter(|v| v.as_object().is_some_and(|o| !o.is_empty()))
+    pub(super) fn note_input<'a>(&mut self, update: impl Into<UpdateView<'a>>) {
+        if let Some(input) = update.into().input_object()
             && self.input.as_ref() != Some(input)
         {
             self.input = Some(input.clone());
         }
     }
 
-    pub(super) fn note_title(&mut self, update: &Value) {
-        if let Some(title) = str_field(update, "title")
-            .map(one_line)
-            .filter(|t| !t.is_empty())
-        {
+    pub(super) fn note_title<'a>(&mut self, update: impl Into<UpdateView<'a>>) {
+        if let Some(title) = update.into().title.map(one_line).filter(|t| !t.is_empty()) {
             self.title = Some(clip_head(&title, MAX_TITLE_CHARS));
         }
     }
