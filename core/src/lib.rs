@@ -8,10 +8,14 @@
 //! `capsa-core` depends on no workspace crate. It prints through [`render::emit`] and
 //! `update::run`, and through [`exit`] for errors.
 
+pub mod bulletin;
 pub mod census_snapshot;
 pub mod claude_settings;
 #[cfg(feature = "clap")]
 pub mod cli;
+#[cfg(feature = "config")]
+pub mod config;
+pub mod doctor;
 pub mod exit;
 pub mod format;
 pub mod fs;

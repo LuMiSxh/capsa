@@ -21,6 +21,15 @@ pub fn state_dir(tool: &str) -> PathBuf {
     state_dir_with(tool, std::env::home_dir(), |k| std::env::var_os(k))
 }
 
+/// Returns the file `name` in a tool's state directory, where every tool keeps its logs.
+///
+/// That is `<state_dir(tool)>/<name>`. Returns `None` when neither a home directory nor the state
+/// root variable is known, since the directory would then be relative to the working directory.
+/// Nothing is created.
+pub fn log_file(tool: &str, name: &str) -> Option<PathBuf> {
+    log_file_with(tool, name, std::env::home_dir(), |k| std::env::var_os(k))
+}
+
 fn config_dir_with(
     tool: &str,
     home: Option<PathBuf>,
@@ -56,6 +65,23 @@ fn state_dir_with(
     }
 }
 
+/// The variable that names the state root: `LOCALAPPDATA` on Windows, `XDG_STATE_HOME` elsewhere.
+const STATE_ROOT_VAR: &str = if cfg!(windows) {
+    "LOCALAPPDATA"
+} else {
+    "XDG_STATE_HOME"
+};
+
+fn log_file_with(
+    tool: &str,
+    name: &str,
+    home: Option<PathBuf>,
+    env: impl Fn(&str) -> Option<OsString>,
+) -> Option<PathBuf> {
+    let known = home.is_some() || env(STATE_ROOT_VAR).is_some();
+    known.then(|| state_dir_with(tool, home, &env).join(name))
+}
+
 /// Expands a leading `~` or `~/` (`~\` on Windows) to the home directory.
 ///
 /// Command-line words get a shell, but `acus run` lines and patch text do not, so the tools
@@ -82,9 +108,9 @@ fn expand_with_home(path: &str, home: Option<&Path>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::expand_with_home;
     #[cfg(unix)]
     use super::{config_dir_with, state_dir_with};
+    use super::{expand_with_home, log_file_with};
     #[cfg(unix)]
     use std::ffi::OsString;
     use std::path::Path;
@@ -173,6 +199,30 @@ mod tests {
         assert_eq!(
             config_dir_with("acus", Some(PathBuf::from(HOME)), env),
             Path::new("/x/cfg/acus")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn log_file_joins_the_name_to_the_state_dir() {
+        assert_eq!(
+            log_file_with("acus", "guard.jsonl", Some(PathBuf::from(HOME)), |_| None),
+            Some(PathBuf::from("/home/user/.local/state/acus/guard.jsonl"))
+        );
+    }
+
+    #[test]
+    fn log_file_is_none_without_a_home_or_state_root() {
+        assert_eq!(log_file_with("acus", "guard.jsonl", None, |_| None), None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn log_file_uses_the_state_root_when_no_home_is_known() {
+        let env = |k: &str| (k == "XDG_STATE_HOME").then(|| OsString::from("/x/state"));
+        assert_eq!(
+            log_file_with("acus", "guard.jsonl", None, env),
+            Some(PathBuf::from("/x/state/acus/guard.jsonl"))
         );
     }
 }

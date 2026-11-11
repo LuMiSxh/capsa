@@ -218,3 +218,23 @@ fn table_right_aligns_numeric_columns() {
     );
     assert_eq!(render(&doc, plain), expected);
 }
+
+#[test]
+fn more_footer_names_the_command_in_the_agent_and_human_views() {
+    let mut doc = Doc::default();
+    doc.more(3, "census sessions --all");
+    assert_eq!(
+        render(&doc, Profile::AGENT),
+        "… 3 more; run census sessions --all\n"
+    );
+    assert_eq!(
+        render(
+            &doc,
+            Profile {
+                color: false,
+                rich: true
+            }
+        ),
+        "  … 3 more; run census sessions --all\n"
+    );
+}

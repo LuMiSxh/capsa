@@ -9,6 +9,7 @@ mod args;
 mod binary;
 mod error;
 mod release;
+mod steps;
 #[cfg(test)]
 mod tests;
 
@@ -26,6 +27,7 @@ use crate::render::{Doc, Mark, Render, Status, emit};
 #[cfg(feature = "clap")]
 pub use args::{UninstallArgs, UpdateArgs};
 pub use error::UpdateError;
+pub use steps::{leftover_note, reinstall_skill};
 
 /// The repository that holds the releases of every capsa tool.
 pub const REPO: &str = "LuMiSxh/capsa";

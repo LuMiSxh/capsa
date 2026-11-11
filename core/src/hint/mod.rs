@@ -2,8 +2,11 @@
 //! Owns the hint contract: a library error names its fix, and the binary shows it.
 //! It keeps that hint in the `anyhow` chain for [`crate::exit`] to render.
 
+mod feature;
 #[cfg(test)]
 mod tests;
+
+pub use feature::{uninstall_unavailable, update_unavailable};
 
 use std::borrow::Cow;
 use std::error::Error;
@@ -120,4 +123,10 @@ pub fn find_hint(err: &anyhow::Error) -> Option<&str> {
     err.chain()
         .find_map(|link| link.downcast_ref::<Hinted>())
         .map(|hinted| hinted.hint.as_str())
+}
+
+/// Builds an [`anyhow::Error`] for a failure the user can fix: `message` says what failed and
+/// `hint` the fix. [`find_hint`] reads the hint back.
+pub fn hinted(message: impl Into<String>, hint: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(Hinted::new(message, hint))
 }

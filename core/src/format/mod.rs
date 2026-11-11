@@ -115,3 +115,19 @@ pub fn color_in(format: Format, terminal: bool, env: &dyn Env) -> bool {
         .is_some_and(|value| !value.as_encoded_bytes().is_empty());
     format == Format::Human && terminal && !no_color_set
 }
+
+/// Formats an age in seconds as a compact relative time, such as `5m ago`.
+///
+/// Under a minute it reads `just now`. Otherwise it uses the largest unit that fits, truncated:
+/// `m`, `h`, `d`, `mo` (30 days) or `y` (365 days).
+pub fn ago(secs: u64) -> String {
+    let (n, unit) = match secs {
+        0..=59 => return "just now".to_owned(),
+        60..=3599 => (secs / 60, "m"),
+        3600..=86_399 => (secs / 3600, "h"),
+        86_400..=2_591_999 => (secs / 86_400, "d"),
+        2_592_000..=31_535_999 => (secs / 2_592_000, "mo"),
+        _ => (secs / 31_536_000, "y"),
+    };
+    format!("{n}{unit} ago")
+}

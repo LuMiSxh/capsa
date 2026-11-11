@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use std::ffi::OsString;
 
-use super::{Env, Format, Stream, agent_env_in, color, color_in, color_stdout, resolve_in};
+use super::{Env, Format, Stream, agent_env_in, ago, color, color_in, color_stdout, resolve_in};
 
 #[derive(Default)]
 struct Fake(Vec<(&'static str, &'static str)>);
@@ -108,4 +108,36 @@ fn colour_needs_human_a_terminal_and_no_no_color() {
         true,
         &Fake::with(&[("NO_COLOR", "")])
     ));
+}
+
+#[test]
+fn ago_reads_just_now_under_a_minute() {
+    assert_eq!(ago(0), "just now");
+    assert_eq!(ago(59), "just now");
+}
+
+#[test]
+fn ago_uses_minutes_from_one_minute() {
+    assert_eq!(ago(60), "1m ago");
+    assert_eq!(ago(3599), "59m ago");
+}
+
+#[test]
+fn ago_uses_hours_then_days() {
+    assert_eq!(ago(3600), "1h ago");
+    assert_eq!(ago(86_399), "23h ago");
+    assert_eq!(ago(86_400), "1d ago");
+    assert_eq!(ago(2_591_999), "29d ago");
+}
+
+#[test]
+fn ago_uses_thirty_day_months() {
+    assert_eq!(ago(2_592_000), "1mo ago");
+    assert_eq!(ago(31_535_999), "12mo ago");
+}
+
+#[test]
+fn ago_uses_365_day_years() {
+    assert_eq!(ago(31_536_000), "1y ago");
+    assert_eq!(ago(63_072_000), "2y ago");
 }
