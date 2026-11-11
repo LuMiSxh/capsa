@@ -79,7 +79,10 @@ AGENTS.md before working in its directory.
   in `[workspace.lints.clippy]`. Silence a lint only with
   `#[expect(clippy::…, reason = "…")]`, never with a bare `allow`.
 - **Errors:** library crates (`capsa-core`, `acus-*` except `acus-cli`) define `thiserror` enums that callers can match on.
-  Binaries collect errors with `anyhow` and `.context(...)`. A fix for the
+  Binaries collect errors with `anyhow` and `.context(...)`. The binary-facing
+  part of `capsa-core` (`cli`, `exit`, `hint::find_hint`, `update::run`) takes
+  and returns `anyhow::Error` on purpose, because it runs each tool's `main`.
+  A fix for the
   user comes from `capsa_core::Hint`, never as text glued into a message.
   `capsa_core::exit` renders `error:`, the context chain and `hint:` in every
   output format.
