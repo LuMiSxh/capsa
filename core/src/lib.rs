@@ -14,11 +14,15 @@ pub mod claude_settings;
 pub mod cli;
 pub mod exit;
 pub mod format;
+pub mod fs;
 pub mod hint;
 pub mod hooks;
+pub mod lock;
 pub mod log;
 pub mod paths;
 pub mod pkg;
+#[cfg(feature = "process")]
+pub mod process;
 pub mod render;
 pub mod skill;
 #[cfg(feature = "update")]

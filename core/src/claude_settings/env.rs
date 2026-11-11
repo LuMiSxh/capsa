@@ -4,9 +4,9 @@
 use std::path::Path;
 
 use serde::Serialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
-use super::{SettingsError, Step, object_mut};
+use super::{SettingsError, Step, put_key, take_object};
 
 /// What `remove_env` did to an env key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -50,7 +50,9 @@ pub fn set_env(v: &mut Value, key: &str, value: &str) -> Step {
     if env_value(v, key) == Some(value) {
         return Step::Set;
     }
-    let had = env_mut(v).insert(key.to_owned(), json!(value)).is_some();
+    let mut env = take_object(v, "env");
+    let had = env.insert(key.to_owned(), json!(value)).is_some();
+    put_key(v, "env", Value::Object(env));
     if had { Step::Replace } else { Step::Install }
 }
 
@@ -67,8 +69,10 @@ pub fn remove_env(v: &mut Value, key: &str, expected: &str) -> Removal {
         return Removal::Kept;
     }
     env.remove(key);
-    if env.is_empty() {
-        object_mut(v).remove("env");
+    if env.is_empty()
+        && let Some(root) = v.as_object_mut()
+    {
+        root.remove("env");
     }
     Removal::Removed
 }
@@ -78,12 +82,8 @@ pub(super) fn check_env(value: &Value, path: &Path) -> Result<(), SettingsError>
         Some(env) if !env.is_object() => Err(SettingsError::Shape {
             path: path.to_owned(),
             key: "env".to_owned(),
+            expected: "an object",
         }),
         _ => Ok(()),
     }
-}
-
-fn env_mut(v: &mut Value) -> &mut Map<String, Value> {
-    let env = object_mut(v).entry("env").or_insert_with(|| json!({}));
-    object_mut(env)
 }

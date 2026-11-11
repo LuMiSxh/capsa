@@ -16,6 +16,10 @@ clap = ["dep:clap"]
 # Self update and uninstall from GitHub releases; network only when called.
 update = ["dep:ureq", "dep:flate2", "dep:tar", "dep:zip", "dep:sha2"]
 
+# Process groups and termination signals; `process-async` adds tokio signal waiting.
+process = []
+process-async = ["process", "dep:tokio"]
+
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, optional = true }
@@ -25,6 +29,7 @@ serde_json.workspace = true
 sha2 = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
 thiserror.workspace = true
+tokio = { workspace = true, optional = true, features = ["signal", "time", "macros", "rt"] }
 ureq = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 

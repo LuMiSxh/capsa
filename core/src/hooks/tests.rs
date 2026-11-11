@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 
 use super::spec::{add as add_missing_hook, state as hook_state};
-use super::{Agent, HookFile, HookSpec, HookState};
+use super::{Agent, HookFile, HookSpec, HookState, StatusLineSpec, StatusLineState};
 use crate::claude_settings::{Step, runs};
 use crate::render::Status;
 
@@ -369,4 +369,93 @@ fn checks_report_each_state_with_the_setup_fix() {
     assert_eq!(missing.status, Status::Warn);
     assert_eq!(missing.detail, "not registered");
     assert_eq!(missing.hint.as_deref(), Some("run demo self setup"));
+}
+
+const LINE: StatusLineSpec = StatusLineSpec {
+    command: "demo-hook statusline",
+    owns: owns_line,
+};
+
+fn owns_line(command: &str) -> bool {
+    runs(command, "demo-hook", "statusline")
+}
+
+fn status_line(command: &str) -> Value {
+    json!({"type": "command", "command": command})
+}
+
+#[test]
+fn reports_each_status_line_state() {
+    let (_dir, file) = open(&json!({}));
+    assert_eq!(file.status_line(&LINE), StatusLineState::Missing);
+
+    let (_dir, file) = open(&json!({"statusLine": status_line("demo-hook statusline")}));
+    assert_eq!(file.status_line(&LINE), StatusLineState::Installed);
+
+    let (_dir, file) = open(&json!({"statusLine": status_line("demo-hook statusline --wide")}));
+    assert_eq!(
+        file.status_line(&LINE),
+        StatusLineState::Outdated {
+            command: "demo-hook statusline --wide".to_owned()
+        }
+    );
+
+    let (_dir, file) = open(&json!({"statusLine": status_line("other-tool")}));
+    assert_eq!(
+        file.status_line(&LINE),
+        StatusLineState::Foreign {
+            command: Some("other-tool".to_owned())
+        }
+    );
+
+    let (_dir, file) = open(&json!({"statusLine": {"type": "command"}}));
+    assert_eq!(
+        file.status_line(&LINE),
+        StatusLineState::Foreign { command: None }
+    );
+}
+
+#[test]
+fn set_status_line_installs_then_reports_the_same_line_as_set() {
+    let (_dir, mut file) = open(&json!({"theme": "dark"}));
+    assert_eq!(file.set_status_line(&LINE), Step::Install);
+    assert_eq!(file.set_status_line(&LINE), Step::Set);
+    file.write().unwrap();
+    assert_eq!(
+        saved(&file),
+        json!({"theme": "dark", "statusLine": status_line("demo-hook statusline")})
+    );
+
+    let mut again = HookFile::open_at(Agent::ClaudeCode, file.path()).unwrap();
+    assert_eq!(again.status_line(&LINE), StatusLineState::Installed);
+    assert_eq!(again.set_status_line(&LINE), Step::Set);
+}
+
+#[test]
+fn set_status_line_replaces_an_outdated_or_foreign_line() {
+    let (_dir, mut file) = open(&json!({"statusLine": status_line("demo-hook statusline --wide")}));
+    assert_eq!(file.set_status_line(&LINE), Step::Replace);
+    assert_eq!(file.status_line(&LINE), StatusLineState::Installed);
+
+    let (_dir, mut file) = open(&json!({"statusLine": status_line("other-tool")}));
+    assert_eq!(file.set_status_line(&LINE), Step::Replace);
+    assert_eq!(
+        file.value()["statusLine"],
+        status_line("demo-hook statusline")
+    );
+}
+
+#[test]
+fn remove_status_line_drops_the_tools_line_and_keeps_a_foreign_one() {
+    let (_dir, mut file) = open(&json!({
+        "theme": "dark",
+        "statusLine": status_line("demo-hook statusline --wide"),
+    }));
+    assert!(file.remove_status_line(&LINE));
+    assert_eq!(file.value(), &json!({"theme": "dark"}));
+    assert!(!file.remove_status_line(&LINE));
+
+    let (_dir, mut file) = open(&json!({"statusLine": status_line("other-tool")}));
+    assert!(!file.remove_status_line(&LINE));
+    assert_eq!(file.value()["statusLine"], status_line("other-tool"));
 }

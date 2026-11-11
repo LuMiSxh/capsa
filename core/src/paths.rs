@@ -61,18 +61,22 @@ fn state_dir_with(
 /// Command-line words get a shell, but `acus run` lines and patch text do not, so the tools
 /// expand the path themselves. `~user` and a `~` anywhere else stay as written, and so does
 /// the path when no home directory is known.
-pub fn expand_home(path: &str) -> String {
+pub fn expand_home(path: &str) -> PathBuf {
     expand_with_home(path, std::env::home_dir().as_deref())
 }
 
-fn expand_with_home(path: &str, home: Option<&Path>) -> String {
+fn expand_with_home(path: &str, home: Option<&Path>) -> PathBuf {
     let rest = match path.strip_prefix('~') {
         Some(r) if r.is_empty() || r.starts_with(['/', '\\']) => r,
-        _ => return path.to_owned(),
+        _ => return PathBuf::from(path),
     };
     match home {
-        Some(home) => format!("{}{rest}", home.display()),
-        None => path.to_owned(),
+        Some(home) => {
+            let mut expanded = home.as_os_str().to_owned();
+            expanded.push(rest);
+            PathBuf::from(expanded)
+        }
+        None => PathBuf::from(path),
     }
 }
 
@@ -91,6 +95,8 @@ mod tests {
 
     fn expand(path: &str) -> String {
         expand_with_home(path, Some(Path::new(HOME)))
+            .display()
+            .to_string()
     }
 
     #[test]
@@ -121,7 +127,10 @@ mod tests {
 
     #[test]
     fn path_is_kept_when_no_home_is_known() {
-        assert_eq!(expand_with_home("~/src", None), "~/src");
+        assert_eq!(
+            expand_with_home("~/src", None).display().to_string(),
+            "~/src"
+        );
     }
 
     #[test]

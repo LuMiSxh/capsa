@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Owns the file of rate-limit snapshots that census and pons share: one JSON object per line.
 
+use crate::fs::write_atomic;
 use crate::paths::state_dir;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
@@ -49,6 +50,13 @@ pub enum SnapshotError {
     Encode(#[from] serde_json::Error),
 }
 
+fn io_error(file: &Path, source: io::Error) -> SnapshotError {
+    SnapshotError::Io {
+        path: file.to_owned(),
+        source,
+    }
+}
+
 /// Returns the default snapshot file, `snapshots` in the census state directory.
 pub fn path() -> PathBuf {
     state_dir("census").join("snapshots")
@@ -68,21 +76,17 @@ pub fn append(snapshot: &Snapshot) -> Result<(), SnapshotError> {
 /// # Errors
 /// Fails when the line cannot be encoded or written.
 pub fn append_to(file: &Path, snapshot: &Snapshot) -> Result<(), SnapshotError> {
-    let io_err = |source| SnapshotError::Io {
-        path: file.to_owned(),
-        source,
-    };
     let mut line = serde_json::to_vec(snapshot)?;
     line.push(b'\n');
     if let Some(dir) = file.parent() {
-        std::fs::create_dir_all(dir).map_err(io_err)?;
+        std::fs::create_dir_all(dir).map_err(|source| io_error(file, source))?;
     }
     let mut f = OpenOptions::new()
         .create(true)
         .append(true)
         .open(file)
-        .map_err(io_err)?;
-    f.write_all(&line).map_err(io_err)
+        .map_err(|source| io_error(file, source))?;
+    f.write_all(&line).map_err(|source| io_error(file, source))
 }
 
 /// Reads the snapshots with `t >= since` from the default file.
@@ -99,18 +103,14 @@ pub fn read_since(since: u64) -> Result<Vec<Snapshot>, SnapshotError> {
 /// # Errors
 /// Fails when the file exists but cannot be read.
 pub fn read_since_from(file: &Path, since: u64) -> Result<Vec<Snapshot>, SnapshotError> {
-    let io_err = |source| SnapshotError::Io {
-        path: file.to_owned(),
-        source,
-    };
     let f = match File::open(file) {
         Ok(f) => f,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(io_err(e)),
+        Err(e) => return Err(io_error(file, e)),
     };
     let mut out = Vec::new();
     for line in BufReader::new(f).split(b'\n') {
-        let line = line.map_err(io_err)?;
+        let line = line.map_err(|source| io_error(file, source))?;
         if let Ok(s) = serde_json::from_slice::<Snapshot>(&line)
             && s.t >= since
         {
@@ -127,25 +127,17 @@ pub fn read_since_from(file: &Path, since: u64) -> Result<Vec<Snapshot>, Snapsho
 /// # Errors
 /// Fails when the file cannot be read or replaced.
 pub fn prune_before(file: &Path, before: u64, dry_run: bool) -> Result<usize, SnapshotError> {
-    let io_err = |source| SnapshotError::Io {
-        path: file.to_owned(),
-        source,
-    };
     let all = read_since_from(file, 0)?;
     let (keep, drop): (Vec<_>, Vec<_>) = all.into_iter().partition(|s| s.t >= before);
     if dry_run || drop.is_empty() {
         return Ok(drop.len());
     }
-    let tmp = file.with_extension("tmp");
     let mut body = Vec::new();
     for s in &keep {
         serde_json::to_writer(&mut body, s)?;
         body.push(b'\n');
     }
-    let mut f = File::create(&tmp).map_err(io_err)?;
-    f.write_all(&body).map_err(io_err)?;
-    f.sync_all().map_err(io_err)?;
-    std::fs::rename(&tmp, file).map_err(io_err)?;
+    write_atomic(file, &body).map_err(|source| io_error(file, source))?;
     Ok(drop.len())
 }
 
