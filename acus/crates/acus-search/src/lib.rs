@@ -44,8 +44,6 @@ thread_local! {
 /// A buffer above this size is released after use instead of kept for the next file.
 const KEEP_BUF: usize = 8 << 20;
 
-pub mod follow;
-
 pub struct FindOpts {
     pub patterns: Vec<String>,
     pub walk: WalkOpts,
@@ -89,7 +87,7 @@ pub struct FileHits {
     pub source: String,
     #[serde(skip)]
     pub outline: Option<Outline>,
-    /// The lines a `find_range` search covered, 1-based inclusive; None for a whole file.
+    /// The lines a `find_ranges` search covered, 1-based inclusive; None for a whole file.
     #[serde(skip)]
     pub lines: Option<(usize, usize)>,
 }
@@ -109,16 +107,23 @@ impl FileHits {
     /// The first `n` hits with `before` lines above and `after` lines below each, in line order.
     /// Overlapping and adjacent ranges merge; a `Break` separates non-adjacent groups.
     pub fn context_rows(&self, n: usize, before: usize, after: usize) -> Vec<Row<'_>> {
-        let lines: Vec<&str> = self.source.lines().collect();
+        let total = self.source.lines().count();
         // Context stays inside the searched range, so `path:A-B` never prints lines outside it.
-        let (first, last) = self.lines.unwrap_or((1, lines.len()));
-        let (first, last) = (first.max(1), last.min(lines.len()));
+        let (first, last) = self.lines.unwrap_or((1, total));
+        let (first, last) = (first.max(1), last.min(total));
         let hits: BTreeMap<usize, &Hit> = self.hits[..n].iter().map(|h| (h.line, h)).collect();
         let mut shown = BTreeSet::new();
         for &line in hits.keys() {
             let end = line.saturating_add(after).min(last);
             shown.extend(line.saturating_sub(before).max(first)..=end);
         }
+        // The lines are read in order, once, as the shown line numbers ascend.
+        let mut numbered = self
+            .source
+            .lines()
+            .enumerate()
+            .map(|(i, text)| (i + 1, text))
+            .peekable();
         let mut rows = Vec::with_capacity(shown.len());
         let mut prev = None;
         for line in shown {
@@ -126,12 +131,13 @@ impl FileHits {
                 rows.push(Row::Break);
             }
             prev = Some(line);
+            while numbered.next_if(|&(k, _)| k < line).is_some() {}
+            let text = numbered
+                .next_if(|&(k, _)| k == line)
+                .map_or("", |(_, text)| text);
             rows.push(match hits.get(&line) {
                 Some(&h) => Row::Hit(h),
-                None => Row::Context {
-                    line,
-                    text: lines.get(line - 1).copied().unwrap_or(""),
-                },
+                None => Row::Context { line, text },
             });
         }
         rows
@@ -148,10 +154,18 @@ pub fn find(o: &FindOpts) -> Result<Vec<FileHits>, FindError> {
         let found = BUF.with(|b| {
             let mut buf = b.borrow_mut();
             buf.clear();
-            let read = std::fs::File::open(path).and_then(|mut f| f.read_to_end(&mut buf));
+            let read = std::fs::File::open(path).and_then(|mut f| {
+                // A buffer taken as a file's `source` comes back empty; sizing it once avoids the
+                // repeated growth of `read_to_end`.
+                if buf.capacity() == 0 {
+                    let len = f.metadata().map_or(0, |m| m.len());
+                    buf.reserve(usize::try_from(len).unwrap_or(0));
+                }
+                f.read_to_end(&mut buf)
+            });
             let found = read
                 .ok()
-                .and_then(|_| search(o, &matcher, path, &buf, None));
+                .and_then(|_| search(o, &matcher, path, &mut buf, None));
             if buf.capacity() > KEEP_BUF {
                 *buf = Vec::new();
             }
@@ -173,22 +187,36 @@ pub fn find(o: &FindOpts) -> Result<Vec<FileHits>, FindError> {
 /// Searches standard input like a file named `<stdin>`; `None` when nothing matches.
 pub fn find_stdin(o: &FindOpts, input: &[u8]) -> Result<Option<FileHits>, FindError> {
     let matcher = matcher(o)?;
-    Ok(search(o, &matcher, Path::new("<stdin>"), input, None))
+    Ok(search(
+        o,
+        &matcher,
+        Path::new("<stdin>"),
+        &mut input.to_vec(),
+        None,
+    ))
 }
 
-/// Searches one file, keeping only hits on lines `first..=last` (1-based, inclusive).
-/// Line numbers stay those of the whole file. `None` when nothing matches in the range.
-pub fn find_range(
+/// Searches each `(path, lines)` range, keeping only hits on lines `first..=last` (1-based,
+/// inclusive). Line numbers stay those of the whole file. The pattern compiles once for all of
+/// them; a range with no hit gives no entry.
+pub fn find_ranges<'a>(
     o: &FindOpts,
-    path: &Path,
-    lines: (usize, usize),
-) -> Result<Option<FileHits>, FindError> {
+    ranges: impl IntoIterator<Item = (&'a Path, (usize, usize))>,
+) -> Result<Vec<FileHits>, FindError> {
+    let mut ranges = ranges.into_iter().peekable();
+    if ranges.peek().is_none() {
+        return Ok(Vec::new());
+    }
     let matcher = matcher(o)?;
-    let bytes = std::fs::read(path).map_err(|source| FindError::Read {
-        path: path.display().to_string(),
-        source,
-    })?;
-    Ok(search(o, &matcher, path, &bytes, Some(lines)))
+    let mut found = Vec::new();
+    for (path, lines) in ranges {
+        let mut bytes = std::fs::read(path).map_err(|source| FindError::Read {
+            path: path.display().to_string(),
+            source,
+        })?;
+        found.extend(search(o, &matcher, path, &mut bytes, Some(lines)));
+    }
+    Ok(found)
 }
 
 fn matcher(o: &FindOpts) -> Result<RegexMatcher, FindError> {
@@ -196,7 +224,7 @@ fn matcher(o: &FindOpts) -> Result<RegexMatcher, FindError> {
         .patterns
         .iter()
         .map(|p| {
-            let p = if o.fixed { escape(p) } else { p.clone() };
+            let p = if o.fixed { regex::escape(p) } else { p.clone() };
             if o.line { format!("^(?:{p})$") } else { p }
         })
         .collect();
@@ -240,11 +268,13 @@ pub fn attach_outlines(files: &mut [FileHits]) {
     });
 }
 
+/// Searches `bytes`, which the file hits take as their `source` when there are any: the buffer
+/// is moved, not copied, so `bytes` is empty afterwards in that case.
 fn search(
     o: &FindOpts,
     matcher: &RegexMatcher,
     path: &Path,
-    bytes: &[u8],
+    bytes: &mut Vec<u8>,
     lines: Option<(usize, usize)>,
 ) -> Option<FileHits> {
     let key = (o.multiline, o.invert);
@@ -262,19 +292,47 @@ fn search(
             },
             |(_, s)| s,
         );
-    let found = search_with(&mut searcher, o, matcher, path, bytes, lines);
+    let hits = search_with(&mut searcher, o, matcher, bytes, lines);
     SEARCHER.with(|c| *c.borrow_mut() = Some((key, searcher)));
-    found
+    hits.map(|hits| file_hits(o, path, bytes, hits, lines))
+}
+
+fn file_hits(
+    o: &FindOpts,
+    path: &Path,
+    bytes: &mut Vec<u8>,
+    hits: Vec<Hit>,
+    lines: Option<(usize, usize)>,
+) -> FileHits {
+    let lang = Lang::from_path(path);
+    let source = source_of(bytes);
+    let outline = lang.filter(|_| o.syntax).and_then(|l| outline(l, &source));
+    FileHits {
+        path: display_path(path),
+        lang,
+        hits,
+        source,
+        outline,
+        lines,
+    }
+}
+
+/// Takes the bytes as text. Invalid UTF-8 becomes replacement characters, as `find` has always
+/// printed it.
+fn source_of(bytes: &mut Vec<u8>) -> String {
+    match String::from_utf8(std::mem::take(bytes)) {
+        Ok(text) => text,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    }
 }
 
 fn search_with(
     searcher: &mut Searcher,
     o: &FindOpts,
     matcher: &RegexMatcher,
-    path: &Path,
     bytes: &[u8],
     lines: Option<(usize, usize)>,
-) -> Option<FileHits> {
+) -> Option<Vec<Hit>> {
     let mut hits = Vec::new();
     let sink = Lossy(|n, line| {
         if lines.is_some_and(|(first, last)| !(first..=last).contains(&(n as usize))) {
@@ -303,29 +361,5 @@ fn search_with(
     if searcher.search_slice(matcher, bytes, sink).is_err() || hits.is_empty() {
         return None;
     }
-    let lang = Lang::from_path(path);
-    let source = std::str::from_utf8(bytes).map_or_else(
-        |_| String::from_utf8_lossy(bytes).into_owned(),
-        str::to_owned,
-    );
-    let outline = lang.filter(|_| o.syntax).and_then(|l| outline(l, &source));
-    Some(FileHits {
-        path: display_path(path),
-        lang,
-        hits,
-        source,
-        outline,
-        lines,
-    })
-}
-
-fn escape(s: &str) -> String {
-    let mut e = String::with_capacity(s.len());
-    for c in s.chars() {
-        if r"\.+*?()|[]{}^$".contains(c) {
-            e.push('\\');
-        }
-        e.push(c);
-    }
-    e
+    Some(hits)
 }

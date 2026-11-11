@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus follow`: the callers or callees of a symbol, as a tree of call edges.
 
-use crate::fmt::{Budget, Out, clip};
-use acus_search::follow::{CALLABLE, Edge, Node, addr_of, callees, callers, container_of};
+use crate::follow::{CALLABLE, Edge, Node, addr_of, callees, callers, container_of};
+use crate::hinted;
+use crate::out::{Budget, Out, clip};
 use acus_syntax::calls;
 use acus_syntax::{Address, Lang, Resolve, Target, resolve};
 use anyhow::Result;
@@ -40,11 +41,7 @@ const UNSURE_CAP: usize = 15;
 /// Text lines before the walk stops expanding, unless `--all`.
 const LINE_BUDGET: usize = 40;
 
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "execute hands over the parsed arguments"
-)]
-pub fn run(a: Args, out: &Out) -> Result<Outcome> {
+pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     let max = a.depth.max(1);
     let dir = if a.down { "callees" } else { "callers" };
     let mut nodes = vec![resolve_target(&a.addr)?];
@@ -254,11 +251,10 @@ impl Tree<'_> {
 fn resolve_target(raw: &str) -> Result<Node> {
     let addr = Address::parse(raw);
     let Target::Symbol(q) = &addr.target else {
-        return Err(capsa_core::hint::Hinted::new(
+        return Err(hinted(
             "follow needs path#Sym, not a line range",
             format!("acus follow {}#Symbol", addr.path),
-        )
-        .into());
+        ));
     };
     let path = addr.path.as_str();
     let src = crate::source::read_text(path)?;
@@ -268,39 +264,35 @@ fn resolve_target(raw: &str) -> Result<Node> {
         .filter(|_| supported)
         .and_then(|l| calls::analyze(l, &src))
     else {
-        return Err(capsa_core::hint::Hinted::new(
+        return Err(hinted(
             "acus follow supports Rust, Swift, TypeScript, JavaScript, Python, C and Shell",
             format!("{path} has no call rules; use acus outline {path} to find a function"),
-        )
-        .into());
+        ));
     };
     let sym = match resolve(&outline, q) {
         Resolve::Found(s) => s.clone(),
         Resolve::Missing => {
-            return Err(capsa_core::hint::Hinted::new(
+            return Err(hinted(
                 format!("no symbol `{q}` in {path}"),
                 format!("acus outline {path}"),
-            )
-            .into());
+            ));
         }
         Resolve::Ambiguous(v) => {
             let c: Vec<_> = v
                 .iter()
                 .map(|s| format!("{path}:{}-{} ({})", s.start_line, s.end_line, s.qual))
                 .collect();
-            return Err(capsa_core::hint::Hinted::new(
+            return Err(hinted(
                 format!("`{q}` is ambiguous in {path}"),
                 c.join(", "),
-            )
-            .into());
+            ));
         }
     };
     if !CALLABLE.contains(&sym.kind) {
-        return Err(capsa_core::hint::Hinted::new(
+        return Err(hinted(
             format!("`{}` is a {}, not callable", sym.qual, sym.kind),
             format!("acus follow works on {}", CALLABLE.join(", ")),
-        )
-        .into());
+        ));
     }
     let parent = container_of(&sym.qual);
     let ctor = matches!(sym.name.as_str(), "init" | "__init__" | "constructor");

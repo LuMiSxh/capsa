@@ -16,6 +16,7 @@ acus-walk.workspace = true
 grep-matcher.workspace = true
 grep-regex.workspace = true
 grep-searcher.workspace = true
+regex.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

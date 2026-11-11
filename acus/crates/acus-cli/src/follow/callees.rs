@@ -5,7 +5,7 @@ use super::{
     CALLABLE, Edge, Memo, Node, addr_of, analysed, call_reaches, container_of, key, load, prefetch,
     prefetch_paths, search, settle,
 };
-use crate::{FileHits, FindError};
+use acus_search::{FileHits, FindError};
 use acus_syntax::calls::{Call, CallForm};
 use acus_syntax::{Lang, Symbol};
 use std::collections::HashMap;

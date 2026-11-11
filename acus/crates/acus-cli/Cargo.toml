@@ -44,16 +44,13 @@ acus-search.workspace = true
 acus-syntax.workspace = true
 acus-walk.workspace = true
 anyhow.workspace = true
-capsa-core = { workspace = true, features = ["clap"] }
+capsa-core = { workspace = true, features = ["clap", "process"] }
 clap.workspace = true
 regex.workspace = true
 serde.workspace = true
 similar.workspace = true
 serde_json.workspace = true
 toml.workspace = true
-
-[target.'cfg(unix)'.dependencies]
-libc = { workspace = true }
 
 [dev-dependencies]
 criterion.workspace = true

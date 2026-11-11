@@ -4,7 +4,7 @@
 use super::{
     Edge, Node, addr_of, analysed, call_reaches, container_of, key, prefetch, search, settle,
 };
-use crate::FindError;
+use acus_search::FindError;
 use acus_syntax::calls::{Call, CallForm};
 use std::collections::HashMap;
 

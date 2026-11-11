@@ -8,89 +8,59 @@ mod show;
 
 use show::*;
 
-/// Names every rule. `as_str` is what `guard.jsonl` and `census usage --guard` record, so the
-/// spellings must not change.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Rule {
-    Grep,
-    GrepTool,
-    ReadShell,
-    ReadTool,
-    BuildPipe,
-    CtxPipe,
-    SedI,
-    Tree,
-    GlobTool,
-    PsReplace,
-    EditScript,
-    GitStatus,
-    GitDiff,
-    GitLog,
-    GitShow,
-    AcusPipe,
-    TaskLog,
-    PatchQuiet,
-    FileWrite,
+macro_rules! rules {
+    ($($variant:ident => $name:literal,)*) => {
+        /// Names every rule. `as_str` is what `guard.jsonl` and `census usage --guard` record,
+        /// so the spellings must not change.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum Rule {
+            $($variant,)*
+        }
+
+        impl Rule {
+            #[cfg(test)]
+            pub(super) const ALL: &[Rule] = &[$(Rule::$variant,)*];
+
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $(Rule::$variant => $name,)*
+                }
+            }
+
+            /// Returns the rule a verdict's name stands for. Only the tests look rules up by name.
+            #[cfg(test)]
+            pub(super) fn parse(name: &str) -> Option<Rule> {
+                Rule::ALL.iter().copied().find(|r| r.as_str() == name)
+            }
+        }
+    };
 }
 
-impl Rule {
-    #[cfg(test)]
-    pub(super) const ALL: [Rule; 19] = [
-        Rule::Grep,
-        Rule::GrepTool,
-        Rule::ReadShell,
-        Rule::ReadTool,
-        Rule::BuildPipe,
-        Rule::CtxPipe,
-        Rule::SedI,
-        Rule::Tree,
-        Rule::GlobTool,
-        Rule::PsReplace,
-        Rule::EditScript,
-        Rule::GitStatus,
-        Rule::GitDiff,
-        Rule::GitLog,
-        Rule::GitShow,
-        Rule::AcusPipe,
-        Rule::TaskLog,
-        Rule::PatchQuiet,
-        Rule::FileWrite,
-    ];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Rule::Grep => "grep",
-            Rule::GrepTool => "grep-tool",
-            Rule::ReadShell => "read-shell",
-            Rule::ReadTool => "read-tool",
-            Rule::BuildPipe => "build-pipe",
-            Rule::CtxPipe => "ctx-pipe",
-            Rule::SedI => "sed-i",
-            Rule::Tree => "tree",
-            Rule::GlobTool => "glob-tool",
-            Rule::PsReplace => "ps-replace",
-            Rule::EditScript => "edit-script",
-            Rule::GitStatus => "git-status",
-            Rule::GitDiff => "git-diff",
-            Rule::GitLog => "git-log",
-            Rule::GitShow => "git-show",
-            Rule::AcusPipe => "acus-pipe",
-            Rule::TaskLog => "task-log",
-            Rule::PatchQuiet => "patch-quiet",
-            Rule::FileWrite => "file-write",
-        }
-    }
-
-    /// Returns the rule a verdict's name stands for. Only the tests look rules up by name.
-    #[cfg(test)]
-    pub(super) fn parse(name: &str) -> Option<Rule> {
-        Rule::ALL.into_iter().find(|r| r.as_str() == name)
-    }
+rules! {
+    Grep => "grep",
+    GrepTool => "grep-tool",
+    ReadShell => "read-shell",
+    ReadTool => "read-tool",
+    BuildPipe => "build-pipe",
+    CtxPipe => "ctx-pipe",
+    SedI => "sed-i",
+    Tree => "tree",
+    GlobTool => "glob-tool",
+    PsReplace => "ps-replace",
+    EditScript => "edit-script",
+    GitStatus => "git-status",
+    GitDiff => "git-diff",
+    GitLog => "git-log",
+    GitShow => "git-show",
+    AcusPipe => "acus-pipe",
+    TaskLog => "task-log",
+    PatchQuiet => "patch-quiet",
+    FileWrite => "file-write",
 }
 
 /// A search (`grep`, `rg`, `Select-String`, …) of source files whose output the model reads.
 fn searches_source(head: &str, args: &[&str], in_pipe: bool, via_xargs: bool) -> bool {
-    if !GREPS.contains(&head) || in_pipe || redirects_stdout(args) || is_quiet(args) {
+    if !is_grep(head) || in_pipe || redirects_stdout(args) || is_quiet(args) {
         return false;
     }
     let s = parse_search(head, args);
@@ -179,7 +149,7 @@ pub(super) fn rule(
     // `find … -exec grep …` searches the files it finds.
     if head == "find"
         && let Some(i) = args.iter().position(|a| matches!(*a, "-exec" | "-execdir"))
-        && let Some(&exec) = args.get(i + 1).filter(|c| GREPS.contains(&command_name(c)))
+        && let Some(&exec) = args.get(i + 1).filter(|c| is_grep(command_name(c)))
     {
         return Some(Verdict::Deny(Rule::Grep, grep_reason(command_name(exec))));
     }
@@ -296,7 +266,7 @@ pub(super) fn compound_refusal(
         Some((f, r, why)) if !blocked.contains(&from) => (*r, why.clone(), *f, *f),
         _ => (rule, reason, from, to),
     };
-    let at = |i: usize| segs[i].orig.as_str();
+    let at = |i: usize| segs[i].orig();
     let part = (from..=to).map(at).collect::<Vec<_>>().join(" | ");
     let part = one_line(&part);
     let instead = Some(rule)
@@ -362,7 +332,7 @@ pub(super) fn suggest(rule: Rule, seg: &str) -> Option<String> {
         Rule::Grep if head == "rg" && args.contains(&"--files") => {
             rg_files(&args).map(|s| format!("`{s}`"))
         }
-        Rule::Grep if GREPS.contains(&head.as_str()) => {
+        Rule::Grep if is_grep(&head) => {
             let s = parse_search(&head, &args);
             (!s.inexact).then(|| format!("`{}`", find_cmd(&s)))
         }
@@ -418,7 +388,7 @@ mod rule_names {
                 "file-write",
             ]
         );
-        for r in Rule::ALL {
+        for &r in Rule::ALL {
             assert_eq!(Rule::parse(r.as_str()), Some(r));
         }
     }
@@ -426,7 +396,7 @@ mod rule_names {
     /// Names the two folds here: a rename would split `guard.jsonl` counts.
     #[test]
     fn new_rule_names_parse_back() {
-        for r in Rule::ALL {
+        for &r in Rule::ALL {
             assert_eq!(Rule::parse(r.as_str()), Some(r));
         }
         assert_eq!(Rule::AcusPipe.as_str(), "acus-pipe");

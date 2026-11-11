@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added
+
+- `acus self doctor` reports `guard log file`. A guard log that exists but cannot be opened for
+  appending, such as one created by `sudo`, fails with a hint, instead of every decision being
+  dropped unseen.
+
+### Changed
+
+- The guard's hint throttle locks a session with an OS file lock (`capsa_core::lock`) instead of a
+  `create_new` lock file with a nonce and stale-lock breaking. The kernel drops the lock when a
+  process dies, so a crashed guard no longer leaves a lock that hints wait out. Pruning also
+  removes the `.lock` files of idle sessions and leftover `.brk` files of older versions.
+  Benchmark: 1000 `hints::show` calls with `hint_every = 2` (`cargo test --release`, best of 7)
+  take 248 ms before and 148 ms after.
+
+### Fixed
+
+- `acus ctx --timeout` kills the whole command tree on Windows, with `taskkill`, as it already did
+  on Unix. Before, only the shell was killed and its children kept running.
+
 ## [0.22.1]
 
 ### Added

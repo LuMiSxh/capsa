@@ -233,7 +233,8 @@ fn concurrent_guard_calls_count_exactly() {
         last.div_ceil(10) + (20 - last),
         "{text}"
     );
-    assert!(!state.join("par.lock").exists());
+    let lock = capsa_core::lock::exclusive(&state.join("par.lock"), std::time::Duration::ZERO);
+    assert!(lock.unwrap().is_some(), "every call released the lock");
 }
 
 /// The SessionStart hook forgets a session's counts after a compaction or `/clear`, so the next
@@ -380,5 +381,74 @@ fn hook_gives_a_subagent_the_core_skill() {
     assert_eq!(
         hook["additionalContext"].as_str().unwrap(),
         include_str!("../../../../skill/CORE.md")
+    );
+}
+
+/// Claude Code and Codex parse the hook's bytes, so each reply shape is pinned as the exact line
+/// `acus hook` prints, field order included.
+#[cfg(any(feature = "guard-bash", feature = "guard-zsh"))]
+#[test]
+fn hook_replies_keep_their_wire_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
+    let reply = |input: serde_json::Value| run_hook(&config, &["hook"], input);
+    assert_eq!(
+        reply(serde_json::json!({
+            "session_id": "r1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "cd app && ls; cat settings.json; grep -n foo src/a.rs && echo ok"},
+        })),
+        format!(
+            "{}\n",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"cd app && ls; cat settings.json; acus find 'foo' 'src/a.rs' && echo ok"},"additionalContext":"acus guard: ran `acus find 'foo' 'src/a.rs'` instead of `grep -n foo src/a.rs`. The command was rewritten, not refused; use acus directly next time.","permissionDecision":"allow"}}"#
+        )
+    );
+    assert_eq!(
+        reply(serde_json::json!({
+            "tool_name": "Bash",
+            "permission_mode": "default",
+            "tool_input": {"command": "cargo test 2>&1 | tail -3", "timeout": 5000},
+        })),
+        format!(
+            "{}\n",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"acus ctx 'cargo test' --tail 3","timeout":5000},"additionalContext":"acus guard: ran `acus ctx 'cargo test' --tail 3` instead of `cargo test 2>&1 | tail -3`. The command was rewritten, not refused; use acus directly next time."}}"#
+        )
+    );
+    assert_eq!(
+        reply(serde_json::json!({
+            "turn_id": "t1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "grep -n foo src/a.rs"},
+        })),
+        format!(
+            "{}\n",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Use acus instead of grep: `acus find 'PAT' [PATH…]` (`--block` adds the enclosing code, `-l` lists files, `-w`, `-t TYPE`, `-g GLOB`, `-u --hidden` include ignored and hidden files). Only if acus cannot do this, rerun with a `command ` prefix."}}"#
+        )
+    );
+    assert_eq!(
+        reply(bash_call("h1", "git status")),
+        format!(
+            "{}\n",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"acus hint: `acus diff` lists uncommitted changes per file and function with line counts, untracked files included; `-p` adds the changed lines and `--staged` limits it to the index."}}"#
+        )
+    );
+    assert_eq!(
+        reply(serde_json::json!({"hook_event_name": "SubagentStart", "agent_type": "Explore"})),
+        format!(
+            "{}\n",
+            serde_json::json!({"hookSpecificOutput": {
+                "hookEventName": "SubagentStart",
+                "additionalContext": include_str!("../../../../skill/CORE.md"),
+            }})
+        )
+    );
+    let bad = dir.path().join("bad.toml");
+    std::fs::write(&bad, "[guard]\nhint_every = \"ten\"\n").unwrap();
+    let note = run_hook(&bad, &["hook"], bash_call("c1", "ls"));
+    let want = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"acus config error: invalid config PATH: TOML parse error at line 2, column 14 | 2 | hint_every = \"ten\" | ^^^^^ invalid type: string \"ten\", expected usize; guard runs with defaults; fix PATH"}}"#;
+    assert_eq!(
+        note,
+        format!("{}\n", want.replace("PATH", &bad.display().to_string()))
     );
 }

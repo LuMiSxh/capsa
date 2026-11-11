@@ -177,7 +177,7 @@ fn check_mode_writes_nothing() {
     let d = dir(&[("a.txt", "a\n")]);
     let ops =
         parse("*** Update File: a.txt\n<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE\n").unwrap();
-    apply(&ops, d.path(), true).unwrap();
+    apply(&ops, d.path(), &check_only()).unwrap();
     assert_eq!(read(d.path(), "a.txt"), "a\n");
 }
 
@@ -188,7 +188,7 @@ fn applied_files_carry_text_before_and_after() {
         "*** Update File: a.txt\n<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE\n*** Delete File: gone.txt\n*** Add File: new.txt\n+hi\n",
     )
     .unwrap();
-    let applied = apply_with(&ops, d.path(), true, false).unwrap();
+    let applied = apply(&ops, d.path(), &check_only()).unwrap();
     let text = |p: &str| applied.texts.iter().find(|t| t.path == p).unwrap();
     assert_eq!(text("a.txt").before.as_deref(), Some("a\n"));
     assert_eq!(text("a.txt").after.as_deref(), Some("b\n"));
@@ -228,7 +228,9 @@ fn reports_written_regions_with_final_line_numbers() {
     let d = dir(&[("a.txt", "1\n2\n3\n4\n5\n6\n")]);
     // The second block sits above the first one; its insertion shifts the first region down.
     let p = "*** Begin Patch\n*** Update File: a.txt\n<<<<<<< SEARCH\n5\n=======\nfive\nFIVE\n>>>>>>> REPLACE\n*** Update File: a.txt\n<<<<<<< SEARCH\n2\n=======\n2\none-and-a-half\n>>>>>>> REPLACE\n*** End Patch\n";
-    let r = apply(&parse(p).unwrap(), d.path(), true).unwrap().regions;
+    let r = apply(&parse(p).unwrap(), d.path(), &check_only())
+        .unwrap()
+        .regions;
     let got: Vec<_> = r.iter().map(|r| (r.start, r.lines.join(","))).collect();
     assert_eq!(
         got,

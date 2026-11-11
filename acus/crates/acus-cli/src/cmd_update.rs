@@ -6,6 +6,9 @@ use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 
+#[cfg(not(feature = "cmd-update"))]
+use crate::hinted;
+
 #[cfg(feature = "cmd-update")]
 pub use capsa_core::update::UpdateArgs as Args;
 
@@ -15,11 +18,10 @@ pub struct Args {}
 
 #[cfg(not(feature = "cmd-update"))]
 pub fn run(_: Args, _format: Format) -> Result<Outcome> {
-    Err(capsa_core::hint::Hinted::new(
+    Err(hinted(
         "acus was built without `update`",
         "cargo install --path crates/acus-cli --features cmd-update, or rerun the installer",
-    )
-    .into())
+    ))
 }
 
 #[cfg(feature = "cmd-update")]
@@ -53,8 +55,8 @@ fn add_missing_hooks(report: &capsa_core::update::Report, format: Format) {
 /// so the update still prints one JSON value.
 #[cfg(feature = "cmd-update")]
 fn reinstall_skill(report: &capsa_core::update::Report, format: Format) -> Result<()> {
+    use crate::hinted;
     use anyhow::Context;
-    use capsa_core::hint::Hinted;
     use capsa_core::skill::{Target, installed_target};
     use std::process::{Command, Stdio};
 
@@ -72,10 +74,9 @@ fn reinstall_skill(report: &capsa_core::update::Report, format: Format) -> Resul
     if child.status().is_ok_and(|s| s.success()) {
         Ok(())
     } else {
-        Err(Hinted::new(
+        Err(hinted(
             "cannot reinstall the skill",
             "run acus self skill --install",
-        )
-        .into())
+        ))
     }
 }

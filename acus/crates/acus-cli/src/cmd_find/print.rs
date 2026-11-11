@@ -2,9 +2,10 @@
 //! Prints `acus find` results: hit lines, whole blocks, matched parts and JSON.
 
 use super::matched;
-use crate::fmt::{Budget, Out, clip, hit_text, more_lines};
+use crate::out::{Budget, Out, clip, hit_text, more_lines};
 use acus_search::{FileHits, Hit, Row};
 use acus_syntax::Symbol;
+use capsa_core::render::{Tone, paint};
 use std::collections::{BTreeSet, HashMap};
 
 fn sym(f: &FileHits, line: usize) -> Option<&Symbol> {
@@ -60,9 +61,11 @@ pub(super) fn print_lines(
             match row {
                 Row::Hit(h) => {
                     if let Some(s) = labels.next().flatten() {
-                        budget.emit(
-                            &out.dim(&format!("@{} {}-{}", s.qual, s.start_line, s.end_line)),
-                        );
+                        budget.emit(&paint(
+                            &format!("@{} {}-{}", s.qual, s.start_line, s.end_line),
+                            Tone::Dim,
+                            out.color,
+                        ));
                     }
                     for (i, text) in h.text.split('\n').enumerate() {
                         let col = if i == 0 { h.col } else { 0 };
@@ -134,7 +137,11 @@ pub(super) fn print_only(shown: &[(&FileHits, usize)], out: &Out, cut: usize, bu
         let mut labels = label_before(f, &hits).into_iter();
         for h in &f.hits[..*n] {
             if let Some(s) = labels.next().flatten() {
-                budget.emit(&out.dim(&format!("@{} {}-{}", s.qual, s.start_line, s.end_line)));
+                budget.emit(&paint(
+                    &format!("@{} {}-{}", s.qual, s.start_line, s.end_line),
+                    Tone::Dim,
+                    out.color,
+                ));
             }
             if h.spans.is_empty() {
                 // -v has no match text; the line itself is the hit.

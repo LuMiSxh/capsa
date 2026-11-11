@@ -128,7 +128,7 @@ pub(crate) fn fold(segs: &[Segment], i: usize, scope: Option<&Scope>) -> Option<
     {
         return None;
     }
-    let toks = words(&seg.orig)?;
+    let toks = words(seg.orig())?;
     let mut it = toks.iter().peekable();
     if it.next().is_none_or(|t| t.quoted || t.text != "sed")
         || it.next().is_none_or(|t| t.quoted || t.text != "-i")

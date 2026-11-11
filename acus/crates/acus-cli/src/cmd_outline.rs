@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus outline`: the symbols of files and directories, nested and filtered by kind.
 
-use crate::fmt::{Budget, Out, clip};
+use crate::hinted;
+use crate::out::{Budget, Out, clip};
+use crate::source::warn_missing_roots;
 use acus_syntax::{KINDS, Lang, Outline, outline};
 use acus_walk::{WalkOpts, display_path, walk};
 use anyhow::Result;
@@ -75,6 +77,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
             no_ignore: false,
             ..Default::default()
         };
+        warn_missing_roots(&opts);
         walk(&opts, |f| {
             if Lang::from_path(f).is_some() {
                 // Parse before locking, or the threads take turns.
@@ -187,11 +190,10 @@ pub(crate) fn render(
 
 fn check_kinds(kinds: &[String]) -> Result<()> {
     match kinds.iter().find(|k| !KINDS.contains(&k.as_str())) {
-        Some(k) => Err(capsa_core::hint::Hinted::new(
+        Some(k) => Err(hinted(
             format!("unknown kind `{k}`"),
             format!("valid kinds are {}", KINDS.join(", ")),
-        )
-        .into()),
+        )),
         None => Ok(()),
     }
 }

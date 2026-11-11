@@ -8,11 +8,13 @@ mod raw;
 mod render;
 mod status;
 
-use crate::fmt::Out;
 use crate::git::git;
+use crate::hinted;
+use crate::out::Out;
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::render::{Tone, paint};
 use raw::parse;
 use status::Status;
 use std::path::Path;
@@ -82,11 +84,7 @@ struct FileDiff {
 }
 
 /// `git diff` summarised per enclosing symbol, plus untracked files.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "execute hands over the parsed arguments"
-)]
-pub fn run(a: Args, out: &Out) -> Result<Outcome> {
+pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     // Like git: the first argument is a revision unless it names an existing path.
     let (rev, paths) = match a.args.split_first() {
         Some((r, rest)) if !Path::new(r).exists() => (Some(r.as_str()), rest),
@@ -117,12 +115,12 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         };
         return Ok(modes::conflicts(out, header, st));
     }
-    let files = changed_files(&a, rev, paths, range.is_some(), status.as_ref())?;
+    let files = changed_files(a, rev, paths, range.is_some(), status.as_ref())?;
     // `--stat` and `--name-only` need no outlines or symbol groups.
     let views = if a.stat || a.name_only {
         Vec::new()
     } else {
-        render::views(&a, &files, rev, old_rev, new_rev)
+        render::views(a, &files, rev, old_rev, new_rev)
     };
     // The default view is the working tree against the index: staged changes are named in a footer.
     let staged =
@@ -133,32 +131,32 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         };
     if files.is_empty() {
         if out.format == Format::Json {
-            render::print_json(&a, header, &files, &views);
+            render::print_json(a, header, &files, &views);
             return Ok(Outcome::Found);
         }
         if let Some(h) = header {
             outln!("{}", out.header(&h.header()));
         }
         if let Some(line) = staged {
-            outln!("{}", out.dim(&line));
+            outln!("{}", paint(&line, Tone::Dim, out.color));
             return Ok(Outcome::Found);
         }
         eprintln!("(no changes)");
         return Ok(Outcome::Code(0));
     }
     if out.format == Format::Json {
-        render::print_json(&a, header, &files, &views);
+        render::print_json(a, header, &files, &views);
         return Ok(Outcome::Found);
     }
     if a.stat {
-        modes::print_stat(&a, out, header, &files);
+        modes::print_stat(a, out, header, &files);
         return Ok(Outcome::Found);
     }
     if a.name_only {
-        modes::print_name_only(&a, out, header, &files);
+        modes::print_name_only(a, out, header, &files);
         return Ok(Outcome::Found);
     }
-    render::print_text_files(&a, out, header, &files, &views, staged, rev);
+    render::print_text_files(a, out, header, &files, &views, staged, rev);
     Ok(Outcome::Found)
 }
 
@@ -179,11 +177,9 @@ fn changed_files(
     cmd.push("--");
     cmd.extend(paths.iter().map(String::as_str));
     let mut files = parse(&git(&cmd).map_err(|e| match rev {
-        Some(r) if format!("{e}").contains("revision") => anyhow::Error::new(
-            capsa_core::hint::Hinted::new(
-                e.to_string(),
-                format!("`{r}` is neither an existing path nor a revision; for a deleted file name a revision first: acus diff HEAD {r}"),
-            ),
+        Some(r) if format!("{e}").contains("revision") => hinted(
+            e.to_string(),
+            format!("`{r}` is neither an existing path nor a revision; for a deleted file name a revision first: acus diff HEAD {r}"),
         ),
         _ => e,
     })?);

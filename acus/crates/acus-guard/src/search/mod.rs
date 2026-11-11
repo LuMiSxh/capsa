@@ -77,7 +77,7 @@ impl Parsed<'_> {
 /// Matches PowerShell's way to grep: `Get-ChildItem … | Select-String PAT` searches the contents
 /// of the files listed. Narrowed to plain files (`-Include *.log`), it is data and passes.
 pub(super) fn listed_search(seg: &Segment, next: &Segment, ps: bool) -> Option<Verdict> {
-    let (filter, fargs) = head(&next.orig).filter(|_| ps && seg.feeds(next))?;
+    let (filter, fargs) = head(next.orig()).filter(|_| ps && seg.feeds(next))?;
     let (lister, largs) = head(seg.orig_unescaped().1)?;
     let (filter, lister) = (filter.to_lowercase(), lister.to_lowercase());
     if !matches!(filter.as_str(), "select-string" | "sls")
@@ -130,18 +130,14 @@ pub(super) fn listed_search(seg: &Segment, next: &Segment, ps: bool) -> Option<V
     ))
 }
 
-/// Lists the commands that search file contents, PowerShell and cmd.exe names included.
-pub(super) const GREPS: &[&str] = &[
-    "grep",
-    "rg",
-    "egrep",
-    "fgrep",
-    "ag",
-    "ack",
-    "select-string",
-    "sls",
-    "findstr",
-];
+/// Reports whether `head` names a command that searches file contents, PowerShell and cmd.exe
+/// names included.
+pub(super) fn is_grep(head: &str) -> bool {
+    matches!(
+        head,
+        "grep" | "rg" | "egrep" | "fgrep" | "ag" | "ack" | "select-string" | "sls" | "findstr"
+    )
+}
 
 pub(super) fn grep_reason(head: &str) -> String {
     format!(

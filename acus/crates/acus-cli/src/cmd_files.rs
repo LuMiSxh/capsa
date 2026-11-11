@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus files`: lists files under a path, with optional line counts.
 
-use crate::fmt::{Budget, Out, clip};
 use crate::globs::{add_type_globs, searched_globs};
+use crate::out::{Budget, Out, clip};
+use crate::source::warn_missing_roots;
 use acus_walk::{WalkOpts, display_path, walk};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
@@ -60,7 +61,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         roots: a
             .paths
             .iter()
-            .map(|p| expand_home(p).into())
+            .map(|p| expand_home(p))
             .collect::<Vec<PathBuf>>(),
         include,
         // As in `find`: a trailing `/` names a directory; globs match the bare name.
@@ -74,6 +75,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         max_depth: a.depth,
     };
     let found = Mutex::new(Vec::new());
+    warn_missing_roots(&opts);
     walk(&opts, |p| {
         found
             .lock()

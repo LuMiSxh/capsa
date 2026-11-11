@@ -2,7 +2,7 @@
 //! Call-graph walk behind `acus follow`: callers and callees of a symbol, found by searching
 //! the repo for its name and resolving each call site.
 
-use crate::{FileHits, FindError, FindOpts, find};
+use acus_search::{FileHits, FindError, FindOpts, find};
 use acus_syntax::calls::{self, Call, CallForm};
 use acus_syntax::{Lang, Outline, Resolve, Symbol, resolve};
 use acus_walk::WalkOpts;

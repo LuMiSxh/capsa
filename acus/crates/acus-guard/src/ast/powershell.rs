@@ -4,14 +4,18 @@
 //! for Bash. A pipeline stage that is an expression (`(Get-Content a) -replace 'x','y' | sc a`) is
 //! no segment, but the commands inside its parentheses are.
 
+use super::climb::{Climber, Ctx, Role, climb, commands};
 use super::*;
 use tree_sitter::Node;
 
-/// Nesting deeper than this is not a command an agent wrote.
-const MAX_DEPTH: usize = 400;
-
-/// Lists the cmdlets (lowercased; the aliases `sc` and `ac` too) whose input goes to a file.
-const SINKS: [&str; 5] = ["out-file", "set-content", "sc", "add-content", "ac"];
+/// Reports whether `head` (lowercased) is a cmdlet, or the alias `sc` or `ac`, whose input goes to
+/// a file.
+fn is_sink(head: &str) -> bool {
+    matches!(
+        head,
+        "out-file" | "set-content" | "sc" | "add-content" | "ac"
+    )
+}
 
 /// Returns the segments of `src`, or `None` if it has a syntax error, in which case the caller
 /// falls back to the hand-written splitter.
@@ -20,25 +24,8 @@ pub(super) fn parse(src: &str) -> Option<Parsed> {
     if tree.root_node().has_error() {
         return None;
     }
-    let mut commands = Vec::new();
-    let mut cur = tree.walk();
-    'walk: loop {
-        if cur.node().kind() == "command" {
-            commands.push(cur.node());
-        }
-        if cur.depth() as usize > MAX_DEPTH {
-            return None;
-        }
-        if cur.goto_first_child() {
-            continue;
-        }
-        while !cur.goto_next_sibling() {
-            if !cur.goto_parent() {
-                break 'walk;
-            }
-        }
-    }
-    let mut found: Vec<(Segment, bool)> = commands.into_iter().map(|n| one(src, n)).collect();
+    let mut found: Vec<(Segment, bool)> =
+        commands(&tree)?.into_iter().map(|n| one(src, n)).collect();
     // Commands inside `( )`, `$( )` and script blocks go last, so the stages of a pipeline stay
     // neighbours when one of them holds such a command.
     found.sort_by_key(|f| f.1);
@@ -137,78 +124,99 @@ fn one(src: &str, n: Node) -> (Segment, bool) {
         .or_else(|| n.named_child(0))
         .filter(|c| c.kind() == "command_name")
         .map(|c| src[c.byte_range()].to_lowercase());
-    let sink = head.as_deref().is_some_and(|h| SINKS.contains(&h));
-    let mut out = (redirects_stdout(src, n) || sink).then_some(Out::File);
-    let (mut stdin, mut nest, mut inside) = (false, Nest::Top, false);
-    let mut gates = false;
-    let mut last_stage = true;
-    let mut cur = n;
-    while let Some(p) = cur.parent() {
+    let sink = head.as_deref().is_some_and(is_sink);
+    let start = Ctx {
+        out: (redirects_stdout(src, n) || sink).then_some(Out::File),
+        stdin: false,
+        nest: Nest::Top,
+        inside: false,
+        gates: false,
+    };
+    let walk = &mut Walk {
+        src,
+        last_stage: true,
+    };
+    let c = climb(n, start, walk);
+    let low = lower_string(masked(src, n));
+    let seg = Segment {
+        orig: distinct(&low, src[start_of(n)..n.end_byte()].trim_end()),
+        low,
+        range: 0..0,
+        lead: 0,
+        stdin: c.stdin,
+        out: c.out.unwrap_or(Out::Agent),
+        nest: c.nest,
+        gates: c.gates,
+        assigns: 0,
+        heredoc: false,
+    };
+    (seg, c.inside)
+}
+
+/// Reads the pipeline chains around a PowerShell command.
+struct Walk<'a> {
+    src: &'a str,
+    /// Turns false once a stage follows the command in a chain.
+    last_stage: bool,
+}
+
+impl Climber for Walk<'_> {
+    fn role(p: Node, _: Node) -> Role {
         match p.kind() {
             // What runs in these is data for the expression, not output.
             "sub_expression"
             | "array_expression"
             | "parenthesized_expression"
-            | "assignment_expression" => {
-                out.get_or_insert(Out::Capture);
-                inside = true;
-                break;
-            }
-            "function_statement" => {
-                out.get_or_insert(Out::Capture);
-                nest = nest.max(Nest::Group);
-                break;
-            }
+            | "assignment_expression" => Role::Capture {
+                inside: true,
+                nest: Nest::Top,
+            },
+            "function_statement" => Role::Capture {
+                inside: false,
+                nest: Nest::Group,
+            },
             // `& { … }` runs the block here; a block passed as an argument (`ForEach-Object
             // { … }`) is data for the command.
             "script_block_expression" => {
                 if p.parent().is_some_and(|q| q.kind() == "command_name_expr") {
-                    nest = nest.max(Nest::Group);
+                    Role::Nest(Nest::Group)
                 } else {
-                    out.get_or_insert(Out::Capture);
-                    inside = true;
-                    break;
+                    Role::Capture {
+                        inside: true,
+                        nest: Nest::Top,
+                    }
                 }
             }
-            "pipeline_chain" => {
-                let mut kids = p.walk();
-                let stages: Vec<Node> = p.children(&mut kids).filter(|c| c.is_named()).collect();
-                if stages.first().map(|c| c.id()) != Some(cur.id()) {
-                    stdin = true;
-                }
-                if stages.last().map(|c| c.id()) != Some(cur.id()) {
-                    out.get_or_insert(Out::Pipe);
-                    last_stage = false;
-                }
-                // `&&` or `||` after the chain gates on its last stage's status.
-                gates = last_stage
-                    && p.next_sibling().is_some_and(|t| {
-                        t.kind() == "pipeline_chain_tail"
-                            && matches!(src[t.byte_range()].trim(), "&&" | "||")
-                    });
-            }
+            "pipeline_chain" => Role::Chain,
             "foreach_statement" | "for_statement" | "while_statement" | "do_statement" => {
-                nest = Nest::Loop;
+                Role::Nest(Nest::Loop)
             }
             "if_statement" | "switch_statement" | "try_statement" | "statement_block" => {
-                nest = nest.max(Nest::Group);
+                Role::Nest(Nest::Group)
             }
-            _ => {}
+            _ => Role::Plain,
         }
-        cur = p;
     }
-    let orig = src[start_of(n)..n.end_byte()].trim_end().to_owned();
-    let seg = Segment {
-        low: masked(src, n).to_lowercase(),
-        orig,
-        range: 0..0,
-        lead: 0,
-        stdin,
-        out: out.unwrap_or(Out::Agent),
-        nest,
-        gates,
-        assigns: 0,
-        heredoc: false,
-    };
-    (seg, inside)
+
+    fn captured(out: Option<Out>) -> Option<Out> {
+        out.or(Some(Out::Capture))
+    }
+
+    fn chain(&mut self, p: Node, cur: Node, c: &mut Ctx) {
+        let mut kids = p.walk();
+        let stages: Vec<Node> = p.children(&mut kids).filter(|k| k.is_named()).collect();
+        if stages.first().map(|k| k.id()) != Some(cur.id()) {
+            c.stdin = true;
+        }
+        if stages.last().map(|k| k.id()) != Some(cur.id()) {
+            c.out.get_or_insert(Out::Pipe);
+            self.last_stage = false;
+        }
+        // `&&` or `||` after the chain gates on its last stage's status.
+        c.gates = self.last_stage
+            && p.next_sibling().is_some_and(|t| {
+                t.kind() == "pipeline_chain_tail"
+                    && matches!(self.src[t.byte_range()].trim(), "&&" | "||")
+            });
+    }
 }

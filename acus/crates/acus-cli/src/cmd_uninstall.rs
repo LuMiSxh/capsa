@@ -5,6 +5,9 @@ use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 
+#[cfg(not(feature = "cmd-update"))]
+use crate::hinted;
+
 #[derive(clap::Args)]
 pub struct Args {
     /// Print what would be removed and remove nothing.
@@ -14,11 +17,10 @@ pub struct Args {
 
 #[cfg(not(feature = "cmd-update"))]
 pub fn run(_: &Args, _format: Format) -> Result<Outcome> {
-    Err(capsa_core::hint::Hinted::new(
+    Err(hinted(
         "acus was built without `uninstall`",
         "remove the binary by hand, or rebuild with --features cmd-update",
-    )
-    .into())
+    ))
 }
 
 /// Removes the skill files first, so no skill outlives the binary it describes. The binary is

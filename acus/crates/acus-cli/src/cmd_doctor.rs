@@ -20,9 +20,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Tools that must be matched by the PreToolUse guard hook.
 const GUARDED: [&str; 5] = ["Bash", "Read", "Grep", "Glob", "PowerShell"];
 
-/// The guard's log rotates at this size, so a larger file is not expected.
-const LOG_ROTATE_BYTES: u64 = 4 * 1024 * 1024;
-
 pub fn run(format: Format) -> Result<Outcome> {
     let home = std::env::home_dir().context("no home directory")?;
     let (cfg, problem) = config::load_or_default();
@@ -257,6 +254,7 @@ fn guard_group(cfg: &Config) -> Group {
         .parent()
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     let mut checks = vec![dir_check("guard log dir", &log_dir)];
+    checks.push(log_file_check(&guard.log_path));
     checks.push(log_size_check(&guard.log_path));
     checks.push(log_age_check(&guard.log_path));
     checks.push(dir_check("guard hints dir", &guard.state_dir));
@@ -302,10 +300,27 @@ fn writable(dir: &Path) -> std::io::Result<()> {
     std::fs::remove_file(&probe)
 }
 
+/// Opens an existing guard log for append without creating it, so a log that cannot take a
+/// decision is reported instead of dropping decisions unseen.
+fn log_file_check(log: &Path) -> Check {
+    match std::fs::OpenOptions::new().append(true).open(log) {
+        Ok(_) => check("guard log file", Status::Ok, "writable", None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            check("guard log file", Status::Ok, "no log yet", None)
+        }
+        Err(e) => check(
+            "guard log file",
+            Status::Fail,
+            format!("{} not writable: {e}", log.display()),
+            Some("make the log writable, or delete it so the next decision creates a new one"),
+        ),
+    }
+}
+
 fn log_size_check(log: &Path) -> Check {
     match std::fs::metadata(log) {
         Ok(meta) => {
-            let status = if meta.len() > LOG_ROTATE_BYTES {
+            let status = if meta.len() > acus_guard::log::MAX_BYTES {
                 Status::Warn
             } else {
                 Status::Ok

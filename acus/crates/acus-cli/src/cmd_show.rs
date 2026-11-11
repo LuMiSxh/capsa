@@ -2,7 +2,7 @@
 //! `acus show`: prints files, line ranges and symbols, optionally as of a git revision.
 
 use crate::cmd_outline;
-use crate::fmt::{Budget, Out, clip, fit_line, more_lines};
+use crate::out::{Budget, Out, clip, fit_line, more_lines};
 use crate::source::{Span, address, locate, read_text, revision, show_blob};
 use acus_syntax::{Lang, Outline, Target};
 use anyhow::Result;
@@ -10,6 +10,7 @@ use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use std::collections::HashMap;
 use std::path::Path;
+use std::rc::Rc;
 
 /// Whole files longer than this show their outline and first lines instead of all of them.
 const WHOLE_FILE_LINES: usize = 400;
@@ -110,13 +111,25 @@ impl Sink<'_> {
     }
 }
 
+/// One address's lines and the part of them that this call prints.
+struct Part<'s> {
+    path: &'s str,
+    file: &'s str,
+    src: &'s str,
+    lines: &'s [&'s str],
+    start: usize,
+    end: usize,
+    shown_end: usize,
+    long_whole: bool,
+}
+
 /// The state of one `show` call: sources read once, and both output budgets.
 struct Shown<'a> {
     a: &'a Args,
     out: &'a Out,
     sink: Sink<'a>,
     json: Vec<serde_json::Value>,
-    sources: HashMap<String, (String, String)>,
+    sources: HashMap<String, Rc<(String, String)>>,
     outlines: HashMap<String, Option<Outline>>,
     count: usize,
     cut: Option<Cut>,
@@ -132,7 +145,8 @@ impl Shown<'_> {
             Some((rev, file)) => (show_blob(rev, file, path)?, file),
             None => (read_text(path)?, path),
         };
-        self.sources.insert(path.to_owned(), (src, file.to_owned()));
+        self.sources
+            .insert(path.to_owned(), Rc::new((src, file.to_owned())));
         Ok(())
     }
 
@@ -140,19 +154,11 @@ impl Shown<'_> {
         let addr = address(raw);
         let path = addr.path.clone();
         self.load(&path)?;
-        let (src, file) = &self.sources[&path];
+        let source = Rc::clone(&self.sources[&path]);
+        let (src, file) = (source.0.as_str(), source.1.as_str());
         let lines: Vec<&str> = src.lines().collect();
         let Span { label, start, end } = locate(&addr, file, src, &lines, &mut self.outlines)?;
-        // `tail -n` counts exactly N lines and `tail -n +N` starts at line N, so context does not
-        // widen either.
-        let widen = if matches!(
-            addr.target,
-            Target::Whole | Target::Tail(_) | Target::From(_)
-        ) {
-            0
-        } else {
-            self.a.context
-        };
+        let widen = self.widen(&addr.target);
         let start = start.saturating_sub(widen).max(1);
         let end = (end + widen).min(lines.len());
         let long_whole = addr.target == Target::Whole
@@ -162,83 +168,150 @@ impl Shown<'_> {
         self.count += 1;
         // JSON is for scripts: the whole file and the call budget never cut it.
         if self.out.format == Format::Json {
-            self.json.push(serde_json::json!({
-                "address": label,
-                "start": start,
-                "end": end,
-                "text": lines.get(start - 1..end).unwrap_or_default().join("\n"),
-            }));
+            self.json.push(json_entry(&label, start, end, &lines));
             return Ok(());
         }
-        let cap = match self.a.max_lines {
-            Some(n) => Some(start + n.max(1) as usize - 1),
-            None if long_whole => Some(start + WHOLE_FILE_HEAD - 1),
-            None => None,
+        let part = Part {
+            path: &path,
+            file,
+            src,
+            lines: &lines,
+            start,
+            end,
+            shown_end: shown_end(self.a.max_lines, start, end, long_whole),
+            long_whole,
         };
-        let shown_end = cap.map_or(end, |c| c.min(end));
-        let header = self.out.header(&format!("== {label} {start}-{end}"));
+        self.print(idx, &label, &part);
+        Ok(())
+    }
+
+    /// Returns the context lines added around a target; `tail` and `from` never widen.
+    fn widen(&self, target: &Target) -> usize {
+        // `tail -n` counts exactly N lines and `tail -n +N` starts at line N, so context does not
+        // widen either.
+        if matches!(target, Target::Whole | Target::Tail(_) | Target::From(_)) {
+            0
+        } else {
+            self.a.context
+        }
+    }
+
+    /// Prints one address: its header, the outline of a long whole file, its lines and footers.
+    fn print(&mut self, idx: usize, label: &str, part: &Part<'_>) {
+        let a: &Args = self.a;
+        let header = self
+            .out
+            .header(&format!("== {label} {}-{}", part.start, part.end));
         if matches!(self.sink.emit(&header), Emit::CharCut) {
             self.cut = Some(Cut::FirstLine);
-            return Ok(());
+            return;
         }
+        let later = &a.addrs[idx + 1..];
         let mut printed = 0;
-        if long_whole {
-            let cut = self.a.cut.map(|n| n as usize);
-            let block = outline_block(&mut self.outlines, self.out, &path, file, src, cut);
+        if part.long_whole {
+            let block = outline_block(
+                &mut self.outlines,
+                self.out,
+                part.path,
+                part.file,
+                part.src,
+                a.cut.map(|n| n as usize),
+            );
             for line in block {
-                match self.sink.emit(&line) {
-                    Emit::Printed => printed += 1,
-                    Emit::CharCut if printed == 0 => {
-                        self.sink.emit_clipped(&line);
-                        self.cut = Some(Cut::FirstLine);
-                        return Ok(());
-                    }
-                    Emit::CharCut => {
-                        let mut rest = vec![format!("{path}:{start}-{end}")];
-                        rest.extend(self.a.addrs[idx + 1..].iter().cloned());
-                        self.cut = Some(Cut::Rest(rest));
-                        return Ok(());
-                    }
-                    Emit::Dropped => {}
+                let rest = || resume_from(part.path, part.start, part.end, later);
+                if let Some(cut) = self.emit_row(&line, &mut printed, rest) {
+                    self.cut = Some(cut);
+                    return;
                 }
             }
         }
-        for (i, line) in lines.iter().enumerate().take(shown_end).skip(start - 1) {
-            let clipped = self.a.cut.map(|n| clip(line, 0, n as usize));
+        for (i, line) in part
+            .lines
+            .iter()
+            .enumerate()
+            .take(part.shown_end)
+            .skip(part.start - 1)
+        {
+            let clipped = a.cut.map(|n| clip(line, 0, n as usize));
             let text = self
                 .out
                 .numbered(i + 1, clipped.as_deref().unwrap_or(*line), false);
-            match self.sink.emit(&text) {
-                Emit::Printed => printed += 1,
-                Emit::CharCut if printed == 0 => {
-                    self.sink.emit_clipped(&text);
-                    self.cut = Some(Cut::FirstLine);
-                    return Ok(());
-                }
-                Emit::CharCut => {
-                    let mut rest = vec![format!("{path}:{}-{end}", i + 1)];
-                    rest.extend(self.a.addrs[idx + 1..].iter().cloned());
-                    self.cut = Some(Cut::Rest(rest));
-                    return Ok(());
-                }
-                Emit::Dropped => {}
+            let rest = || resume_from(part.path, i + 1, part.end, later);
+            if let Some(cut) = self.emit_row(&text, &mut printed, rest) {
+                self.cut = Some(cut);
+                return;
             }
         }
-        if shown_end < end {
-            if long_whole {
-                self.sink.footer(&format!(
-                    "… {} more lines: acus show {path}:{}-{end}",
-                    end - shown_end,
-                    shown_end + 1
-                ));
-                self.sink.footer(&format!("or acus show {path}#Symbol"));
-            } else {
-                self.sink
-                    .footer(&more_lines(&path, shown_end + 1, end, end - shown_end));
-            }
-        }
-        Ok(())
+        self.footers(part);
     }
+
+    /// Emits one printed row; returns the cut when the character budget ends the call at it.
+    fn emit_row(
+        &mut self,
+        text: &str,
+        printed: &mut usize,
+        rest: impl FnOnce() -> Vec<String>,
+    ) -> Option<Cut> {
+        match self.sink.emit(text) {
+            Emit::Printed => {
+                *printed += 1;
+                None
+            }
+            Emit::Dropped => None,
+            Emit::CharCut if *printed == 0 => {
+                self.sink.emit_clipped(text);
+                Some(Cut::FirstLine)
+            }
+            Emit::CharCut => Some(Cut::Rest(rest())),
+        }
+    }
+
+    /// Names the lines that the line budget left out, after the printed lines.
+    fn footers(&mut self, part: &Part<'_>) {
+        let (path, shown_end, end) = (part.path, part.shown_end, part.end);
+        if shown_end >= end {
+            return;
+        }
+        if part.long_whole {
+            self.sink.footer(&format!(
+                "… {} more lines: acus show {path}:{}-{end}",
+                end - shown_end,
+                shown_end + 1
+            ));
+            self.sink.footer(&format!("or acus show {path}#Symbol"));
+        } else {
+            self.sink
+                .footer(&more_lines(path, shown_end + 1, end, end - shown_end));
+        }
+    }
+}
+
+/// Returns the JSON record of one address: its label, its range and the text of that range.
+fn json_entry(label: &str, start: usize, end: usize, lines: &[&str]) -> serde_json::Value {
+    serde_json::json!({
+        "address": label,
+        "start": start,
+        "end": end,
+        "text": lines.get(start - 1..end).unwrap_or_default().join("\n"),
+    })
+}
+
+/// Returns the last line one address prints: the `--max-lines` cap, the head of a long whole file,
+/// or the end of the range.
+fn shown_end(max_lines: Option<u64>, start: usize, end: usize, long_whole: bool) -> usize {
+    let cap = match max_lines {
+        Some(n) => Some(start + n.max(1) as usize - 1),
+        None if long_whole => Some(start + WHOLE_FILE_HEAD - 1),
+        None => None,
+    };
+    cap.map_or(end, |c| c.min(end))
+}
+
+/// Returns the addresses that continue the output at `path:first-end` after a cut.
+fn resume_from(path: &str, first: usize, end: usize, later: &[String]) -> Vec<String> {
+    let mut rest = vec![format!("{path}:{first}-{end}")];
+    rest.extend(later.iter().cloned());
+    rest
 }
 
 /// The outline of a long whole file, with `cut` applied to each symbol's text.

@@ -2,11 +2,12 @@
 //! `acus self setup`: installs the skill and registers acus's hooks in Claude Code's settings.
 
 use crate::cmd_skill::SKILL_DEF;
+use crate::hinted;
 use anyhow::{Context, Result};
 use capsa_core::claude_settings::{Step, runs};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-use capsa_core::hint::{Hinted, ResultExt};
+use capsa_core::hint::ResultExt;
 use capsa_core::hooks::{Agent, HookFile, HookSpec};
 use capsa_core::render::{Check, Doc, Render, Status, emit};
 use capsa_core::skill::{self, SkillState, Target, installed_target};
@@ -148,11 +149,10 @@ pub fn run(a: &Args, format: Format) -> Result<Outcome> {
         return add_missing(format);
     }
     if a.target == Target::Codex {
-        return Err(Hinted::new(
+        return Err(hinted(
             "setup registers Claude Code hooks",
             "use --target claude or --target all",
-        )
-        .into());
+        ));
     }
     let home = std::env::home_dir().context("no home directory")?;
     let dirs = a

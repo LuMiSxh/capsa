@@ -2,6 +2,7 @@
 //! The patterns of `acus find`: the `-e` values or the first positional, with grep's `\|`.
 
 use super::Args;
+use crate::hinted;
 use anyhow::Result;
 
 /// The patterns: each `-e`, else the first positional; reads `\|` as alternation unless `-E`,
@@ -13,11 +14,10 @@ pub(super) fn take_patterns(a: &Args) -> Result<Vec<String>> {
         a.patterns.clone()
     };
     if patterns.is_empty() {
-        return Err(capsa_core::hint::Hinted::new(
+        return Err(hinted(
             "no pattern given",
             "acus find PATTERN [PATH...] or -e PAT -e PAT",
-        )
-        .into());
+        ));
     }
     if !a.fixed_strings && !a.perl && !a._extended {
         let mut noted = false;

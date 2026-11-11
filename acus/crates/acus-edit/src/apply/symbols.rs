@@ -113,44 +113,8 @@ pub(super) fn move_symbol(
             });
         }
     }
-    let (start, end) = with_attached(files.lines(path)?, path, start, end);
-    let lines = files.lines(path)?;
-    let block = lines[start..end].to_vec();
-    let (s, e) = with_blank(lines, start, end);
-    let f = files.get(path)?;
-    f.splice(s, e - s, &[]);
-    f.dirty = true;
-    let mut created = false;
-    let at = match to {
-        Dest::Before { path, symbol } => {
-            let (s, e) = symbol_lines(files, path, symbol)?;
-            let lines = files.lines(path)?;
-            let mut ins = reindent(&block, indent(&lines[s]));
-            ins.push(String::new());
-            (with_attached(lines, path, s, e).0, ins)
-        }
-        Dest::After { path, symbol } => {
-            let (s, e) = symbol_lines(files, path, symbol)?;
-            let ins = reindent(&block, indent(&files.lines(path)?[s]));
-            (e, [vec![String::new()], ins].concat())
-        }
-        Dest::End { path } => {
-            let f = files.get(path)?;
-            let lines = f.lines.get_or_insert_with(|| {
-                created = true;
-                vec![]
-            });
-            let gap = lines.last().is_some_and(|l| !l.trim().is_empty());
-            let block = reindent(&block, "");
-            let ins = if gap {
-                [vec![String::new()], block].concat()
-            } else {
-                block
-            };
-            (lines.len(), ins)
-        }
-    };
-    let (at, ins) = at;
+    let block = take_block(files, path, start, end)?;
+    let (at, ins, created) = insertion(files, to, &block)?;
     let f = files.get(dest)?;
     f.splice(at, 0, &ins);
     f.dirty = true;
@@ -181,6 +145,55 @@ pub(super) fn move_symbol(
             },
         ]
     })
+}
+
+/// Removes `start..end` with its attached comments and the blank line after it, and returns
+/// those lines.
+fn take_block(files: &mut Files, path: &str, start: usize, end: usize) -> Result<Vec<String>> {
+    let (start, end) = with_attached(files.lines(path)?, path, start, end);
+    let lines = files.lines(path)?;
+    let block = lines[start..end].to_vec();
+    let (s, e) = with_blank(lines, start, end);
+    let f = files.get(path)?;
+    f.splice(s, e - s, &[]);
+    f.dirty = true;
+    Ok(block)
+}
+
+/// Works out the line to insert `block` at for `to`, and the lines to insert. `created` says
+/// whether `Dest::End` created the destination file.
+fn insertion(files: &mut Files, to: &Dest, block: &[String]) -> Result<(usize, Vec<String>, bool)> {
+    let mut created = false;
+    let (at, ins) = match to {
+        Dest::Before { path, symbol } => {
+            let (s, e) = symbol_lines(files, path, symbol)?;
+            let lines = files.lines(path)?;
+            let mut ins = reindent(block, indent(&lines[s]));
+            ins.push(String::new());
+            (with_attached(lines, path, s, e).0, ins)
+        }
+        Dest::After { path, symbol } => {
+            let (s, e) = symbol_lines(files, path, symbol)?;
+            let ins = reindent(block, indent(&files.lines(path)?[s]));
+            (e, [vec![String::new()], ins].concat())
+        }
+        Dest::End { path } => {
+            let f = files.get(path)?;
+            let lines = f.lines.get_or_insert_with(|| {
+                created = true;
+                vec![]
+            });
+            let gap = lines.last().is_some_and(|l| !l.trim().is_empty());
+            let block = reindent(block, "");
+            let ins = if gap {
+                [vec![String::new()], block].concat()
+            } else {
+                block
+            };
+            (lines.len(), ins)
+        }
+    };
+    Ok((at, ins, created))
 }
 
 fn indent(line: &str) -> &str {

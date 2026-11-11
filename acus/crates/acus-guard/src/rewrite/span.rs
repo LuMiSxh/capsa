@@ -53,7 +53,7 @@ pub(super) fn shown_read(
     let mut new = rewrite_read(rule, plain, scope)?;
     for s in &segs[i + 1..=last] {
         new.push_str(" | ");
-        new.push_str(&s.orig);
+        new.push_str(s.orig());
     }
     Some(Step::Fold(Fold {
         last,
@@ -232,8 +232,7 @@ pub(crate) fn limited_search(segs: &[Segment], i: usize, scope: Option<&Scope>) 
     let count = head_count(opts)?;
     let (cmd, words) = head(stripped)?;
     let cmd = cmd.to_lowercase();
-    if !GREPS.contains(&cmd.as_str())
-        || rule(plain, seg.piped(), false, scope, false)?.denied() != Some(Rule::Grep)
+    if !is_grep(&cmd) || rule(plain, seg.piped(), false, scope, false)?.denied() != Some(Rule::Grep)
     {
         return None;
     }

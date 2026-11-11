@@ -3,10 +3,11 @@
 //! rule. The per-session counts live in the state files of `guard-hints`, next to guard.jsonl.
 
 use crate::GuardConfig;
+use capsa_core::lock::{self, Lock};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 /// Sets how long a state file may go unmodified before it is deleted.
 const KEEP: Duration = Duration::from_secs(2 * 86_400);
@@ -16,94 +17,14 @@ const DAY: Duration = Duration::from_secs(86_400);
 const MARKER: &str = ".pruned";
 /// Sets the longest `show` waits for the lock of a session.
 const WAIT: Duration = Duration::from_millis(50);
-/// Sets the age (`STALE`) from which a lock file belongs to a crashed process; a holder keeps it
-/// for milliseconds.
-const STALE: Duration = Duration::from_secs(2);
 
-// Std only: the MSRV predates `File::lock`.
-/// Holds an exclusive lock on a session. The file holds its owner's nonce and is removed on drop
-/// only while it still does, so a lock that was broken as stale never deletes its successor's.
-struct Lock {
-    path: PathBuf,
-    nonce: String,
+/// Takes the lock of a session, or `None` when another process holds it for all of `WAIT` or the
+/// lock file cannot be opened.
+fn acquire(state: &Path) -> Option<Lock> {
+    let path = state.with_extension("lock");
+    std::fs::create_dir_all(path.parent()?).ok()?;
+    lock::exclusive(&path, WAIT).ok().flatten()
 }
-
-/// Returns a value no other process or acquisition uses: pid and nanoseconds.
-fn nonce() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    format!("{}-{nanos}", std::process::id())
-}
-
-/// Removes the lock at `path` if it is stale. The file is first renamed to a name of its own, so
-/// only one breaker gets it and none removes a lock created after the age check. A renamed file
-/// that turns out fresh was re-created by someone else in between: it is linked back (failing
-/// harmlessly if yet another lock exists) and the lock stays.
-fn break_stale(path: &Path) {
-    let mut name = path.as_os_str().to_owned();
-    name.push(format!(".{}.brk", nonce()));
-    let tmp = PathBuf::from(name);
-    if std::fs::rename(path, &tmp).is_err() {
-        return;
-    }
-    let stale = std::fs::metadata(&tmp)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.elapsed().ok())
-        .is_some_and(|age| age > STALE);
-    if !stale {
-        let _ = std::fs::hard_link(&tmp, path);
-    }
-    let _ = std::fs::remove_file(&tmp);
-}
-
-impl Lock {
-    /// Returns `None` if another process holds it for all of `WAIT`, or it cannot be created.
-    fn acquire(state: &Path) -> Option<Self> {
-        let path = state.with_extension("lock");
-        std::fs::create_dir_all(path.parent()?).ok()?;
-        let nonce = nonce();
-        let start = Instant::now();
-        loop {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut f) => {
-                    let _ = f.write_all(nonce.as_bytes());
-                    return Some(Self { path, nonce });
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let stale = std::fs::metadata(&path)
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|t| t.elapsed().ok())
-                        .is_some_and(|age| age > STALE);
-                    if stale {
-                        break_stale(&path);
-                        continue;
-                    }
-                }
-                Err(_) => return None,
-            }
-            if start.elapsed() >= WAIT {
-                return None;
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-}
-
-impl Drop for Lock {
-    fn drop(&mut self) {
-        if std::fs::read_to_string(&self.path).is_ok_and(|s| s == self.nonce) {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-}
-
 // Hooks run in parallel, so the read-modify-write holds the session lock. A state file that cannot
 // be read or written shows the hint, so the throttle never hides a hint it cannot count.
 /// Reports whether this occurrence of the pure hint of `rule` shows: occurrence 1, N+1, 2N+1… for
@@ -116,8 +37,7 @@ pub fn show(cfg: &GuardConfig, session: &str, rule: &str) -> bool {
     let Some(path) = state_file(cfg, session) else {
         return true;
     };
-    prune_if_due(&cfg.state_dir);
-    let Some(_lock) = Lock::acquire(&path) else {
+    let Some(_lock) = acquire(&path) else {
         return true;
     };
     let Ok(mut counts) = read(&path) else {
@@ -126,17 +46,21 @@ pub fn show(cfg: &GuardConfig, session: &str, rule: &str) -> bool {
     let n = counts.entry(rule.to_owned()).or_insert(0);
     *n += 1;
     let n = *n;
+    let show = n % every as u64 == 1;
+    if show {
+        prune_if_due(&cfg.state_dir);
+    }
     if write(&path, &counts).is_err() {
         return true;
     }
-    n % every as u64 == 1
+    show
 }
 
 /// Forgets the counts of `session`, so its hints show again.
 pub fn reset(cfg: &GuardConfig, session: &str) {
     if let Some(path) = state_file(cfg, session) {
         // Removed even when the lock times out: a reset must not leave old counts.
-        let _lock = Lock::acquire(&path);
+        let _lock = acquire(&path);
         let _ = std::fs::remove_file(path);
     }
 }
@@ -178,7 +102,7 @@ fn write(path: &Path, counts: &BTreeMap<String, u64>) -> std::io::Result<()> {
 }
 
 /// Prunes the state files of `dir` at most once a day. The modification time of the marker says
-/// when the last pass ran, so a hook that is not due pays for one stat call.
+/// when the last pass ran, so only a hint that shows pays for the stat call.
 fn prune_if_due(dir: &Path) {
     let last = std::fs::metadata(dir.join(MARKER))
         .and_then(|m| m.modified())
@@ -192,18 +116,29 @@ fn prune_if_due(dir: &Path) {
     }
 }
 
-/// Deletes the state files not modified for two days.
+/// Deletes the state files not modified for two days, and the lock files of sessions whose state
+/// file is gone or just as old. A lock file keeps its age while the session runs, so its state
+/// file decides.
 fn prune(dir: &Path) {
     let (Ok(entries), Some(cutoff)) = (std::fs::read_dir(dir), SystemTime::now().checked_sub(KEEP))
     else {
         return;
     };
-    for e in entries.flatten() {
-        if e.metadata()
+    let expired = |path: &Path| {
+        std::fs::metadata(path)
             .and_then(|m| m.modified())
             .is_ok_and(|t| t < cutoff)
-        {
-            let _ = std::fs::remove_file(e.path());
+    };
+    for e in entries.flatten() {
+        let path = e.path();
+        let idle = if path.extension().is_some_and(|x| x == "lock") {
+            let state = path.with_extension("");
+            expired(&path) && (!state.exists() || expired(&state))
+        } else {
+            expired(&path)
+        };
+        if idle {
+            let _ = std::fs::remove_file(&path);
         }
     }
 }
@@ -218,30 +153,61 @@ mod tests {
     }
 
     #[test]
-    fn stale_lock_is_broken_and_fresh_one_survives() {
+    fn lock_is_exclusive_and_released_on_drop() {
         let dir = tempfile::tempdir().unwrap();
         let state = dir.path().join("s");
-        let lock = dir.path().join("s.lock");
-        std::fs::write(&lock, "dead").unwrap();
-        age(&lock, STALE * 2);
-        let held = Lock::acquire(&state).expect("stale lock is broken");
-        // A breaker that renames a fresh lock puts it back.
-        break_stale(&lock);
-        assert_eq!(std::fs::read_to_string(&lock).unwrap(), held.nonce);
-        assert!(Lock::acquire(&state).is_none(), "fresh lock is respected");
+        let held = acquire(&state).expect("free lock");
+        assert!(acquire(&state).is_none(), "a held lock is respected");
         drop(held);
-        assert!(!lock.exists());
+        assert!(acquire(&state).is_some());
     }
 
     #[test]
-    fn drop_keeps_a_lock_it_no_longer_owns() {
+    fn lock_file_from_an_older_version_does_not_block() {
         let dir = tempfile::tempdir().unwrap();
-        let state = dir.path().join("s");
-        let lock = dir.path().join("s.lock");
-        let held = Lock::acquire(&state).unwrap();
-        std::fs::write(&lock, "successor").unwrap();
-        drop(held);
-        assert_eq!(std::fs::read_to_string(&lock).unwrap(), "successor");
+        std::fs::write(dir.path().join("s.lock"), "123-456").unwrap();
+        assert!(acquire(&dir.path().join("s")).is_some());
+    }
+
+    #[test]
+    fn prune_removes_idle_locks_and_leftovers_but_keeps_active_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str, old: bool| {
+            let p = dir.path().join(name);
+            std::fs::write(&p, "a 1\n").unwrap();
+            if old {
+                age(&p, KEEP * 2);
+            }
+            p
+        };
+        let idle = file("idle.lock", true);
+        file("idle", true);
+        let orphan = file("orphan.lock", true);
+        let active = file("active.lock", true);
+        file("active", false);
+        let brk = file("idle.lock.1-2.brk", true);
+        prune(dir.path());
+        assert!(!idle.exists() && !orphan.exists() && !brk.exists());
+        assert!(active.exists(), "a lock of an active session stays");
+    }
+
+    #[test]
+    fn prune_waits_for_a_hint_to_show() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::GuardConfig {
+            hint_every: 2,
+            state_dir: dir.path().to_path_buf(),
+            log_path: dir.path().join("guard.jsonl"),
+        };
+        let marker = dir.path().join(MARKER);
+        assert!(show(&cfg, "s", "grep"), "the first occurrence shows");
+        age(&marker, DAY * 2);
+        assert!(!show(&cfg, "s", "grep"), "the second occurrence is quiet");
+        let quiet = marker.metadata().unwrap().modified().unwrap().elapsed();
+        assert!(quiet.unwrap() > DAY, "a quiet hint does not prune");
+        assert!(show(&cfg, "s", "grep"), "the third occurrence shows");
+        let shown = marker.metadata().unwrap().modified().unwrap().elapsed();
+        assert!(shown.unwrap() < DAY, "a shown hint prunes");
     }
 
     #[test]

@@ -11,7 +11,7 @@ pub(crate) fn fold(segs: &[Segment], i: usize) -> Option<(usize, String)> {
     if seg.opaque() || seg.stdin || seg.heredoc || seg.assigns > 0 || seg.out != Out::Pipe {
         return None;
     }
-    let text = seg.orig.trim();
+    let text = seg.orig().trim();
     let text = text.strip_suffix(" 2>&1").unwrap_or(text).trim_end();
     let words = split_words(text);
     if !matches!(
@@ -26,7 +26,7 @@ pub(crate) fn fold(segs: &[Segment], i: usize) -> Option<(usize, String)> {
     let mut at = i + 1;
     let mut next = stage(segs, i, at)?;
     if cut_stage(next) {
-        cut = Some(next.orig.trim());
+        cut = Some(next.orig().trim());
         at += 1;
         next = stage(segs, at - 1, at)?;
     }
@@ -40,7 +40,7 @@ pub(crate) fn fold(segs: &[Segment], i: usize) -> Option<(usize, String)> {
     let mut last = at;
     if next.out == Out::Pipe {
         let tail = stage(segs, at, at + 1).filter(|t| cut.is_none() && cut_stage(t))?;
-        cut = Some(tail.orig.trim());
+        cut = Some(tail.orig().trim());
         last = at + 1;
         if segs[last].out != Out::Agent {
             return None;

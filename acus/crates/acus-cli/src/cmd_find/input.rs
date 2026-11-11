@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Chooses what `acus find` searches: walked paths, addressed ranges and standard input.
 
-use acus_search::{FileHits, FindOpts, find, find_range, find_stdin};
+use crate::source::warn_missing_roots;
+use acus_search::{FileHits, FindOpts, find, find_ranges, find_stdin};
 use acus_syntax::Address;
 use anyhow::{Context, Result};
 use std::io::Read;
@@ -26,10 +27,18 @@ pub(super) fn search_all(
     stdin: Option<&[u8]>,
     spans: &[(Address, (usize, usize))],
 ) -> Result<Vec<FileHits>> {
-    let mut files = if walk_files { find(opts)? } else { Vec::new() };
-    for (addr, lines) in spans {
-        files.extend(find_range(opts, Path::new(&addr.path), *lines)?);
-    }
+    let mut files = if walk_files {
+        warn_missing_roots(&opts.walk);
+        find(opts)?
+    } else {
+        Vec::new()
+    };
+    files.extend(find_ranges(
+        opts,
+        spans
+            .iter()
+            .map(|(addr, lines)| (Path::new(&addr.path), *lines)),
+    )?);
     if let Some(input) = stdin {
         files.extend(find_stdin(opts, input)?);
     }

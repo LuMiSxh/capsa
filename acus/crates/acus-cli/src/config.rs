@@ -2,6 +2,7 @@
 //! Runtime configuration: `config.toml` in the platform config dir (or `$ACUS_CONFIG`),
 //! overridden by `ACUS_*` environment variables.
 
+use crate::hinted;
 use anyhow::Result;
 use serde::Deserialize;
 use std::env::var;
@@ -95,14 +96,13 @@ fn read(path: &Path) -> Result<Config> {
         Ok(s) => toml::from_str(&s).map_err(|e| invalid(path, &e))?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
         Err(e) => {
-            return Err(capsa_core::hint::Hinted::new(
+            return Err(hinted(
                 format!("cannot read {}: {e}", path.display()),
                 format!(
                     "make {} readable, or point ACUS_CONFIG at another file",
                     path.display()
                 ),
-            )
-            .into());
+            ));
         }
     };
     c.path = path.to_path_buf();
@@ -111,14 +111,13 @@ fn read(path: &Path) -> Result<Config> {
 
 /// The error of a config file that does not parse, with the file as its fix.
 fn invalid(path: &Path, e: &toml::de::Error) -> anyhow::Error {
-    capsa_core::hint::Hinted::new(
+    hinted(
         format!("invalid config {}: {e}", path.display()),
         format!(
             "fix {} (the message gives the line) or delete it",
             path.display()
         ),
     )
-    .into()
 }
 
 /// Applies ACUS_DISABLE, a comma-separated list of commands to refuse.

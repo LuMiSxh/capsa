@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Resolves `path`, `path:A-B` and `path#Sym` addresses to the lines they name.
 
+use crate::hinted;
 use acus_syntax::{Address, Lang, Outline, Resolve, Target, attached_start, outline, resolve};
+use acus_walk::{WalkOpts, missing_roots};
 use anyhow::{Result, anyhow, bail};
 use std::collections::HashMap;
 use std::path::Path;
@@ -51,11 +53,10 @@ pub fn locate(
         Target::Lines(s, e) => (path.clone(), *s, *e),
         Target::From(s) => (path.clone(), *s, lines.len()),
         Target::Tail(0) => {
-            return Err(capsa_core::hint::Hinted::new(
+            return Err(hinted(
                 format!("{path}:-0: tail needs at least 1 line"),
                 format!("acus show {path}:-1"),
-            )
-            .into());
+            ));
         }
         Target::Tail(n) => (
             path.clone(),
@@ -67,11 +68,10 @@ pub fn locate(
                 .entry(path.clone())
                 .or_insert_with(|| Lang::from_path(Path::new(file)).and_then(|l| outline(l, src)));
             let Some(o) = o else {
-                return Err(capsa_core::hint::Hinted::new(
+                return Err(hinted(
                     format!("no syntax support for {path}"),
                     format!("use {path}:START-END"),
-                )
-                .into());
+                ));
             };
             match resolve(o, q) {
                 // Decorators, attributes and doc comments belong to what is shown.
@@ -81,22 +81,20 @@ pub fn locate(
                     s.end_line,
                 ),
                 Resolve::Missing => {
-                    return Err(capsa_core::hint::Hinted::new(
+                    return Err(hinted(
                         format!("no symbol `{q}` in {path}"),
                         format!("acus outline {path}"),
-                    )
-                    .into());
+                    ));
                 }
                 Resolve::Ambiguous(v) => {
                     let c: Vec<_> = v
                         .iter()
                         .map(|s| format!("{path}:{}-{} ({})", s.start_line, s.end_line, s.qual))
                         .collect();
-                    return Err(capsa_core::hint::Hinted::new(
+                    return Err(hinted(
                         format!("`{q}` is ambiguous in {path}"),
                         c.join(", "),
-                    )
-                    .into());
+                    ));
                 }
             }
         }
@@ -144,13 +142,12 @@ pub fn show_blob(rev: &str, file: &str, path: &str) -> Result<String> {
         .args(["cat-file", "blob", &format!("{rev}:{file}")])
         .output()?;
     if !o.status.success() {
-        return Err(capsa_core::hint::Hinted::new(
+        return Err(hinted(
             format!("path not found: {path}"),
             format!(
                 "{file} is not in {rev}; paths start at the repo root, and {rev}:./path is relative to the current directory"
             ),
-        )
-        .into());
+        ));
     }
     String::from_utf8(o.stdout).map_err(|_| anyhow!("{path}: binary file, not shown"))
 }
@@ -164,7 +161,14 @@ pub fn not_found(path: &str) -> anyhow::Error {
         }
         _ => "paths are relative to the working directory; `acus files` lists them".to_owned(),
     };
-    capsa_core::hint::Hinted::new(format!("path not found: {path}"), hint).into()
+    hinted(format!("path not found: {path}"), hint)
+}
+
+/// Warns on stderr about each walk root that does not exist, which `walk` skips.
+pub fn warn_missing_roots(opts: &WalkOpts) {
+    for m in missing_roots(opts) {
+        eprintln!("warning: path not found: {m}");
+    }
 }
 
 #[cfg(test)]

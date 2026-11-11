@@ -395,7 +395,7 @@ fn logged_calls_are_cut_to_the_logged_length() {
         "tool_name": "Bash",
         "tool_input": { "command": "x".repeat(LOG_CALL_MAX + 1000) },
     });
-    log::append(&cfg, &hook, &Verdict::Deny(Rule::Grep, "r".to_owned()));
+    log::append(&cfg, &hook, &Verdict::Deny(Rule::Grep, "r".to_owned())).unwrap();
     let text = std::fs::read_to_string(&cfg.log_path).unwrap();
     let line: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
     assert_eq!(line["call"].as_str().unwrap().chars().count(), LOG_CALL_MAX);

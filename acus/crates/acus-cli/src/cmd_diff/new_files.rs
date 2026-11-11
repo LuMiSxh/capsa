@@ -4,6 +4,7 @@
 use super::moves::{Move, MoveIndex, moved_line};
 use super::render::{FILE_LINES, Style, View};
 use acus_syntax::Lang;
+use capsa_core::render::{Tone, paint};
 
 /// Lines printed from a new file that has no outline.
 const FIRST_LINES: usize = 20;
@@ -68,6 +69,13 @@ pub(super) fn render(
             }
         }
     }
-    block.push(style.out.dim(&format!("… body: acus show {path}")));
+    block.push(
+        paint(
+            &format!("… body: acus show {path}"),
+            Tone::Dim,
+            style.out.color,
+        )
+        .into_owned(),
+    );
     dropped
 }

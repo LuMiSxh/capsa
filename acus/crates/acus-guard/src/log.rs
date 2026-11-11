@@ -6,10 +6,10 @@ use capsa_core::log::Level;
 use serde_json::Value;
 
 /// Past this size the log rotates to `guard.jsonl.old`, keeping one old generation.
-const MAX_BYTES: u64 = 4 * 1024 * 1024;
+pub const MAX_BYTES: u64 = 4 * 1024 * 1024;
 
-/// Appends one decision as a JSON line; a log that cannot be written is skipped.
-pub fn append(cfg: &GuardConfig, hook: &Value, v: &Verdict) {
+/// Appends one decision as a JSON line; a line that cannot be written is returned as an error.
+pub fn append(cfg: &GuardConfig, hook: &Value, v: &Verdict) -> std::io::Result<()> {
     let input = &hook["tool_input"];
     let call: String = ["command", "file_path", "pattern"]
         .iter()
@@ -23,13 +23,13 @@ pub fn append(cfg: &GuardConfig, hook: &Value, v: &Verdict) {
         cwd: hook["cwd"].as_str().map(str::to_owned),
         tool: hook["tool_name"].as_str().map(str::to_owned),
         rule: v.rule().as_str().to_owned(),
-        kind: v.kind().to_owned(),
+        kind: v.kind().as_str().to_owned(),
         call,
         cmd: None,
     };
     // `append` writes each line in one call: parallel hooks share the file, and a newline written
     // apart from its line lets another hook's line land between them.
-    let _ = capsa_core::log::append(&cfg.log_path, MAX_BYTES, Level::Info, "decision", &entry);
+    capsa_core::log::append(&cfg.log_path, MAX_BYTES, Level::Info, "decision", &entry)
 }
 
 /// Holds the guard's fields of one guard.jsonl line. `capsa_core::log` writes `ts`, `level` and
@@ -85,7 +85,7 @@ mod tests {
             for _ in 0..4 {
                 s.spawn(|| {
                     for _ in 0..50 {
-                        append(&cfg, &hook, &verdict);
+                        append(&cfg, &hook, &verdict).unwrap();
                     }
                 });
             }
@@ -122,9 +122,10 @@ mod tests {
             &cfg,
             &hook,
             &Verdict::Deny(crate::Rule::Grep, "r".to_owned()),
-        );
+        )
+        .unwrap();
         crate::replay_file(&path, 1).unwrap();
-        let entries = capsa_core::log::read::<LogEntry>(&path);
+        let entries = capsa_core::log::read::<LogEntry>(&path).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].level, None);
         assert_eq!(entries[0].event, None);

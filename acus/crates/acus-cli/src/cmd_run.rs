@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus run`: runs several acus commands from stdin, one per line or as a JSON array.
 
-use crate::fmt::{Out, capture, clip, fit_line};
+use crate::hinted;
+use crate::out::{Out, capture, clip, fit_line};
 use crate::{Cli, execute};
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
@@ -43,15 +44,11 @@ pub struct Args {
 /// Agent/human output separates entries with `>>> acus …` lines; JSON output is one line per
 /// entry. Exit: 0 when a line succeeded, 2 when every line failed or `--fail-fast` stopped at
 /// one, otherwise 1. A footer lists the failed lines unless all of them failed.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "execute hands over the parsed arguments"
-)]
-pub fn run(a: Args, out: &Out) -> Result<Outcome> {
+pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     let batch = read_batch()?;
     let text = out.format != Format::Json;
     let mut state = Batch {
-        a: &a,
+        a,
         out,
         text,
         total: batch.len(),
@@ -103,7 +100,7 @@ impl Batch<'_> {
         } else {
             body
         };
-        crate::fmt::out(&body);
+        crate::out::write(&body);
         if let Err(msg) = status {
             self.fail(number, &msg);
         }
@@ -197,7 +194,7 @@ fn read_batch() -> Result<Vec<Result<Vec<String>>>> {
         .context("cannot read stdin")?;
     if s.trim_start().starts_with('[') {
         let v: Vec<Vec<String>> = serde_json::from_str(&s).map_err(|e| {
-            capsa_core::hint::Hinted::new(
+            hinted(
                 format!("expected a JSON array of argument arrays: {e}"),
                 r#"[["find","needle"],["show","src/a.rs#f"]]"#,
             )

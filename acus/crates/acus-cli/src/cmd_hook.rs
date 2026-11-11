@@ -4,10 +4,11 @@
 //! does nothing.
 
 use crate::config::Config;
-use acus_guard::{BashDecision, GuardConfig, Scope, Verdict};
+use acus_guard::{BashDecision, GuardConfig, Rewrite, Scope, Verdict};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -31,11 +32,7 @@ pub fn guard_config(cfg: &Config) -> GuardConfig {
     }
 }
 
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "execute hands over the parsed arguments"
-)]
-pub fn run(a: Args, cfg: &Config, config_problem: Option<&str>) -> Result<Outcome> {
+pub fn run(a: &Args, cfg: &Config, config_problem: Option<&str>) -> Result<Outcome> {
     if let Some(file) = &a.replay {
         acus_guard::replay_file(file, a.repeat)?;
         return Ok(Outcome::Found);
@@ -46,7 +43,7 @@ pub fn run(a: Args, cfg: &Config, config_problem: Option<&str>) -> Result<Outcom
     match v["hook_event_name"].as_str() {
         Some("SessionStart") => session_start(&v, cfg),
         Some("SubagentStart") => subagent_start(),
-        Some("PreToolUse") | None => answer(&v, cfg, config_problem),
+        Some("PreToolUse") | None => answer(v, cfg, config_problem),
         Some(_) => Ok(Outcome::Found),
     }
 }
@@ -66,73 +63,149 @@ fn session_start(v: &Value, cfg: &Config) -> Result<Outcome> {
 
 /// Prints the core skill as context for a SubagentStart, which does not see SessionStart output.
 fn subagent_start() -> Result<Outcome> {
-    let hook = serde_json::json!({
-        "hookEventName": "SubagentStart",
-        "additionalContext": crate::cmd_skill::CORE,
-    });
-    println!("{}", serde_json::json!({ "hookSpecificOutput": hook }));
+    print_reply(&HookOutput {
+        hook_event_name: "SubagentStart",
+        additional_context: Some(Cow::Borrowed(crate::cmd_skill::CORE)),
+        ..HookOutput::default()
+    })?;
     Ok(Outcome::Found)
 }
 
+/// What the guard decided for one call, before it is logged and printed.
+enum Decision {
+    Rewrite(Rewrite),
+    Verdict(Verdict),
+    Pass,
+}
+
+/// The `hookSpecificOutput` object of a reply. Fields serialize in declaration order, which is the
+/// order the hooks have always printed; a field that is not set is left out.
+#[derive(Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HookOutput {
+    hook_event_name: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    updated_input: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    additional_context: Option<Cow<'static, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    permission_decision: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    permission_decision_reason: Option<String>,
+}
+
+/// The line a hook prints: the reply wrapped in `hookSpecificOutput`.
+#[derive(serde::Serialize)]
+struct Reply<'a> {
+    #[serde(rename = "hookSpecificOutput")]
+    hook_specific_output: &'a HookOutput,
+}
+
 /// Answers a PreToolUse as the guard always has; a missing event (Codex) takes the same path.
-fn answer(v: &Value, cfg: &Config, config_problem: Option<&str>) -> Result<Outcome> {
-    let input = &v["tool_input"];
+fn answer(mut v: Value, cfg: &Config, config_problem: Option<&str>) -> Result<Outcome> {
     let cwd = v["cwd"].as_str();
-    let command = input["command"].as_str().unwrap_or_default();
     let scope = Scope::new(cwd);
     let gcfg = guard_config(cfg);
     let session = v["session_id"].as_str().unwrap_or_default();
     let note = config_problem.and_then(|p| config_note(&gcfg, session, p, &cfg.path));
+    let reply = match decide(&v, scope.as_ref(), cwd) {
+        Decision::Rewrite(rw) => {
+            log_decision(&gcfg, &v, &Verdict::Rewrite(rw.rule));
+            let input = v.get_mut("tool_input").map(Value::take).unwrap_or_default();
+            Some(rewrite_reply(input, rw, note.as_deref()))
+        }
+        // A pure hint repeats for every call of its rule, so `hints` shows only some of them. A call
+        // whose hint is hidden passes silently and is not logged.
+        Decision::Verdict(verdict) if shown(&gcfg, session, &verdict) => {
+            log_decision(&gcfg, &v, &verdict);
+            verdict_reply(verdict, note)
+        }
+        Decision::Verdict(_) | Decision::Pass => note_reply(note),
+    };
+    if let Some(reply) = reply {
+        print_reply(&reply)?;
+    }
+    Ok(Outcome::Found)
+}
+
+/// Decides one call: a Bash call goes through the rewrite and the rules, and every other tool
+/// through its own check. `Pass` runs the call unchanged.
+fn decide(v: &Value, scope: Option<&Scope>, cwd: Option<&str>) -> Decision {
+    let input = &v["tool_input"];
+    let command = input["command"].as_str().unwrap_or_default();
     // Codex hooks (they carry a `turn_id`) cannot rewrite a call, only refuse it.
     let can_rewrite = v["tool_name"].as_str() == Some("Bash") && v.get("turn_id").is_none();
-    let verdict = match v["tool_name"].as_str() {
-        Some("Read") => acus_guard::read_check(input, cwd, scope.as_ref()),
-        Some("Grep") => acus_guard::grep_tool(input, cwd),
-        Some("Glob") => Some(acus_guard::glob_tool()),
-        Some("PowerShell") => acus_guard::check_ps(command, scope.as_ref()),
-        _ => match acus_guard::decide_bash(command, scope.as_ref(), can_rewrite) {
-            BashDecision::Rewrite(rw) => {
-                acus_guard::log::append(&gcfg, v, &Verdict::Rewrite(rw.rule));
-                let mut updated = input.clone();
-                updated["command"] = rw.command.into();
-                let mut hook = serde_json::json!({
-                    "hookEventName": "PreToolUse",
-                    "updatedInput": updated,
-                    // No permissionDecisionReason: an allow reason would reach only the user, not the agent.
-                    "additionalContext": with_note(rw.note, note.as_deref()),
-                });
-                // A build is left undecided, so Claude Code's permission flow decides on the rewritten command.
-                if !rw.deferred {
-                    hook["permissionDecision"] = "allow".into();
-                }
-                println!("{}", serde_json::json!({ "hookSpecificOutput": hook }));
-                return Ok(Outcome::Found);
-            }
-            BashDecision::Verdict(verdict) => Some(verdict),
-            BashDecision::Pass => None,
+    let checked = |verdict: Option<Verdict>| verdict.map_or(Decision::Pass, Decision::Verdict);
+    match v["tool_name"].as_str() {
+        Some("Read") => checked(acus_guard::read_check(input, cwd, scope)),
+        Some("Grep") => checked(acus_guard::grep_tool(input, cwd)),
+        Some("Glob") => Decision::Verdict(acus_guard::glob_tool()),
+        Some("PowerShell") => checked(acus_guard::check_ps(command, scope)),
+        _ => match acus_guard::decide_bash(command, scope, can_rewrite) {
+            BashDecision::Rewrite(rw) => Decision::Rewrite(rw),
+            BashDecision::Verdict(verdict) => Decision::Verdict(verdict),
+            BashDecision::Pass => Decision::Pass,
         },
-    };
-    // A pure hint repeats for every call of its rule, so `hints` shows only some of them. A call
-    // whose hint is hidden passes silently and is not logged.
-    let Some(verdict) = verdict.filter(|v| shown(&gcfg, session, v)) else {
-        return Ok(note_only(note));
-    };
-    acus_guard::log::append(&gcfg, v, &verdict);
-    let fields = match verdict {
-        Verdict::Deny(_, reason) => serde_json::json!({
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": with_note(reason, note.as_deref()),
-        }),
+    }
+}
+
+fn log_decision(gcfg: &GuardConfig, hook: &Value, verdict: &Verdict) {
+    // A log that cannot be written must not change the decision; `self doctor` reports it.
+    let _ = acus_guard::log::append(gcfg, hook, verdict);
+}
+
+/// The reply to a rewritten call: the updated input, and the note that says what ran instead.
+fn rewrite_reply(mut input: Value, rw: Rewrite, note: Option<&str>) -> HookOutput {
+    input["command"] = rw.command.into();
+    HookOutput {
+        hook_event_name: "PreToolUse",
+        updated_input: Some(input),
+        // No permissionDecisionReason: an allow reason would reach only the user, not the agent.
+        additional_context: Some(with_note(rw.note, note).into()),
+        // A build is left undecided, so Claude Code's permission flow decides the rewritten call.
+        permission_decision: (!rw.deferred).then_some("allow"),
+        ..HookOutput::default()
+    }
+}
+
+/// The reply to a verdict: a deny reason, or a hint for the agent's context. An escape or a
+/// rewrite has no reply of its own, so only the config note is printed.
+fn verdict_reply(verdict: Verdict, note: Option<String>) -> Option<HookOutput> {
+    Some(match verdict {
+        Verdict::Deny(_, reason) => HookOutput {
+            hook_event_name: "PreToolUse",
+            permission_decision: Some("deny"),
+            permission_decision_reason: Some(with_note(reason, note.as_deref())),
+            ..HookOutput::default()
+        },
         // The command runs as usual; only the agent's context gains the hint.
-        Verdict::Hint(_, hint) => serde_json::json!({
-            "hookEventName": "PreToolUse",
-            "additionalContext": with_note(hint, note.as_deref()),
-        }),
-        Verdict::Escape(_) | Verdict::Rewrite(_) => return Ok(note_only(note)),
-    };
-    println!("{}", serde_json::json!({ "hookSpecificOutput": fields }));
-    Ok(Outcome::Found)
+        Verdict::Hint(_, hint) => HookOutput {
+            hook_event_name: "PreToolUse",
+            additional_context: Some(with_note(hint, note.as_deref()).into()),
+            ..HookOutput::default()
+        },
+        Verdict::Escape(_) | Verdict::Rewrite(_) => return note_reply(note),
+    })
+}
+
+/// The reply that carries only the config note, when there is one.
+fn note_reply(note: Option<String>) -> Option<HookOutput> {
+    note.map(|note| HookOutput {
+        hook_event_name: "PreToolUse",
+        additional_context: Some(note.into()),
+        ..HookOutput::default()
+    })
+}
+
+/// Prints one reply as a JSON line.
+fn print_reply(hook: &HookOutput) -> Result<()> {
+    println!(
+        "{}",
+        serde_json::to_string(&Reply {
+            hook_specific_output: hook
+        })?
+    );
+    Ok(())
 }
 
 /// Reports whether a verdict is printed: a pure hint may be hidden by the throttle.
@@ -162,18 +235,4 @@ fn with_note(text: String, note: Option<&str>) -> String {
         Some(note) => format!("{text}\n{note}"),
         None => text,
     }
-}
-
-/// Prints the config note as the hook's only context, when there is one.
-fn note_only(note: Option<String>) -> Outcome {
-    if let Some(note) = note {
-        println!(
-            "{}",
-            serde_json::json!({ "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "additionalContext": note,
-            }})
-        );
-    }
-    Outcome::Found
 }

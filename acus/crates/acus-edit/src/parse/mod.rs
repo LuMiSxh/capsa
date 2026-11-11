@@ -164,7 +164,9 @@ pub struct Chunk {
 /// Expands a leading `~` in every path the ops name: no shell runs on patch text.
 fn expand_home(ops: &mut [Op]) {
     fn home(p: &mut String) {
-        *p = capsa_core::paths::expand_home(p);
+        *p = capsa_core::paths::expand_home(p)
+            .to_string_lossy()
+            .into_owned();
     }
     for op in ops {
         match op {

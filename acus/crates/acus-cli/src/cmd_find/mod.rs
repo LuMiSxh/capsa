@@ -5,8 +5,9 @@ mod input;
 mod pattern;
 mod print;
 
-use crate::fmt::{Budget, CUT, Out};
 use crate::globs::{add_type_globs, searched_globs};
+use crate::hinted;
+use crate::out::{Budget, CUT, Out};
 use crate::source::{address, locate};
 use acus_search::{FileHits, FindOpts, Hit, attach_outlines};
 use acus_syntax::{Address, Target};
@@ -176,11 +177,10 @@ fn context_of(a: &Args) -> Option<(usize, usize)> {
 /// Refuses flag combinations that cannot print what they ask for.
 fn refuse_conflicts(a: &Args, context: bool) -> Result<()> {
     if a.block && context {
-        return Err(capsa_core::hint::Hinted::new(
+        return Err(hinted(
             "-A/-B/-C conflicts with --block",
             "--block prints whole symbols; -A/-B/-C print the lines around each hit",
-        )
-        .into());
+        ));
     }
     if !a.multiline {
         return Ok(());
@@ -208,9 +208,7 @@ fn refuse_conflicts(a: &Args, context: bool) -> Result<()> {
         ),
     ];
     if let Some((_, flag, hint)) = refused.iter().find(|r| r.0) {
-        return Err(
-            capsa_core::hint::Hinted::new(format!("{flag} conflicts with -U"), *hint).into(),
-        );
+        return Err(hinted(format!("{flag} conflicts with -U"), *hint));
     }
     Ok(())
 }
@@ -236,7 +234,7 @@ fn split_paths(paths: &[String]) -> Result<(Vec<PathBuf>, Spans, bool, bool)> {
     let mut roots: Vec<PathBuf> = Vec::new();
     let mut addressed: Vec<Address> = Vec::new();
     for p in paths.iter().filter(|p| *p != "-") {
-        let addr = address(&capsa_core::paths::expand_home(p));
+        let addr = address(&capsa_core::paths::expand_home(p).to_string_lossy());
         if addr.target == Target::Whole {
             roots.push(addr.path.into());
         } else {
@@ -406,19 +404,17 @@ fn explain_pattern_error(e: anyhow::Error, fixed: bool, perl: bool) -> anyhow::E
         e
     } else if msg.contains("look-around") || msg.contains("backreference") {
         let p = if perl { "-P is accepted, but " } else { "" };
-        capsa_core::hint::Hinted::new(
+        hinted(
             msg,
             format!(
                 "{p}acus uses Rust regex, which has no look-around or backreferences; match the surrounding text directly, or narrow with -w / a second -e"
             ),
         )
-        .into()
     } else {
-        capsa_core::hint::Hinted::new(
+        hinted(
             msg,
             "escape regex characters like ( [ { . with \\, or use -F for literal text",
         )
-        .into()
     }
 }
 /// The 1-based inclusive lines an address names in its file, resolved as `acus show` resolves

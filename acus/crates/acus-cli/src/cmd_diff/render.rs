@@ -4,10 +4,11 @@
 use super::moves::{Move, MoveIndex, find_moves, moved_line};
 use super::status::Status;
 use super::{Args, FileDiff, counts, file_path, modes, new_files, status, total};
-use crate::fmt::{Budget, Out, clip};
 use crate::git::git;
+use crate::out::{Budget, Out, clip};
 use acus_syntax::{Lang, Outline, outline};
 use capsa_core::format::Format;
+use capsa_core::render::{Tone, paint};
 use std::path::Path;
 
 /// Printed changed lines per file with `-p`; `--full` lifts the cap.
@@ -221,10 +222,14 @@ pub(super) fn print_text_files(
             text_groups(&mut block, &style, view, i, &moves, &index)
         };
         if dropped > 0 {
-            block.push(out.dim(&format!(
-                "… {dropped} more changed lines: {}",
-                rerun(a, rev, f)
-            )));
+            block.push(
+                paint(
+                    &format!("… {dropped} more changed lines: {}", rerun(a, rev, f)),
+                    Tone::Dim,
+                    out.color,
+                )
+                .into_owned(),
+            );
         }
         if printed > 0 && printed + block.len() > a.max_lines {
             budget.emit(&format!(
@@ -241,7 +246,7 @@ pub(super) fn print_text_files(
     });
     budget.emit(&out.header(&modes::total_line(files.len(), add, del)));
     if let Some(line) = staged {
-        budget.emit(&out.dim(&line));
+        budget.emit(&paint(&line, Tone::Dim, out.color));
     }
     if let Some(f) = budget.footer() {
         outln!("{f}");

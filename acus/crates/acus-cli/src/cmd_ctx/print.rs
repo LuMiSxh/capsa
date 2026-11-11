@@ -3,8 +3,9 @@
 
 use super::Args;
 use super::refs::{refs, snippet};
-use crate::fmt::{Budget, Out, clip};
+use crate::out::{Budget, Out, clip};
 use capsa_core::exit::Outcome;
+use capsa_core::render::{Tone, paint};
 use std::path::{Path, PathBuf};
 
 /// Returns the `--json` document: the shown output, the exit code and the code at each
@@ -68,9 +69,11 @@ pub(super) fn print_notes(
         } else {
             String::new()
         };
-        budget.emit(&out.dim(&format!(
-            "… {dropped} noise lines dropped{tests} (--raw keeps them)"
-        )));
+        budget.emit(&paint(
+            &format!("… {dropped} noise lines dropped{tests} (--raw keeps them)"),
+            Tone::Dim,
+            out.color,
+        ));
     }
     if grep_dropped > 0 {
         let why = if nothing_matched && dropped > 0 {
@@ -80,15 +83,19 @@ pub(super) fn print_notes(
         } else {
             ""
         };
-        budget.emit(&out.dim(&format!(
-            "… {grep_dropped} lines not matching --grep dropped{why}"
-        )));
+        budget.emit(&paint(
+            &format!("… {grep_dropped} lines not matching --grep dropped{why}"),
+            Tone::Dim,
+            out.color,
+        ));
     }
     if let Some((log, n)) = log {
         let p = log.display();
-        budget.emit(&out.dim(&format!(
-            "… full output ({n} lines): acus find 'PAT' {p}, or acus show {p}:A-B"
-        )));
+        budget.emit(&paint(
+            &format!("… full output ({n} lines): acus find 'PAT' {p}, or acus show {p}:A-B"),
+            Tone::Dim,
+            out.color,
+        ));
     }
 }
 
@@ -140,8 +147,12 @@ pub(super) fn print_growing(out: &Out, path: &Path, budget: &mut Budget) {
         return;
     };
     let p = path.display();
-    budget.emit(&out.dim(&format!(
-        "{p} was written to {}s ago and may still be growing; rerun acus ctx --log {p} for newer lines",
-        age.as_secs()
-    )));
+    budget.emit(&paint(
+        &format!(
+            "{p} was written to {}s ago and may still be growing; rerun acus ctx --log {p} for newer lines",
+            age.as_secs()
+        ),
+        Tone::Dim,
+        out.color,
+    ));
 }

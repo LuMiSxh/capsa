@@ -550,6 +550,39 @@ fn doctor_warns_when_subagent_start_is_not_registered() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn doctor_fails_when_the_guard_log_is_read_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(claude.join("settings.json"), "{}").unwrap();
+    let log = dir.path().join("guard.jsonl");
+    std::fs::write(&log, "").unwrap();
+    std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o444)).unwrap();
+    // Root ignores the mode bits, so the log stays writable and there is nothing to test.
+    if std::fs::OpenOptions::new().append(true).open(&log).is_ok() {
+        return;
+    }
+    let mut env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap()).to_vec();
+    let config = dir.path().join("config.toml");
+    env.push(("ACUS_CONFIG", config.to_str().unwrap()));
+
+    let (_, out, _) = acus_env(&["self", "doctor", "--json"], &env);
+    let v = json_line(&out);
+    let check = v["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|g| g["checks"].as_array().unwrap())
+        .find(|c| c["name"] == "guard log file")
+        .unwrap();
+    assert_eq!(check["status"], "fail", "{check}");
+}
+
 #[test]
 fn setup_add_missing_adds_only_the_hooks_that_are_missing() {
     let dir = tempfile::tempdir().unwrap();

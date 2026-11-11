@@ -224,7 +224,7 @@ fn insert_refuses_a_type_and_its_impl() {
 fn syntax_check_refuses_a_patch_that_breaks_the_file() {
     let d = dir(&[("a.rs", "fn a() {\n    x();\n}\n"), ("b.md", "# T\n")]);
     let p = "*** Begin Patch\n*** Update File: a.rs\n<<<<<<< SEARCH\n    x();\n=======\n    x(;\n>>>>>>> REPLACE\n*** Update File: b.md\n<<<<<<< SEARCH\n# T\n=======\n# U\n>>>>>>> REPLACE\n*** End Patch\n";
-    let e = apply(&parse(p).unwrap(), d.path(), false)
+    let e = apply(&parse(p).unwrap(), d.path(), &ApplyOptions::default())
         .unwrap_err()
         .shown();
     assert!(
@@ -237,7 +237,11 @@ fn syntax_check_refuses_a_patch_that_breaks_the_file() {
     );
     assert_eq!(read(d.path(), "a.rs"), "fn a() {\n    x();\n}\n");
     assert_eq!(read(d.path(), "b.md"), "# T\n", "all or nothing");
-    let a = apply_with(&parse(p).unwrap(), d.path(), false, true).unwrap();
+    let broken = ApplyOptions {
+        allow_broken: true,
+        ..ApplyOptions::default()
+    };
+    let a = apply(&parse(p).unwrap(), d.path(), &broken).unwrap();
     assert_eq!(a.broken, ["a.rs"]);
     assert_eq!(read(d.path(), "a.rs"), "fn a() {\n    x(;\n}\n");
     assert_eq!(read(d.path(), "b.md"), "# U\n");
@@ -253,7 +257,7 @@ fn syntax_check_counts_only_new_errors() {
     apply(
         &parse(&block("let x = 1;", "let x = 2;")).unwrap(),
         d.path(),
-        false,
+        &ApplyOptions::default(),
     )
     .unwrap();
     assert_eq!(read(d.path(), "a.rs"), "let x = 2;\nfn a() {}\n");

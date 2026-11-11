@@ -8,11 +8,12 @@ mod print;
 mod refs;
 
 use crate::config::Config;
-use crate::fmt::Budget;
-use crate::fmt::Out;
+use crate::hinted;
+use crate::out::{Budget, Out};
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::render::{Tone, paint};
 use narrow::narrow;
 use noise::{clean, quiet, save_log};
 use print::{print_growing, print_json, print_lines, print_notes, print_snippets};
@@ -96,16 +97,14 @@ struct Captured {
 /// while we wait. The shell already merges stderr into stdout (`2>&1`), so there is one stream;
 /// stderr is drained on a second thread only so nothing can block on it. With `timeout` the
 /// command runs in its own process group and the group is killed when time is up.
-/// Limitation: on Windows only the shell process is killed, not its children.
+/// On Windows the whole tree is killed with `taskkill`, as the group is on Unix.
 fn capture(cmd: &str, command: &str, timeout: Option<u64>) -> Result<Captured> {
     let mut c = shell(cmd);
     c.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    #[cfg(unix)]
     if timeout.is_some() {
-        use std::os::unix::process::CommandExt;
-        c.process_group(0);
+        capsa_core::process::own_group(&mut c);
     }
     let mut child = c
         .spawn()
@@ -157,11 +156,7 @@ fn capture(cmd: &str, command: &str, timeout: Option<u64>) -> Result<Captured> {
     }
     let timed_out = status.is_none();
     if timed_out {
-        #[cfg(unix)]
-        // SAFETY: a negative pid signals the process group created by `process_group(0)`.
-        unsafe {
-            libc::kill(-(child.id() as i32), libc::SIGKILL);
-        }
+        let _ = capsa_core::process::signal_group(child.id(), capsa_core::process::Signal::Kill);
         let _ = child.kill();
         let _ = child.wait();
     }
@@ -187,14 +182,10 @@ fn capture(cmd: &str, command: &str, timeout: Option<u64>) -> Result<Captured> {
 
 /// Runs a command, prints its output, then the code its `path:line` references point at.
 /// Exit: the command's exit code (2 if it could not start).
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "execute hands over the parsed arguments"
-)]
-pub fn run(a: Args, out: &Out, cfg: &Config) -> Result<Outcome> {
-    let (extra, grep, context) = inputs(&a, cfg)?;
+pub fn run(a: &Args, out: &Out, cfg: &Config) -> Result<Outcome> {
+    let (extra, grep, context) = inputs(a, cfg)?;
     let narrowing = a.tail.is_some() || grep.is_some();
-    let (raw, code, timed_out, command) = source(&a, out, cfg)?;
+    let (raw, code, timed_out, command) = source(a, out, cfg)?;
     let text = if a.raw { raw } else { clean(&raw) };
     let cwd = std::env::current_dir()?;
     if out.format == Format::Json {
@@ -210,7 +201,7 @@ pub fn run(a: Args, out: &Out, cfg: &Config) -> Result<Outcome> {
         } else {
             text
         };
-        return Ok(print_json(&a, &cwd, &shown, code));
+        return Ok(print_json(a, &cwd, &shown, code));
     }
     let all: Vec<&str> = text.lines().collect();
     let (lines, passed, dropped) = if a.raw {
@@ -238,7 +229,7 @@ pub fn run(a: Args, out: &Out, cfg: &Config) -> Result<Outcome> {
     if let Some(path) = &a.log {
         budget.emit(&out.header(&format!("== log {} ({} lines)", path.display(), all.len())));
     }
-    let omitted = print_lines(&a, &narrowed.lines, &mut budget);
+    let omitted = print_lines(a, &narrowed.lines, &mut budget);
     // Whatever is not printed stays readable without running the command again.
     // Dropped noise matters only when looking into a failure.
     let keep_log = omitted > 0
@@ -260,14 +251,18 @@ pub fn run(a: Args, out: &Out, cfg: &Config) -> Result<Outcome> {
         &mut budget,
     );
     if let (true, Some(secs)) = (timed_out, a.timeout) {
-        budget.emit(&out.dim(&format!(
-            "… killed after {secs}s (--timeout); output above is what it printed until then. Raise --timeout, or --grep/--tail a narrower command"
-        )));
+        budget.emit(&paint(
+            &format!(
+                "… killed after {secs}s (--timeout); output above is what it printed until then. Raise --timeout, or --grep/--tail a narrower command"
+            ),
+            Tone::Dim,
+            out.color,
+        ));
     }
     if a.log.is_none() {
         budget.emit(&out.header(&format!("== exit {code}")));
     }
-    print_snippets(out, &a, &refs, &mut budget);
+    print_snippets(out, a, &refs, &mut budget);
     if let Some(path) = &a.log {
         print_growing(out, path, &mut budget);
     }
@@ -284,11 +279,10 @@ type Inputs = (RegexSet, Option<Regex>, Option<(usize, usize)>);
 fn inputs(a: &Args, cfg: &Config) -> Result<Inputs> {
     // Checked here, not with clap's conflicts, so the error carries the hint.
     if a.log.is_some() && (a.command.is_some() || a.timeout.is_some()) {
-        return Err(capsa_core::hint::Hinted::new(
+        return Err(hinted(
             "--log reads a saved file, so it takes no command or --timeout",
             "use either a command or --log FILE",
-        )
-        .into());
+        ));
     }
     let extra = RegexSet::new(cfg.ctx.drop.iter().chain(&a.drop)).with_context(|| {
         format!(
@@ -304,11 +298,10 @@ fn inputs(a: &Args, cfg: &Config) -> Result<Inputs> {
         .context("invalid --grep regex")?;
     let has_context = !(a.after.is_empty() && a.before.is_empty() && a.around.is_empty());
     if has_context && grep.is_none() {
-        return Err(capsa_core::hint::Hinted::new(
+        return Err(hinted(
             "-A, -B and -C need --grep",
             "add the pattern, e.g. acus ctx 'cargo build' --grep '^error' -A 4",
-        )
-        .into());
+        ));
     }
     // The last of repeated flags wins, and -A and -B override -C.
     let context = has_context.then(|| {
@@ -359,7 +352,7 @@ fn command_line(a: &Args, out: &Out, cfg: &Config) -> Result<String> {
                 .clone()
                 .or_else(|| detect_command(&cwd))
                 .ok_or_else(|| {
-                    capsa_core::hint::Hinted::new(
+                    hinted(
                         "no command given and no project detected",
                         format!(
                             "pass a command, e.g. acus ctx 'cargo test -q', or set [ctx] command in {}",
@@ -368,7 +361,7 @@ fn command_line(a: &Args, out: &Out, cfg: &Config) -> Result<String> {
                     )
                 })?;
             if out.format != Format::Json {
-                outln!("{}", out.dim(&format!("$ {c}")));
+                outln!("{}", paint(&format!("$ {c}"), Tone::Dim, out.color));
             }
             Ok(c)
         }
