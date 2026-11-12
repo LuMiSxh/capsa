@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Owns vicarius's settings, kept in `config.json` in the vicarius config directory. A missing
+//! Owns vicarius's settings, kept in `config.toml` in the vicarius config directory. A missing
 //! file means the defaults, and a setting that breaks a rule is refused.
 
+use capsa_core::config::ConfigFile;
 use capsa_core::hint::Hint;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -9,7 +10,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Names the file in the config directory.
-const FILE: &str = "config.json";
+const FILE: &str = "config.toml";
 
 /// The smallest context window, in tokens, that the settings accept.
 const MIN_CONTEXT_TOKENS: u64 = 1000;
@@ -23,9 +24,9 @@ pub fn known_model(model: &str) -> bool {
     KNOWN_MODELS.contains(&model)
 }
 
-/// The settings in `config.json`. Missing keys keep their default.
+/// The settings in `config.toml`. Missing keys keep their default.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// The local port the proxy listens on.
     pub port: u16,
@@ -68,6 +69,7 @@ impl Effort {
 
 /// An agent with a DeepSeek variant named `<from>-ds`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Agent {
     /// The agent file in `~/.claude/agents` that the variant derives from, without `.md`.
     pub from: String,
@@ -84,10 +86,8 @@ pub struct Agent {
 /// Lists what can go wrong with the config file or a change to it.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("cannot read or write {}", .0.display())]
-    Io(PathBuf, #[source] std::io::Error),
-    #[error("{} is not a valid vicarius config", .0.display())]
-    Parse(PathBuf, #[source] serde_json::Error),
+    #[error(transparent)]
+    File(#[from] capsa_core::config::ConfigError),
     #[error("port must not be 0")]
     PortZero,
     #[error("min_balance_usd must be a finite amount of 0 or more, not {0}")]
@@ -118,11 +118,7 @@ pub enum ConfigError {
 impl Hint for ConfigError {
     fn hint(&self) -> Option<Cow<'_, str>> {
         let text = match self {
-            Self::Io(..) => return None,
-            Self::Parse(path, _) => format!(
-                "fix the JSON in {}, or move the file away to use the defaults",
-                path.display()
-            ),
+            Self::File(e) => return e.hint(),
             Self::PortZero => "use a port from 1 to 65535, such as 3337".to_owned(),
             Self::MinBalance(_) => "use an amount of 0 or more, such as 1.0".to_owned(),
             Self::BalanceRefresh(_) => "use a whole number of minutes, such as 10".to_owned(),
@@ -134,7 +130,7 @@ impl Hint for ConfigError {
             Self::AgentModel { .. } => {
                 "use a DeepSeek model id, such as `deepseek-flash`".to_owned()
             }
-            Self::DuplicateAgent(from) => format!("keep one entry for `{from}` in config.json"),
+            Self::DuplicateAgent(from) => format!("keep one entry for `{from}` in config.toml"),
             Self::AgentExists(from) => {
                 format!("remove it first with `vicarius self config agent remove {from}`")
             }
@@ -171,28 +167,19 @@ impl Config {
         capsa_core::paths::config_dir("vicarius").join(FILE)
     }
 
+    /// Returns the config file as `capsa_core::config` reads and writes it.
+    pub fn file() -> ConfigFile {
+        ConfigFile::at(Self::path())
+    }
+
     /// Reads the config at `path`, which is the default config when the file is missing.
     ///
     /// # Errors
     /// Fails when the file cannot be read, is not a vicarius config or breaks a rule.
     pub fn load_from(path: &Path) -> Result<Config, ConfigError> {
-        let config = match std::fs::read_to_string(path) {
-            Ok(text) => {
-                Config::parse(&text).map_err(|e| ConfigError::Parse(path.to_path_buf(), e))?
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
-            Err(e) => return Err(ConfigError::Io(path.to_path_buf(), e)),
-        };
+        let config: Config = ConfigFile::at(path).load()?;
         config.validate()?;
         Ok(config)
-    }
-
-    /// Parses the JSON text of a config file. Missing keys keep their defaults.
-    ///
-    /// # Errors
-    /// Fails when the text is not a JSON object of the known types.
-    pub fn parse(text: &str) -> Result<Config, serde_json::Error> {
-        serde_json::from_str(text)
     }
 
     /// Checks every setting against its rule and returns the first one that breaks.
@@ -272,29 +259,15 @@ impl Config {
         }
     }
 
-    /// Writes the config to `path`, creating its directory. The text goes to a temporary file in
-    /// the same directory first and is renamed over the file, so a reader sees the old config or
-    /// the new one, never a part of either.
+    /// Writes the config to `path`, creating its directory, through a temporary file in the same
+    /// directory that is renamed over the file.
     ///
     /// # Errors
-    /// Fails when the directory or the file cannot be written or renamed.
+    /// Fails when the config cannot be encoded, or when the directory or the file cannot be
+    /// written.
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
-        let io = |e| ConfigError::Io(path.to_path_buf(), e);
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(io)?;
-        }
-        capsa_core::fs::write_atomic(path, self.to_json().as_bytes()).map_err(io)
-    }
-
-    /// Returns the JSON text of the config file.
-    #[expect(
-        clippy::expect_used,
-        reason = "a config of numbers, strings and a list always serializes"
-    )]
-    fn to_json(&self) -> String {
-        let mut text = serde_json::to_string_pretty(self).expect("config serializes");
-        text.push('\n');
-        text
+        ConfigFile::at(path).save(self)?;
+        Ok(())
     }
 }
 
@@ -337,6 +310,13 @@ mod tests {
         }
     }
 
+    fn load(text: &str) -> Result<Config, ConfigError> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        std::fs::write(&path, text).unwrap();
+        Config::load_from(&path)
+    }
+
     #[test]
     fn a_missing_file_gives_the_defaults_and_creates_nothing() {
         let dir = tempfile::tempdir().unwrap();
@@ -357,7 +337,7 @@ mod tests {
 
     #[test]
     fn missing_keys_keep_their_defaults() {
-        let c = Config::parse(r#"{"port":4000,"agents":[]}"#).unwrap();
+        let c = load("port = 4000\nagents = []\n").unwrap();
         assert_eq!(
             c,
             Config {
@@ -370,15 +350,13 @@ mod tests {
 
     #[test]
     fn existing_agent_configs_default_effort_to_keep() {
-        let config =
-            Config::parse(r#"{"agents":[{"from":"worker","model":"deepseek-flash"}]}"#).unwrap();
+        let config = load("[[agents]]\nfrom = \"worker\"\nmodel = \"deepseek-flash\"\n").unwrap();
         assert_eq!(config.agents[0].effort, Effort::Keep);
     }
 
     #[test]
     fn an_agent_config_without_suspended_is_active() {
-        let config =
-            Config::parse(r#"{"agents":[{"from":"worker","model":"deepseek-flash"}]}"#).unwrap();
+        let config = load("[[agents]]\nfrom = \"worker\"\nmodel = \"deepseek-flash\"\n").unwrap();
         assert!(!config.agents[0].suspended);
     }
 
@@ -393,7 +371,7 @@ mod tests {
         c.agents[0].suspended = true;
         c.save_to(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("\"suspended\": true"), "{text}");
+        assert!(text.contains("suspended = true"), "{text}");
         assert_eq!(Config::load_from(&path).unwrap(), c);
     }
 
@@ -410,17 +388,19 @@ mod tests {
         };
         c.save_to(&path).unwrap();
         assert_eq!(Config::load_from(&path).unwrap(), c);
-        assert!(!dir.path().join("config.json.tmp").exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]
     fn an_invalid_file_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE);
-        std::fs::write(&path, "not json").unwrap();
+        std::fs::write(&path, "port = ").unwrap();
         assert!(matches!(
             Config::load_from(&path),
-            Err(ConfigError::Parse(..))
+            Err(ConfigError::File(
+                capsa_core::config::ConfigError::Parse { .. }
+            ))
         ));
     }
 
@@ -428,7 +408,7 @@ mod tests {
     fn a_file_that_breaks_a_rule_is_refused_on_load() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE);
-        std::fs::write(&path, r#"{"port":0}"#).unwrap();
+        std::fs::write(&path, "port = 0\n").unwrap();
         assert!(matches!(
             Config::load_from(&path),
             Err(ConfigError::PortZero)

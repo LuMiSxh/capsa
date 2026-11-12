@@ -2,9 +2,21 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The settings moved from `config.json` to `config.toml` in the vicarius config directory, in
+  TOML through the shared core config module. Nothing is migrated: `vicarius self doctor` warns
+  when `config.json` still exists and names `vicarius self config set` and the new file.
+- `vicarius self doctor` checks `proxy.jsonl`: that it is writable, its size against the 8 MiB
+  rotation limit and the age of its last entry.
+- `vicarius hook` gives the whole status call at most 50 ms, down from 300 ms, so a service
+  that answers slowly in small chunks no longer stretches the wait. A healthy mock endpoint
+  answered in 4.3 ms median over 20 runs (debug build); a hanging one took 58 ms, against up
+  to 300 ms before.
+
 ### Fixed
 
-- `config.json` and the derived agent files are written through a temporary file with a name
+- `config.toml` and the derived agent files are written through a temporary file with a name
   unique to each write, so two concurrent writers no longer overwrite each other's temporary file.
 - A failing write to `proxy.jsonl` prints one `vicarius: cannot write <file>` line on stderr
   instead of being dropped silently; proxying continues.

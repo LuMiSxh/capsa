@@ -13,7 +13,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result, ensure};
 use capsa_core::claude_settings::{self, Removal, Step, runs};
-use capsa_core::hint::{Hinted, ResultExt};
+use capsa_core::hint::{ResultExt, hinted};
 use capsa_core::hooks::{Agent, HookFile, HookSpec};
 use vicarius::config::Config;
 
@@ -245,7 +245,7 @@ pub fn check_env_free(settings: &Path, config: &Config) -> Result<()> {
             continue;
         };
         if current.as_str() != Some(value.as_str()) {
-            return Err(Hinted::new(
+            return Err(hinted(
                 format!(
                     "{key} is set to {current} in {}, not to {value}",
                     settings.display()
@@ -254,8 +254,7 @@ pub fn check_env_free(settings: &Path, config: &Config) -> Result<()> {
                     "remove or change {key} in {} first, then run this again",
                     settings.display()
                 ),
-            )
-            .into());
+            ));
         }
     }
     Ok(())

@@ -15,7 +15,7 @@ use vicarius::config::Config;
 use crate::status_client::{self, ServiceStatus};
 
 /// The time the hook waits for the service to accept the connection and answer.
-const TIMEOUT: Duration = Duration::from_millis(300);
+const TIMEOUT: Duration = Duration::from_millis(50);
 /// The most hook input read; a larger one is not a hook input.
 const MAX_INPUT: u64 = 1 << 20;
 

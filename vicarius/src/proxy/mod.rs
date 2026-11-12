@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 
-pub use record::{Counts, Route, RouteCounts};
+pub use record::{Counts, LOG_LIMIT, Route, RouteCounts};
 pub use usage::Usage;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -93,7 +93,7 @@ impl ProxyConfig {
             anthropic_base: ANTHROPIC_URL.to_owned(),
             deepseek_base: DEEPSEEK_URL.to_owned(),
             deepseek_key,
-            log_file: capsa_core::paths::state_dir("vicarius").join("proxy.jsonl"),
+            log_file: crate::proxy_log_file(),
         }
     }
 }

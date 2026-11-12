@@ -9,12 +9,12 @@ use std::time::{Duration, Instant};
 
 /// Where vicarius reads its config under a scratch home: macOS ignores `XDG_CONFIG_HOME`.
 const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
-    "Library/Application Support/vicarius/config.json"
+    "Library/Application Support/vicarius/config.toml"
 } else {
-    "config/vicarius/config.json"
+    "config/vicarius/config.toml"
 };
 
-const SENIOR: &str = r#"[{"from":"senior-worker","model":"deepseek-flash"}]"#;
+const SENIOR: &str = r#"[{ from = "senior-worker", model = "deepseek-flash" }]"#;
 
 const OPEN: &str = r#"{"started_at":1,"gate":{"open":true,"reason":null,"reason_text":null,"balance":18.4,"currency":"USD","checked_at":1793723161},"counters":{"anthropic":{"requests":3,"refused":0,"input_tokens":10,"cache_creation_tokens":1,"cache_read_tokens":2,"output_tokens":4},"deepseek":{"requests":2,"refused":1,"input_tokens":100,"cache_creation_tokens":0,"cache_read_tokens":50,"output_tokens":20}},"agents":{"entries":[{"agent":"senior-worker","file":"senior-worker-ds.md","outcome":"written"}]},"refresh":{"last_ok_at":1793723161,"last_error":null,"next_at":1793723761}}"#;
 
@@ -77,7 +77,7 @@ fn text(bytes: &[u8]) -> String {
 fn write_config(home: &Path, port: u16, agents: &str) {
     let path = home.join(CONFIG_FILE);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, format!(r#"{{"port": {port}, "agents": {agents}}}"#)).unwrap();
+    std::fs::write(path, format!("port = {port}\nagents = {agents}\n")).unwrap();
 }
 
 /// Serves `routes` on 127.0.0.1 and returns the port. A route is `METHOD /path`, a status and a
@@ -154,7 +154,7 @@ fn hook_lists_two_agents_comma_separated() {
         r#""entries":[{"agent":"senior-worker","file":"senior-worker-ds.md","outcome":"written"},{"agent":"consultant","file":"consultant-ds.md","outcome":"unchanged"}]"#,
     );
     let port = serve(status_route(&body));
-    let agents = r#"[{"from":"senior-worker","model":"deepseek-flash"},{"from":"consultant","model":"deepseek-v4-pro"}]"#;
+    let agents = r#"[{ from = "senior-worker", model = "deepseek-flash" }, { from = "consultant", model = "deepseek-v4-pro" }]"#;
     write_config(home.path(), port, agents);
     let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
@@ -182,7 +182,7 @@ fn hook_prints_nothing_when_the_gate_is_closed_or_no_agent_is_ready() {
 }
 
 #[test]
-fn hook_prints_nothing_and_exits_0_when_the_service_is_down() {
+fn hook_prints_nothing_and_exits_0_quickly_when_the_service_is_down() {
     let home = tempfile::tempdir().unwrap();
     write_config(home.path(), free_port(), SENIOR);
     let started = Instant::now();
@@ -191,13 +191,13 @@ fn hook_prints_nothing_and_exits_0_when_the_service_is_down() {
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert!(out.stdout.is_empty());
     assert!(
-        elapsed < Duration::from_millis(400),
+        elapsed < Duration::from_millis(100),
         "hook took {elapsed:?}"
     );
 }
 
 #[test]
-fn hook_answers_within_400_ms_when_the_service_is_up() {
+fn hook_answers_within_100_ms_when_the_service_is_up() {
     let home = tempfile::tempdir().unwrap();
     let port = serve(status_route(OPEN));
     write_config(home.path(), port, SENIOR);
@@ -206,7 +206,7 @@ fn hook_answers_within_400_ms_when_the_service_is_up() {
     let elapsed = started.elapsed();
     assert_eq!(text(&out.stdout), format!("{ONE_AGENT_LINE}\n"));
     assert!(
-        elapsed < Duration::from_millis(400),
+        elapsed < Duration::from_millis(100),
         "hook took {elapsed:?}"
     );
 }
@@ -347,4 +347,18 @@ fn doctor_fails_on_an_invalid_config_and_names_the_rule() {
     let report = text(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{report}");
     assert!(report.contains("port must not be 0"), "{report}");
+}
+
+#[test]
+fn doctor_warns_about_a_legacy_config_json() {
+    let home = tempfile::tempdir().unwrap();
+    write_config(home.path(), free_port(), SENIOR);
+    let legacy = home.path().join(CONFIG_FILE).with_file_name("config.json");
+    std::fs::write(&legacy, r#"{"port": 3337}"#).unwrap();
+    let out = vicarius(home.path(), &["self", "doctor"]);
+    let report = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{report}{}", text(&out.stderr));
+    assert!(report.contains("config.json"), "{report}");
+    assert!(report.contains("vicarius self config set"), "{report}");
+    assert!(report.contains("config.toml"), "{report}");
 }

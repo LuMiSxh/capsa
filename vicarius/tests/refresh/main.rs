@@ -43,7 +43,7 @@ fn rig(base: &str, key: Option<&str>) -> Rig {
     let gate = Arc::new(Gate::new(key.is_some()));
     let mut config = RefreshConfig::new(key);
     config.balance_base = base.to_owned();
-    config.config_file = tmp.path().join("config.json");
+    config.config_file = tmp.path().join("config.toml");
     config.agents_dir = agents.clone();
     config.log_file = tmp.path().join("proxy.jsonl");
     config.sync_every = Duration::from_millis(100);

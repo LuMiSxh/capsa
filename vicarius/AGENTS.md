@@ -38,7 +38,7 @@ Paths are relative to `vicarius/`. vicarius depends on `capsa-core` only.
   `self config`.
 - `src/cmd_config.rs`: `self config` shows the settings; `set <key> <value>` changes a scalar;
   `agent add`, `remove`, `suspend` and `activate` edit the derived agents and sync them at once.
-- `src/config.rs`: `config.json` in the vicarius config directory, its defaults, its rules and the
+- `src/config.rs`: `config.toml` in the vicarius config directory, its defaults, its rules and the
   atomic save.
 - `tests/cli.rs`: the binary, run with its config directory under a scratch home.
 
@@ -54,7 +54,7 @@ Shared rules: see the root CLAUDE.md.
 
 - A setting that breaks a rule is refused on `set`, on `agent add` and on load. A refused change
   writes nothing.
-- `config.json` is written through a temporary file in the same directory, then renamed over the
+- `config.toml` is written through a temporary file in the same directory, then renamed over the
   old file.
 - A change to a default or to a rule is user-visible: record it in CHANGELOG.
 - The proxy carries the Claude OAuth token and the DeepSeek key. It binds `127.0.0.1` only, logs
@@ -79,7 +79,7 @@ Shared rules: see the root CLAUDE.md.
 - `agent add` does not read `~/.claude/agents/<from>.md`; it checks the name and the model only,
   then syncs and reports a missing source. A model outside `deepseek-flash` and `deepseek-v4-pro`
   is saved with a warning, so a new upstream id keeps working.
-- `set port` saves `config.json` before the restart, because the agent reads it at boot; a port
+- `set port` saves `config.toml` before the restart, because the agent reads it at boot; a port
   that does not answer rolls the config, the agent and the settings back to the old port. Every
   other setting is re-read on each sync.
 - `start` and `setup` refuse a hand-set `ANTHROPIC_BASE_URL` or `CLAUDE_CODE_MAX_CONTEXT_TOKENS`

@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 /// The size past which `proxy.jsonl` rotates to `proxy.jsonl.old`.
-const LOG_LIMIT: u64 = 8 * 1024 * 1024;
+pub const LOG_LIMIT: u64 = 8 * 1024 * 1024;
 
 /// Names where a request went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

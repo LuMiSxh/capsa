@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-use capsa_core::hint::{Hinted, ResultExt};
+use capsa_core::hint::{ResultExt, hinted};
 use capsa_core::render::{Doc, Render, emit};
 use serde::{Serialize, Serializer};
 use serde_json::Value;
@@ -21,7 +21,7 @@ const TIMEOUT: Duration = Duration::from_secs(1);
 pub fn run(format: Format) -> Result<Outcome> {
     let config = Config::load_from(&Config::path()).hinted()?;
     let fetched = status_client::fetch(config.port, TIMEOUT).ok_or_else(|| {
-        Hinted::new(
+        hinted(
             format!("vicarius does not answer on 127.0.0.1:{}", config.port),
             "start the service with `vicarius self start`",
         )

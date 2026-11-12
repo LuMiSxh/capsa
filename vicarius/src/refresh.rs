@@ -37,7 +37,7 @@ pub struct RefreshConfig {
     pub balance_base: String,
     /// The DeepSeek key. Without one nothing is fetched and the agents are withdrawn.
     pub key: Option<DeepseekKey>,
-    /// The `config.json` that is read again on every refresh and sync.
+    /// The `config.toml` that is read again on every refresh and sync.
     pub config_file: PathBuf,
     /// The directory that holds the agent files.
     pub agents_dir: PathBuf,
@@ -55,7 +55,7 @@ impl RefreshConfig {
             key,
             config_file: Config::path(),
             agents_dir: claude_agents_dir(),
-            log_file: capsa_core::paths::state_dir("vicarius").join("proxy.jsonl"),
+            log_file: crate::proxy_log_file(),
             sync_every: Duration::from_secs(60),
         }
     }
@@ -225,7 +225,7 @@ impl Refresher {
         }
     }
 
-    /// Syncs the agent files with the gate, reading `config.json` again.
+    /// Syncs the agent files with the gate, reading `config.toml` again.
     pub fn sync_agents(&self) {
         let available = self.gate.closed().is_none();
         self.sync_with(available);

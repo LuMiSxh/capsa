@@ -4,8 +4,6 @@
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-#[cfg(not(feature = "cmd-update"))]
-use capsa_core::hint::Hinted;
 #[cfg(feature = "cmd-update")]
 use capsa_core::update::{UninstallArgs, UpdateArgs};
 
@@ -67,11 +65,7 @@ pub fn run(a: Args, format: Format) -> Result<Outcome> {
 
 #[cfg(not(feature = "cmd-update"))]
 fn update(_: UpdateArgs, _: Format) -> Result<Outcome> {
-    Err(Hinted::new(
-        "vicarius was built without `cmd-update`",
-        "cargo install --path vicarius --features cmd-update, or rerun the installer",
-    )
-    .into())
+    Err(capsa_core::hint::update_unavailable("vicarius", "vicarius"))
 }
 
 #[cfg(feature = "cmd-update")]
@@ -81,11 +75,7 @@ fn update(a: UpdateArgs, format: Format) -> Result<Outcome> {
 
 #[cfg(not(feature = "cmd-update"))]
 fn uninstall(_: &UninstallArgs, _: Format) -> Result<Outcome> {
-    Err(Hinted::new(
-        "vicarius was built without `cmd-update`",
-        "remove the binary by hand, or rebuild with --features cmd-update",
-    )
-    .into())
+    Err(capsa_core::hint::uninstall_unavailable("vicarius"))
 }
 
 #[cfg(feature = "cmd-update")]

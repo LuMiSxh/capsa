@@ -121,6 +121,7 @@ fn max_context_replaces_the_value_vicarius_wrote() {
         &install,
         &FakeLaunchctl::default(),
         Key::MaxContext,
+        "500000",
         &Config::default(),
         &new,
         WAIT,
@@ -149,6 +150,7 @@ fn max_context_keeps_a_value_set_by_hand() {
         &install,
         &FakeLaunchctl::default(),
         Key::MaxContext,
+        "500000",
         &Config::default(),
         &new,
         WAIT,
@@ -176,7 +178,16 @@ fn port_restarts_a_loaded_agent_and_rewrites_the_url_once_it_answers() {
     write_env(&install, &json!({"ANTHROPIC_BASE_URL": base_url(old.port)}));
     let lctl = FakeLaunchctl::default();
     lctl.loaded.set(true);
-    let items = apply_steps(&install, &lctl, Key::Port, &old, &new, WAIT).unwrap();
+    let items = apply_steps(
+        &install,
+        &lctl,
+        Key::Port,
+        &new.port.to_string(),
+        &old,
+        &new,
+        WAIT,
+    )
+    .unwrap();
     assert_eq!(status_of(&items, "agent"), "reloaded");
     assert_eq!(status_of(&items, "ANTHROPIC_BASE_URL"), "replaced");
     assert_eq!(
@@ -212,6 +223,7 @@ fn port_that_does_not_answer_leaves_the_settings_unchanged() {
         &install,
         &lctl,
         Key::Port,
+        &new.port.to_string(),
         &old,
         &new,
         Duration::from_millis(300),
@@ -240,7 +252,16 @@ fn port_with_the_agent_not_loaded_rewrites_the_url_without_touching_the_agent() 
     };
     write_env(&install, &json!({"ANTHROPIC_BASE_URL": base_url(old.port)}));
     let lctl = FakeLaunchctl::default();
-    let items = apply_steps(&install, &lctl, Key::Port, &old, &new, WAIT).unwrap();
+    let items = apply_steps(
+        &install,
+        &lctl,
+        Key::Port,
+        &new.port.to_string(),
+        &old,
+        &new,
+        WAIT,
+    )
+    .unwrap();
     assert_eq!(status_of(&items, "ANTHROPIC_BASE_URL"), "replaced");
     assert_eq!(
         read_json(&install.settings),
@@ -265,6 +286,7 @@ fn port_with_the_agent_not_loaded_creates_no_settings_when_the_url_is_absent() {
         &install,
         &FakeLaunchctl::default(),
         Key::Port,
+        &new.port.to_string(),
         &old,
         &new,
         WAIT,
@@ -295,6 +317,7 @@ fn a_port_that_does_not_answer_is_rolled_back_to_the_old_port() {
         &install,
         &lctl,
         Key::Port,
+        &new.port.to_string(),
         &old,
         &new,
         Duration::from_millis(300),
@@ -302,7 +325,7 @@ fn a_port_that_does_not_answer_is_rolled_back_to_the_old_port() {
     .unwrap_err();
     let text = format!("{err:#}");
     assert!(
-        text.contains("was rolled back: config.json is back on port"),
+        text.contains("was rolled back: config.toml is back on port"),
         "{text}"
     );
     assert_eq!(Config::load_from(&install.config).unwrap().port, old.port);

@@ -103,7 +103,7 @@ pub fn install_in(dir: &Path) -> Install {
         plist: dir.join("LaunchAgents/io.github.lumisxh.vicarius.plist"),
         log: dir.join("state/service.log"),
         settings: dir.join("settings.json"),
-        config: dir.join("config.json"),
+        config: dir.join("config.toml"),
         exe: dir.join("bin dir/vicarius"),
         domain: Some("gui/501".to_owned()),
     }
