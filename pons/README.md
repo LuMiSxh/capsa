@@ -177,7 +177,7 @@ Every message is appended as one JSON object per line, with these keys:
 - `dir`: `client->agent`, `agent->client`, `pons->client` or `pons`.
 - `text`: the same text the log showed before.
 
-Without `--log`, each start writes a new file `pons-<local time>-<pid>.jsonl` in the log directory: `~/Library/Logs/pons` on macOS, `$XDG_STATE_HOME/pons` (else `~/.local/state/pons`) on Linux, and `%LOCALAPPDATA%\pons\logs` on Windows. At startup the newest 10 are kept and older `pons-*.jsonl` files are deleted, and so are older `pons-*.log` text logs. Other files are never touched. `--log-dir DIR` changes the directory and `--no-log` turns logging off. `--log FILE` (or `PONS_LOG`) writes that one file instead.
+Without `--log`, each start writes a new file `pons-<local time>-<pid>.jsonl` in pons's state directory: `$XDG_STATE_HOME/pons` (else `~/.local/state/pons`) on macOS and Linux, and `%LOCALAPPDATA%\pons\state` on Windows. At startup the newest 10 are kept and older `pons-*.jsonl` files are deleted, and so are older `pons-*.log` text logs. Other files are never touched. `--log-dir DIR` changes the directory and `--no-log` turns logging off. `--log FILE` (or `PONS_LOG`) writes that one file instead. Earlier versions used `~/Library/Logs/pons` on macOS and `%LOCALAPPDATA%\pons\logs` on Windows; those logs are not moved, and `pons self doctor` names the old directory when it still exists.
 
 `--log-level` picks the detail:
 
@@ -248,7 +248,7 @@ pons [--log FILE | --no-log] [--log-dir DIR] [--log-level all|default|meta]
      [--force-features] [--no-subagent-text] [--max-failures N] [--no-census]
      [--mcp-server NAME=COMMAND[,ARG...]]...
      [-- <agent> [args...]]
-pons self doctor [--log FILE] [--log-dir DIR] [--agent-cmd CMD...]
+pons self doctor [--log FILE] [--log-dir DIR] [--all] [--agent-cmd CMD...]
 pons self setup [--package-manager pnpm|bun|npm] [--dry-run]
 pons self update [--check|--force]
 pons self uninstall [--dry-run]
@@ -260,18 +260,18 @@ pons self uninstall [--dry-run]
 
 ## Self
 
-`pons self <action>` manages pons itself. The `self` commands take the output flags (`--agent`, `--human`, `--json`); see [Commands](#commands).
+`pons self <action>` manages pons itself. The output flags (`--agent`, `--human`, `--json`) work on every pons command, including the proxy, which still writes only the ACP protocol to stdout. See [Commands](#commands).
 
 ### pons self doctor
 
-`pons self doctor [--json|--human|--agent] [--log FILE] [--log-dir DIR] [--agent-cmd CMD...]` prints a report. Its checks are in four groups (launcher, zed, processes, wire log), each `ok`, `warn` or `fail`, followed by the details behind them. It exits 1 when a check fails and 0 when none does. `--json` prints one JSON line in the shared doctor shape: `tool`, `version`, `ok` (false when a check fails) and `groups`, where each check has `name`, `status`, `detail` and, when it has one, `hint`. `--human` colours the text on a terminal. `--agent` is the plain default. The output flags also work on `pons self` itself.
+`pons self doctor [--json|--human|--agent] [--log FILE] [--log-dir DIR] [--all] [--agent-cmd CMD...]` prints a report. Its checks are in four groups (launcher, zed, processes, wire log), each `ok`, `warn` or `fail`, followed by the details behind them. It exits 1 when a check fails and 0 when none does. `--json` prints one JSON line in the shared doctor shape: `tool`, `version`, `ok` (false when a check fails) and `groups`, where each check has `name`, `status`, `detail` and, when it has one, `hint`. `--human` colours the text on a terminal. `--agent` is the plain default. The output flags also work on every pons command.
 
 The report covers:
 
 - **Launcher:** whether the Claude ACP adapter can be started, which launcher would run it, its version when known, and, when none can, the install command for pnpm, bun or npm on `PATH`. It lists every candidate's resolved path, and the version the launcher resolves to, read from its `package.json` and never by starting it. That version is labelled apart from the adapter Zed installed under `external_agents`, which pons would not use unless the command points at it.
 - **Zed:** whether Zed's `settings.json` (`~/.config/zed/` on macOS and Linux, `%APPDATA%\Zed\` on Windows) has an `agent_servers` entry running pons. It is parsed leniently as JSONC, so a parse failure only changes the wording.
 - **Processes:** the running pons processes (Unix), flagged `STALE` when one started before the installed binary was replaced and so still runs old code.
-- **Wire log:** the log given by `--log`, `PONS_LOG`, else the newest per-start log in the log directory, else `pons.log` in the temp directory. It shows the size and rotated copy, cancels dropped, forwarded and stop escapes, subagents tracked, finished and provisionally finished, fail-safe events, dropped task notifications, why pons last exited, and the last 5 notes.
+- **Wire log:** the log given by `--log`, `PONS_LOG`, else the newest per-start log in the log directory, else `pons.log` in the temp directory. It shows the size and rotated copy, cancels dropped, forwarded and stop escapes, subagents tracked, finished and provisionally finished, fail-safe events, dropped task notifications, why pons last exited, and the last 5 notes. A footer names `pons self doctor --all` for the older notes, and a directory from before the move to the state directory is reported with a hint when it still exists.
 
 ### pons self setup
 

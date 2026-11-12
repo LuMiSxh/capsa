@@ -50,6 +50,8 @@ pub struct LogSummary {
     pub stepped_aside: bool,
     /// The last "exiting:" note: why a pons process ended.
     pub last_exit: Option<String>,
+    /// Every note in the log, whether or not the report shows it.
+    pub notes_total: usize,
     pub last_notes: Vec<String>,
 }
 
@@ -61,6 +63,15 @@ impl LogSummary {
 
 /// Summarizes a wire log with one JSON object per line, as `capsa_core::log` writes it.
 pub fn summarize_log(text: &str) -> LogSummary {
+    summarize_log_with(text, LAST_NOTES)
+}
+
+/// Summarizes a wire log, keeping every note rather than the newest [`LAST_NOTES`].
+pub fn summarize_log_all(text: &str) -> LogSummary {
+    summarize_log_with(text, usize::MAX)
+}
+
+fn summarize_log_with(text: &str, keep: usize) -> LogSummary {
     let mut s = LogSummary::default();
     let mut notes: VecDeque<String> = VecDeque::new();
     for entry in text
@@ -103,7 +114,8 @@ pub fn summarize_log(text: &str) -> LogSummary {
                 } else if rest.starts_with("exiting:") {
                     s.last_exit = Some(rest.to_owned());
                 }
-                if notes.len() == LAST_NOTES {
+                s.notes_total += 1;
+                if notes.len() == keep {
                     notes.pop_front();
                 }
                 notes.push_back(rest.to_owned());
@@ -121,6 +133,8 @@ pub struct Inputs {
     pub env: Env,
     pub agent_cmd: Vec<String>,
     pub log: Option<PathBuf>,
+    /// Keep every note instead of the newest [`LAST_NOTES`].
+    pub all_notes: bool,
 }
 
 /// Answers nothing.
@@ -179,6 +193,8 @@ pub struct Report {
     /// Version and directory of the adapter Zed installed from its registry.
     pub registry_adapter: Option<(Option<String>, String)>,
     pub log: Option<LogReport>,
+    /// The old log directory, when it still exists.
+    pub old_log_dir: Option<String>,
     pub processes: Vec<Proc>,
     pub exe_age_secs: Option<u64>,
 }
@@ -240,11 +256,20 @@ pub fn gather(
         let rotated = capsa_core::log::rotated(path);
         LogReport {
             path: path.display().to_string(),
-            summary: read(path).map(|t| summarize_log(&t)),
+            summary: read(path).map(|t| {
+                if inputs.all_notes {
+                    summarize_log_all(&t)
+                } else {
+                    summarize_log(&t)
+                }
+            }),
             size: sys.file_len(path),
             rotated_size: sys.file_len(&rotated),
         }
     });
+    let old_log_dir = former_log_dir(env)
+        .filter(|dir| dir.is_dir())
+        .map(|dir| dir.display().to_string());
     Report {
         version: env!("CARGO_PKG_VERSION"),
         platform: env.platform.name(),
@@ -258,8 +283,19 @@ pub fn gather(
         settings,
         registry_adapter,
         log,
+        old_log_dir,
         processes: sys.pons_processes(),
         exe_age_secs: sys.exe_age_secs(),
+    }
+}
+
+/// Returns the log directory pons used before the move to its state directory, on the systems
+/// that had a different one.
+fn former_log_dir(env: &Env) -> Option<PathBuf> {
+    match env.platform {
+        Platform::Macos => Some(env.home.as_ref()?.join("Library").join("Logs").join("pons")),
+        Platform::Windows => Some(env.local_appdata.as_ref()?.join("pons").join("logs")),
+        Platform::Linux => None,
     }
 }
 
@@ -277,12 +313,14 @@ pub fn run(
     agent_cmd: Vec<String>,
     log: Option<PathBuf>,
     log_dir: Option<&Path>,
+    all_notes: bool,
     format: Format,
 ) -> anyhow::Result<Outcome> {
     let inputs = Inputs {
         env: Env::from_process(),
         agent_cmd,
         log: pick_log(log, log_dir),
+        all_notes,
     };
     let read = |p: &Path| {
         std::fs::read(p)

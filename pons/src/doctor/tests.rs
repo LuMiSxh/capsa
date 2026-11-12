@@ -141,6 +141,7 @@ fn summarizes_the_log() {
         Some("exiting: error: agent exited (boom)")
     );
     // Eight notes in the log, the last five kept in order.
+    assert_eq!(s.notes_total, 8);
     assert_eq!(s.last_notes.len(), 5);
     assert!(s.last_notes[0].contains("subagent B launched"));
     assert!(s.last_notes[4].starts_with("exiting: error"));
@@ -183,6 +184,7 @@ fn detect_report(files: &[&str], path: &[&str]) -> Report {
         env,
         agent_cmd: Vec::new(),
         log: None,
+        all_notes: false,
     };
     let fs = Files(files.iter().map(PathBuf::from).collect());
     gather(&inputs, &fs, &|_| None, &NoSys)
@@ -319,6 +321,7 @@ fn the_report_is_ascii_and_survives_missing_everything() {
         env: env(Platform::Macos),
         agent_cmd: Vec::new(),
         log: Some(PathBuf::from("/nope.log")),
+        all_notes: false,
     };
     let view = View::new(gather(&inputs, &NoFs, &|_| None, &NoSys));
     let plain = text(&view, false);
@@ -385,6 +388,45 @@ fn the_configured_adapter_version_is_read_next_to_the_real_binary() {
     assert_eq!(v, "0.9.9");
     assert!(manifest.ends_with("package.json"));
     assert!(configured_adapter(Path::new("/bin/other"), &[], &Sym, &read).is_none());
+}
+
+#[test]
+fn more_notes_than_shown_get_a_footer_naming_all() {
+    let log = (0..8)
+        .map(|i| wire_line("pons", &format!("note {i}")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let inputs = Inputs {
+        env: env(Platform::Linux),
+        agent_cmd: Vec::new(),
+        log: Some(PathBuf::from("/log")),
+        all_notes: false,
+    };
+    let view = View::new(gather(
+        &inputs,
+        &Files(Vec::new()),
+        &|_| Some(log.clone()),
+        &NoSys,
+    ));
+    let plain = text(&view, false);
+    assert!(
+        plain.contains("… 3 more; run pons self doctor --all"),
+        "{plain}"
+    );
+
+    let inputs = Inputs {
+        all_notes: true,
+        ..inputs
+    };
+    let view = View::new(gather(
+        &inputs,
+        &Files(Vec::new()),
+        &|_| Some(log.clone()),
+        &NoSys,
+    ));
+    let plain = text(&view, false);
+    assert!(plain.contains("note 0"), "{plain}");
+    assert!(!plain.contains("more; run"), "{plain}");
 }
 
 #[test]

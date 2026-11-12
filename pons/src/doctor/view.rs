@@ -2,6 +2,7 @@
 //! The doctor result in the shared doctor model: four groups of checks, and the pons facts
 //! that are not a check as detail lines.
 
+use capsa_core::doctor::check;
 use capsa_core::exit::Outcome;
 use capsa_core::render::{Check, Doc, Doctor, Group, Render, Status};
 use serde::{Serialize, Serializer};
@@ -37,20 +38,6 @@ impl Render for View {
 impl Serialize for View {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.doctor.serialize(serializer)
-    }
-}
-
-fn check(
-    name: &'static str,
-    status: Status,
-    detail: impl Into<String>,
-    hint: Option<String>,
-) -> Check {
-    Check {
-        name: name.into(),
-        status,
-        detail: detail.into(),
-        hint,
     }
 }
 
@@ -93,7 +80,7 @@ fn launcher_checks(r: &Report) -> Vec<Check> {
             "claude-agent-acp adapter",
             adapter_status,
             adapter.detail.clone(),
-            adapter.hint.clone(),
+            adapter.hint.as_deref(),
         ),
     ]
 }
@@ -152,7 +139,7 @@ fn process_checks(r: &Report) -> Vec<Check> {
             format!(
                 "{running} running, {stale} stale: started before the installed binary changed"
             ),
-            Some("restart the agent in Zed".to_owned()),
+            Some("restart the agent in Zed"),
         )
     };
     vec![row]
@@ -164,7 +151,7 @@ fn log_checks(r: &Report) -> Vec<Check> {
             "file",
             Status::Warn,
             "none: no pons-*.jsonl in the log directory",
-            Some("pass --log FILE, or set PONS_LOG".to_owned()),
+            Some("pass --log FILE, or set PONS_LOG"),
         ),
         Some(log) => match &log.summary {
             None => check(
@@ -197,7 +184,16 @@ fn log_checks(r: &Report) -> Vec<Check> {
             }
         },
     };
-    vec![row]
+    let mut checks = vec![row];
+    if let Some(old) = &r.old_log_dir {
+        checks.push(check(
+            "old log directory",
+            Status::Ok,
+            format!("{old} still exists; its logs were not moved"),
+            Some("delete it when its logs are no longer needed"),
+        ));
+    }
+    checks
 }
 
 /// The facts the checks summarize: the launcher's candidates, the Zed entries, the running
@@ -282,9 +278,18 @@ fn details(r: &Report, doc: &mut Doc) {
             if s.last_notes.is_empty() {
                 doc.line("last notes: none");
             } else {
-                doc.line(format!("last {} note(s):", s.last_notes.len()));
+                let shown = s.last_notes.len();
+                if s.notes_total > shown {
+                    doc.line(format!("last {} note(s), newest {shown}:", s.notes_total));
+                } else {
+                    doc.line(format!("last {shown} note(s):"));
+                }
                 for note in &s.last_notes {
                     doc.line(note.as_str());
+                }
+                let rest = s.notes_total.saturating_sub(shown);
+                if rest > 0 {
+                    doc.more(rest, "pons self doctor --all");
                 }
             }
         }

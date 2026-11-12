@@ -68,7 +68,8 @@ fn subcommand(sub: Sub, format: Format) -> Result<Outcome> {
             log,
             log_dir,
             agent_cmd,
-        } => doctor::run(agent_cmd, log, log_dir.as_deref(), format),
+            all,
+        } => doctor::run(agent_cmd, log, log_dir.as_deref(), all, format),
         SelfAction::Setup {
             package_manager,
             dry_run,

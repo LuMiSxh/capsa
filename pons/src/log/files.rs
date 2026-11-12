@@ -7,31 +7,10 @@ use super::*;
 /// Log files kept in the default directory, the current one included.
 pub(super) const KEEP_LOGS: usize = 10;
 
-/// Returns the default log directory for the OS `os` (`std::env::consts::OS`); `env`
-/// reads environment variables.
-pub fn default_dir(os: &str, env: impl Fn(&str) -> Option<OsString>) -> PathBuf {
-    let nonempty = |k: &str| env(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-    let home = || nonempty("HOME").unwrap_or_else(std::env::temp_dir);
-    match os {
-        "macos" => home().join("Library/Logs/pons"),
-        "windows" => nonempty("LOCALAPPDATA")
-            .unwrap_or_else(std::env::temp_dir)
-            .join("pons")
-            .join("logs"),
-        // XDG requires an absolute path. Test for the leading "/" rather than
-        // `is_absolute`, which is host-specific: "/state" is not absolute on
-        // Windows, so the result would otherwise depend on the host.
-        _ => nonempty("XDG_STATE_HOME")
-            .filter(|p| p.starts_with("/"))
-            .unwrap_or_else(|| home().join(".local/state"))
-            .join("pons"),
-    }
-}
-
 /// Returns the wire log for this start, or `None` when logging is off. `--no-log`
 /// wins; an explicit `--log` path is used as given. Otherwise a new
-/// `pons-<local time>-<pid>.jsonl` is created in `dir` (default: `default_dir`)
-/// and older ones beyond the newest `KEEP_LOGS` are removed.
+/// `pons-<local time>-<pid>.jsonl` is created in `dir` (default: pons's state
+/// directory) and older ones beyond the newest `KEEP_LOGS` are removed.
 pub fn target(explicit: Option<&Path>, no_log: bool, dir: Option<&Path>) -> Option<PathBuf> {
     if no_log {
         return None;
@@ -39,6 +18,7 @@ pub fn target(explicit: Option<&Path>, no_log: bool, dir: Option<&Path>) -> Opti
     if let Some(path) = explicit {
         return Some(path.to_owned());
     }
+    let given_dir = dir.is_some();
     let dir = resolve_dir(dir);
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!(
@@ -48,7 +28,12 @@ pub fn target(explicit: Option<&Path>, no_log: bool, dir: Option<&Path>) -> Opti
         return None;
     }
     let stamp = Local::now().format("%Y-%m-%dT%H-%M-%S");
-    let path = dir.join(format!("pons-{stamp}-{}.jsonl", std::process::id()));
+    let name = format!("pons-{stamp}-{}.jsonl", std::process::id());
+    let path = if given_dir {
+        dir.join(name)
+    } else {
+        capsa_core::paths::log_file("pons", &name).unwrap_or_else(|| dir.join(name))
+    };
     prune(&dir, KEEP_LOGS, &path);
     Some(path)
 }
@@ -65,12 +50,9 @@ pub(super) fn log_key(name: &str) -> Option<(&str, u32)> {
     well_formed.then_some((ts, pid.parse().ok()?))
 }
 
-/// Returns the directory `dir`, or the default log directory for this OS when `None`.
+/// Returns the directory `dir`, or pons's state directory when `None`.
 pub fn resolve_dir(dir: Option<&Path>) -> PathBuf {
-    dir.map_or_else(
-        || default_dir(std::env::consts::OS, |k| std::env::var_os(k)),
-        Path::to_owned,
-    )
+    dir.map_or_else(|| capsa_core::paths::state_dir("pons"), Path::to_owned)
 }
 
 /// Lists the per-start logs in `dir`, with their `(time, pid)` keys.

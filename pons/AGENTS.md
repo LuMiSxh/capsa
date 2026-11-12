@@ -30,7 +30,7 @@ Paths are relative to `pons/`. pons does not use another workspace crate today.
 - `cargo test -p pons`: unit tests and the end-to-end tests in `tests/proxy/`.
 - `cargo test --profile release-unwind -p pons -- --ignored --nocapture engine_line_cost`: the engine timing harness, ns per line for client and agent lines.
 - `cargo build --profile release-unwind -p pons`: the release build. Use this profile, not `release`: `src/failsafe.rs` catches panics in message rules with `catch_unwind`, and `release` sets `panic = "abort"`, which would turn a caught panic into a crash.
-- `pons self doctor [--json|--human|--agent] [--log FILE] [--log-dir DIR] [--agent-cmd CMD...]`: shows the launcher that would run, the Zed entry, running pons processes and a summary of the wire log. It never starts the adapter. Exits 1 when a check fails.
+- `pons self doctor [--json|--human|--agent] [--log FILE] [--log-dir DIR] [--all] [--agent-cmd CMD...]`: shows the launcher that would run, the Zed entry, running pons processes and a summary of the wire log. It never starts the adapter. Exits 1 when a check fails.
 - `pons self update [--check|--force]`: replaces the binary with the newest `pons-v*` release (`capsa_core::update`; uses `GITHUB_TOKEN` or `gh auth token` when available). `--check` exits 0 when a newer release exists, 1 when current.
 - `pons self uninstall [--dry-run]`: removes the binary only. Wire logs and the Zed entry stay.
 - `pons self setup [--package-manager pnpm|bun|npm] [--dry-run] [--json|--human|--agent]`: reports the adapter and its version when found; otherwise installs `@agentclientprotocol/claude-agent-acp` globally. `--dry-run` installs nothing.
@@ -53,5 +53,5 @@ Shared rules: see root AGENTS.md.
 - When Zed advertises `clientCapabilities.subagents`, pons steps aside: folding, cards, roster, notices and the cancel filter are off. Use `--force-features` to exercise those paths.
 - Zed may not inherit the shell `PATH`, so the launcher also searches user tool directories. Check the choice with `pons self doctor`, not by guessing.
 - The wire log is JSON lines: `ts`, `level`, `event` (`wire` or `note`), `ms`, `dir` and `text`. Info lines wait in an 8 KiB buffer; warn and error lines, drop and exit flush it. Tests read the log only after pons exits. Rotation to `<file>.old` is done by `capsa_core::log`.
-- Log directory per OS, when no `--log` is given: macOS `~/Library/Logs/pons`; Linux `$XDG_STATE_HOME/pons` or `~/.local/state/pons`; Windows `%LOCALAPPDATA%\pons\logs`. Each start writes `pons-<time>-<pid>.jsonl` and keeps the newest ten; old `.log` files are pruned too.
+- Log directory when no `--log` is given: pons's state directory (`$XDG_STATE_HOME/pons` or `~/.local/state/pons` on macOS and Linux, `%LOCALAPPDATA%\pons\state` on Windows). Each start writes `pons-<time>-<pid>.jsonl` and keeps the newest ten; old `.log` files are pruned too.
 - pons never resets SIGPIPE: stdout is the ACP wire (`RESET_SIGPIPE = false` in `src/cli.rs`).

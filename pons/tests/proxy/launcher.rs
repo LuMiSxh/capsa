@@ -37,12 +37,12 @@ async fn an_agent_that_cannot_start_is_reported_with_the_doctor_hint() {
     assert!(err.contains("pons self doctor"), "{err}");
 }
 
-/// Returns the default log directory under `home`, as `log::default_dir` picks it.
+/// Returns the default log directory under `home`, pons's state directory.
 fn default_log_dir(home: &Path) -> PathBuf {
-    match std::env::consts::OS {
-        "macos" => home.join("Library/Logs/pons"),
-        "windows" => home.join("pons").join("logs"),
-        _ => home.join(".local/state/pons"),
+    if cfg!(windows) {
+        home.join("pons").join("state")
+    } else {
+        home.join(".local/state/pons")
     }
 }
 

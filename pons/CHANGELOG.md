@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- `pons self doctor --all` shows every log note; by default the report shows the newest five and a footer names the command that shows the rest.
+
+### Changed
+
+- The wire log moved to pons's state directory: `$XDG_STATE_HOME/pons` (else `~/.local/state/pons`) on macOS and Linux, and `%LOCALAPPDATA%\pons\state` on Windows. macOS no longer uses `~/Library/Logs/pons` and Windows no longer uses `%LOCALAPPDATA%\pons\logs`. The file names and the newest-ten pruning are unchanged, and logs in the old directories are not moved. `pons self doctor` names the old directory when it still exists, with a hint that it can be deleted.
+- `--json`, `--human` and `--agent` are accepted on every pons command, not only under `self`. The proxy still writes only the ACP protocol to stdout.
+
 ### Removed
 
 - `pons self doctor --json` no longer prints the hand-built object of earlier versions (`pons`, `launcher`, `zed`, `processes`, `exe_age_secs`, `log`). It prints the shared doctor JSON like the other tools (`tool`, `version`, `ok`, `groups`); read each check and its detail from `groups` instead.
