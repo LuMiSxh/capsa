@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- `vicarius self doctor --fix` rewrites an outdated SessionStart hook, such as
+  `vicarius hook session-start`, to `vicarius hook`, and adds it when it is missing from an agent
+  that was set up. The launchd plist, the settings `env` keys and the service are left to
+  `self setup` and `self start`, each with its hint. A `fixed` section lists the repairs; JSON
+  gets a `fixed` array.
+
 ### Changed
 
 - The settings moved from `config.json` to `config.toml` in the vicarius config directory, in

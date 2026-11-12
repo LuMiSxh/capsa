@@ -34,7 +34,7 @@ enum Action {
     /// Stop the service and remove the settings keys that it set.
     Stop,
     /// Check the agent, the service, the settings, the agent files and the config.
-    Doctor,
+    Doctor(crate::cmd_doctor::Args),
     /// Show the settings, or change them with `set`, `agent add` and `agent remove`.
     Config(crate::cmd_config::Args),
 }
@@ -59,7 +59,7 @@ pub fn run(a: Args, format: Format) -> Result<Outcome> {
         Action::Setup(a) => crate::cmd_service::setup(&a, format),
         Action::Start => crate::cmd_service::start(format),
         Action::Stop => crate::cmd_service::stop(format),
-        Action::Doctor => crate::cmd_doctor::run(format),
+        Action::Doctor(a) => crate::cmd_doctor::run(format, a.fix),
     }
 }
 

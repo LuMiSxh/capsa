@@ -340,6 +340,27 @@ fn doctor_flags_the_old_session_start_hook_as_outdated() {
 }
 
 #[test]
+fn doctor_fix_rewrites_the_old_session_start_hook_and_leaves_the_env_alone() {
+    let home = tempfile::tempdir().unwrap();
+    write_config(home.path(), free_port(), SENIOR);
+    let settings = home.path().join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let old = r#"{"hooks": {"SessionStart": [{"hooks": [
+        {"type": "command", "command": "vicarius hook session-start"}
+    ]}]}}"#;
+    std::fs::write(&settings, old).unwrap();
+    let out = vicarius(home.path(), &["self", "doctor", "--fix"]);
+    let report = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{report}{}", text(&out.stderr));
+    assert!(report.contains("fixed"), "{report}");
+    assert!(report.contains("SessionStart hook"), "{report}");
+    let written = std::fs::read_to_string(&settings).unwrap();
+    assert!(written.contains("\"vicarius hook\""), "{written}");
+    assert!(!written.contains("session-start"), "{written}");
+    assert!(!written.contains("\"env\""), "{written}");
+}
+
+#[test]
 fn doctor_fails_on_an_invalid_config_and_names_the_rule() {
     let home = tempfile::tempdir().unwrap();
     write_config(home.path(), 0, SENIOR);

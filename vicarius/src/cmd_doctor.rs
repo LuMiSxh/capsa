@@ -10,12 +10,12 @@ use std::time::Duration;
 
 use anyhow::Result;
 use capsa_core::claude_settings::{self, Settings, SettingsError};
-use capsa_core::doctor::{check, dir_check, log_checks, ok, same_file};
+use capsa_core::doctor::{check, dir_check, emit_report, log_checks, ok, same_file};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::Hint;
-use capsa_core::hooks::{Agent, HookFile};
-use capsa_core::render::{Check, Doctor, Group, Status, emit};
+use capsa_core::hooks::{Agent, HookFile, HookState};
+use capsa_core::render::{Check, Doctor, Group, Status};
 use capsa_core::which;
 use serde_json::Value;
 use vicarius::config::Config;
@@ -29,8 +29,18 @@ const TOOL: &str = "vicarius";
 /// The probe timeout of the status endpoint.
 const PROBE: Duration = Duration::from_secs(1);
 
-pub fn run(format: Format) -> Result<Outcome> {
+#[derive(clap::Args)]
+pub struct Args {
+    /// Repairs the SessionStart hook when it is outdated, or missing from an installed agent. The
+    /// property list, the env keys and the service keep their hints, since the list starts the
+    /// service at login and `self setup` and `self start` own those.
+    #[arg(long)]
+    pub fix: bool,
+}
+
+pub fn run(format: Format, fix: bool) -> Result<Outcome> {
     let install = Install::current()?;
+    let fixed = fix.then(|| repair(&install)).transpose()?;
     let config = Config::load_from(&Config::path());
     let port = config.as_ref().map_or(Config::default().port, |c| c.port);
     let fetched = status_client::fetch(port, PROBE);
@@ -64,8 +74,9 @@ pub fn run(format: Format) -> Result<Outcome> {
         agents_group(fetched.as_ref()),
         config_group(&config),
     ];
-    emit(
+    emit_report(
         &Doctor::new(TOOL, env!("CARGO_PKG_VERSION"), groups),
+        fixed,
         format,
     )
 }
@@ -301,6 +312,25 @@ fn hook_check(settings: &Path) -> Check {
             .check(&service::SESSION_HOOK, "vicarius self setup"),
         Err(e) => check("SessionStart hook", Status::Fail, e.to_string(), None),
     }
+}
+
+/// Rewrites the SessionStart hook when it is outdated, or when it is missing from an agent that
+/// was set up. Returns the check for the hook, or nothing when the hook was left alone.
+fn repair(install: &Install) -> Result<Vec<Check>> {
+    let Ok(file) = HookFile::open_at(Agent::ClaudeCode, &install.settings) else {
+        return Ok(Vec::new());
+    };
+    let wanted = match file.state(&service::SESSION_HOOK) {
+        HookState::Outdated { .. } => true,
+        HookState::Missing => install.plist.exists(),
+        HookState::Installed | HookState::CustomMatcher { .. } => false,
+    };
+    if !wanted {
+        return Ok(Vec::new());
+    }
+    let step = service::set_session_hook(&install.settings, false)?;
+    let detail = format!("{} in {}", step.text(false), install.settings.display());
+    Ok(vec![ok("SessionStart hook", detail)])
 }
 
 fn agents_group(fetched: Option<&Fetched>) -> Group {
