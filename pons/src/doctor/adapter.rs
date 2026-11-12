@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Checks the Claude ACP adapter for `pons self doctor`.
 
-use std::cmp::Ordering;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use capsa_core::doctor::check;
 use capsa_core::render::{Check, Status};
+use capsa_core::version::{is_older, is_version};
 
 use super::*;
 
@@ -266,7 +266,7 @@ pub fn bundled_claude_code(
 /// `2.1.311` in `2.1.311 (Claude Code)`, or `None` when that word is not a version.
 pub fn leading_version(text: &str) -> Option<String> {
     let token = text.split_whitespace().next()?;
-    semver(token).map(|_| token.to_owned())
+    is_version(token).then(|| token.to_owned())
 }
 
 /// Runs `claude --version` with the timeout of [`CLAUDE_TIMEOUT`] and returns its stdout.
@@ -301,50 +301,5 @@ pub fn run_bounded(program: &Path, args: &[&str], limit: Duration) -> Option<Str
             return None;
         }
         std::thread::sleep(POLL);
-    }
-}
-
-/// The parts of a version that decide whether it is older: the `major.minor.patch` core, with
-/// missing parts as 0, and whether a prerelease tag follows it.
-#[derive(Debug, PartialEq, Eq)]
-struct Semver {
-    core: [u64; 3],
-    prerelease: bool,
-}
-
-/// Parses `version` as semver core, ignoring build metadata after `+`. Two or three numeric
-/// parts are accepted, so `2.1` and `2.1.0` are the same core; anything else is `None`.
-fn semver(version: &str) -> Option<Semver> {
-    let without_build = version.split('+').next()?;
-    let (core_text, prerelease) = match without_build.split_once('-') {
-        Some((core, _)) => (core, true),
-        None => (without_build, false),
-    };
-    let parts = core_text
-        .split('.')
-        .map(|part| part.parse::<u64>().ok())
-        .collect::<Option<Vec<u64>>>()?;
-    let [major, minor, patch] = match parts.as_slice() {
-        [a, b] => [*a, *b, 0],
-        [a, b, c] => [*a, *b, *c],
-        _ => return None,
-    };
-    Some(Semver {
-        core: [major, minor, patch],
-        prerelease,
-    })
-}
-
-/// Whether the version `a` is older than `b`. Cores compare numerically, so `0.106.0` is newer
-/// than `0.85.1`; with equal cores a prerelease is older than the release, and two prereleases
-/// are not ordered. A version that does not parse is never older, so it never warns.
-fn is_older(a: &str, b: &str) -> bool {
-    let (Some(a), Some(b)) = (semver(a), semver(b)) else {
-        return false;
-    };
-    match a.core.cmp(&b.core) {
-        Ordering::Less => true,
-        Ordering::Greater => false,
-        Ordering::Equal => a.prerelease && !b.prerelease,
     }
 }

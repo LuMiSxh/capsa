@@ -519,6 +519,39 @@ fn latest_status(installed: &str, latest: &str) -> Status {
         .status
 }
 
+/// Answers a newer pons release and nothing else.
+struct Newer;
+
+impl Sys for Newer {
+    fn update_check(&self) -> UpdateCheck {
+        UpdateCheck::Available("9.9.9".to_owned())
+    }
+}
+
+#[test]
+fn a_newer_pons_release_warns_with_the_self_update_command() {
+    let inputs = Inputs {
+        env: env(Platform::Macos),
+        agent_cmd: Vec::new(),
+        log: None,
+        all_notes: false,
+    };
+    let view = View::new(gather(&inputs, &Files(Vec::new()), &|_| None, &Newer));
+    let v: Value = serde_json::from_str(&json_of(&view)).unwrap();
+    let update = v["groups"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "update")
+        .unwrap();
+    assert_eq!(update["status"], "warn");
+    assert_eq!(
+        update["detail"],
+        format!("9.9.9 available (running {})", env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(update["hint"], "run pons self update");
+}
+
 #[test]
 fn a_prerelease_is_older_than_its_release_and_versions_compare_by_semver_core() {
     assert_eq!(latest_status("1.0.0-beta", "1.0.0"), Status::Warn);

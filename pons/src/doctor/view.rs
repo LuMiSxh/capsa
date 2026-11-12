@@ -2,7 +2,7 @@
 //! The doctor result in the shared doctor model: four groups of checks, and the pons facts
 //! that are not a check as detail lines.
 
-use capsa_core::doctor::check;
+use capsa_core::doctor::{check, update_check};
 use capsa_core::exit::Outcome;
 use capsa_core::render::{Check, Doc, Doctor, Group, Render, Status};
 use serde::{Serialize, Serializer};
@@ -84,6 +84,7 @@ fn launcher_checks(r: &Report) -> Vec<Check> {
         ),
     ];
     checks.extend(freshness_checks(&r.freshness));
+    checks.push(update_check(&crate::TOOL, &r.update));
     checks
 }
 

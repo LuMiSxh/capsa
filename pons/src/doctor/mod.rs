@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::launcher::{self, LAUNCHERS, PACKAGE};
 use crate::log::WireFields;
 use capsa_core::pkg;
+use capsa_core::update::{self, UpdateCheck};
 use capsa_core::which::{self, Env, Fs, Platform, RealFs};
 
 mod adapter;
@@ -162,6 +163,10 @@ impl Sys for RealSys {
         registry_latest(package)
     }
 
+    fn update_check(&self) -> UpdateCheck {
+        update::check(&crate::TOOL)
+    }
+
     fn claude_version(&self, path: &Path) -> Option<String> {
         claude_version_text(path)
     }
@@ -197,6 +202,8 @@ pub struct Report {
     pub adapter: AdapterCheck,
     /// The adapter's version against npm's `latest`, and the bundled Claude Code against `claude`.
     pub freshness: Freshness,
+    /// Whether a newer pons release exists.
+    pub update: UpdateCheck,
     pub settings_path: Option<String>,
     /// `None`: not found or unreadable.
     pub settings: Option<Settings>,
@@ -303,6 +310,7 @@ pub fn gather(
         searched_dirs: which::search_dirs(env, fs).len(),
         adapter,
         freshness,
+        update: sys.update_check(),
         settings_path: settings_path.map(|p| p.display().to_string()),
         settings,
         registry_adapter,

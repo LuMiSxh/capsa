@@ -4,6 +4,7 @@
 
 ### Added
 
+- `pons self doctor` gets an `update` line in its launcher group: ok with `<version> is the latest`, a warning with `pons self update` as its fix when a newer release exists, or ok with `could not check for updates` when GitHub does not answer within 3 seconds. The newest release is saved in `latest.json` in pons's state directory and reused for a day; `pons self update` saves it too. `CAPSA_UPDATE_CHECK=off` skips the lookup and reports the line as unchecked. Only `self doctor` looks, so no proxy start reaches the network. The check and the release lookup live in `capsa-core`, which also holds the version comparison that the adapter check uses.
 - `pons self doctor --all` shows every log note; by default the report shows the newest five and a footer names the command that shows the rest.
 - `pons self doctor` warns when the Claude ACP adapter is older than the npm `latest` version, or when the Claude Code it bundles is older than the `claude` on `PATH`. Either warning gives the command that installs the latest adapter for the detected package manager. An unreachable registry, a missing `claude` or an unreadable bundle is an `ok` line that says what was not checked; the registry request has a 5-second timeout.
 
