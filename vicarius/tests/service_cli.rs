@@ -14,6 +14,10 @@ const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
     "config/vicarius/config.toml"
 };
 
+/// Well above the hook's own deadline and the first process spawn of a test run (about 200 ms on
+/// macOS), well below the 2 s a silent service holds a connection.
+const HOOK_LIMIT: Duration = Duration::from_secs(1);
+
 const SENIOR: &str = r#"[{ from = "senior-worker", model = "deepseek-flash" }]"#;
 
 const OPEN: &str = r#"{"started_at":1,"gate":{"open":true,"reason":null,"reason_text":null,"balance":18.4,"currency":"USD","checked_at":1793723161},"counters":{"anthropic":{"requests":3,"refused":0,"input_tokens":10,"cache_creation_tokens":1,"cache_read_tokens":2,"output_tokens":4},"deepseek":{"requests":2,"refused":1,"input_tokens":100,"cache_creation_tokens":0,"cache_read_tokens":50,"output_tokens":20}},"agents":{"entries":[{"agent":"senior-worker","file":"senior-worker-ds.md","outcome":"written"}]},"refresh":{"last_ok_at":1793723161,"last_error":null,"next_at":1793723761}}"#;
@@ -125,6 +129,24 @@ fn serve(routes: Vec<(&'static str, u16, String)>) -> u16 {
     port
 }
 
+/// Listens on 127.0.0.1 and accepts connections but never answers; returns the port. The thread
+/// holds each connection for far longer than the hook's deadline and ends with the test process.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a socket that cannot be bound must fail the test"
+)]
+fn serve_silent() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            thread::sleep(Duration::from_secs(2));
+            drop(stream);
+        }
+    });
+    port
+}
+
 /// Returns a port that nothing listens on.
 #[expect(
     clippy::unwrap_used,
@@ -193,25 +215,28 @@ fn hook_prints_nothing_and_exits_0_quickly_when_the_service_is_down() {
     let elapsed = started.elapsed();
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert!(out.stdout.is_empty());
-    assert!(
-        elapsed < Duration::from_millis(100),
-        "hook took {elapsed:?}"
-    );
+    assert!(elapsed < HOOK_LIMIT, "hook took {elapsed:?}");
 }
 
 #[test]
-fn hook_answers_within_100_ms_when_the_service_is_up() {
+fn hook_answers_when_the_service_is_up() {
     let home = tempfile::tempdir().unwrap();
     let port = serve(status_route(OPEN));
     write_config(home.path(), port, SENIOR);
+    let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
+    assert_eq!(text(&out.stdout), format!("{ONE_AGENT_LINE}\n"));
+}
+
+#[test]
+fn hook_gives_up_on_a_service_that_does_not_answer() {
+    let home = tempfile::tempdir().unwrap();
+    write_config(home.path(), serve_silent(), SENIOR);
     let started = Instant::now();
     let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
     let elapsed = started.elapsed();
-    assert_eq!(text(&out.stdout), format!("{ONE_AGENT_LINE}\n"));
-    assert!(
-        elapsed < Duration::from_millis(100),
-        "hook took {elapsed:?}"
-    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(out.stdout.is_empty());
+    assert!(elapsed < HOOK_LIMIT, "hook took {elapsed:?}");
 }
 
 #[test]
