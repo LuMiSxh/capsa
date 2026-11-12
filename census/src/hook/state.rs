@@ -5,12 +5,12 @@ use super::levels::Shown;
 use capsa_core::fs;
 use capsa_core::lock::{self, Lock};
 use capsa_core::log::{self, Level};
-use capsa_core::paths::state_dir;
+use capsa_core::paths::{log_file, state_dir};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// The log is moved aside once it passes this size.
-const LOG_LIMIT: u64 = 256 * 1024;
+pub const LOG_LIMIT: u64 = 256 * 1024;
 const ID_LIMIT: usize = 128;
 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
 
@@ -56,9 +56,10 @@ pub(super) fn store(file: &std::path::Path, shown: &Shown) -> std::io::Result<()
     fs::write_atomic(file, text.as_bytes())
 }
 
-/// The file of the hook's errors: one `hook.error` line each, in the state directory.
-pub fn error_log() -> PathBuf {
-    dir().join("hook.jsonl")
+/// The file of the hook's errors: one `hook.error` line each, in the state directory. `None` when
+/// no state directory is known.
+pub fn error_log() -> Option<PathBuf> {
+    log_file("census", "hook.jsonl")
 }
 
 /// The fields of a `hook.error` line.
@@ -69,7 +70,9 @@ pub struct ErrorLine {
 
 /// Appends a `hook.error` line to `error_log`. Failures are ignored: the hook must stay silent.
 pub fn log_error(message: &str) {
-    let file = error_log();
+    let Some(file) = error_log() else {
+        return;
+    };
     if let Some(parent) = file.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

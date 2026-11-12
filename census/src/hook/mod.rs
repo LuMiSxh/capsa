@@ -5,7 +5,7 @@
 mod levels;
 mod state;
 
-pub use state::{ErrorLine, error_log, log_error};
+pub use state::{ErrorLine, LOG_LIMIT, error_log, log_error};
 
 use crate::config::Config;
 use crate::context;

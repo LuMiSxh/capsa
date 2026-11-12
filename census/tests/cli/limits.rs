@@ -13,9 +13,8 @@ fn daily_limit_is_set_shown_and_cleared() {
         ("LOCALAPPDATA", state.to_str().expect("utf-8 path")),
     ];
     let run = |args: &[&str]| census(home.path(), home.path(), args, "", &extra);
-    let saved = || -> Value {
-        let text = std::fs::read_to_string(home.path().join(CONFIG_FILE)).expect("config file");
-        serde_json::from_str(&text).expect("config json")
+    let saved = || -> String {
+        std::fs::read_to_string(home.path().join(CONFIG_FILE)).expect("config file")
     };
 
     assert_eq!(
@@ -33,7 +32,7 @@ fn daily_limit_is_set_shown_and_cleared() {
     let set = run(&["self", "config", "set", "daily-limit", "8"]);
     assert_eq!(set.status.code(), Some(0));
     assert!(text(&set.stdout).contains("$8.00"), "{}", text(&set.stdout));
-    assert_eq!(saved()["daily_limit_usd"], 8.0);
+    assert!(saved().contains("daily_limit_usd = 8.0"), "{}", saved());
     assert_eq!(
         run(&["self", "config", "set", "daily-limit", "0"])
             .status
@@ -42,7 +41,7 @@ fn daily_limit_is_set_shown_and_cleared() {
     );
     let cleared = run(&["self", "config", "set", "daily-limit", "auto"]);
     assert_eq!(cleared.status.code(), Some(0));
-    assert!(saved()["daily_limit_usd"].is_null());
+    assert!(!saved().contains("daily_limit_usd"), "{}", saved());
     assert!(
         text(&cleared.stdout).contains("auto"),
         "{}",
@@ -69,7 +68,7 @@ fn budget_limits_json_carries_today_and_its_daily_limit() {
 
     home.write(
         CONFIG_FILE,
-        r#"{"mode":"budget","monthly_budget_usd":100.0,"daily_limit_usd":8.0}"#,
+        "mode = \"budget\"\nmonthly_budget_usd = 100.0\ndaily_limit_usd = 8.0\n",
     );
     let fixed = limits(&extra);
     assert_eq!(fixed["today"]["source"], "fixed");

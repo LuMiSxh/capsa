@@ -15,9 +15,9 @@ use common::Scratch;
 
 /// Where census reads its config under a scratch home: macOS ignores `XDG_CONFIG_HOME`.
 const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
-    "Library/Application Support/census/config.json"
+    "Library/Application Support/census/config.toml"
 } else {
-    "config/census/config.json"
+    "config/census/config.toml"
 };
 use serde_json::json;
 use std::io::Write;
@@ -51,7 +51,6 @@ fn census_at(home: &Path, cwd: &Path, args: &[&str], stdin: &str, offset: &str) 
         .env("CLAUDE_CONFIG_DIR", at("claude"))
         .env("CODEX_HOME", at("codex"))
         .env("CENSUS_NO_PRICE_REFRESH", "1")
-        .env("ACUS_CONFIG", at("acus/config.toml"))
         .env("CENSUS_NOW", NOW)
         .env("CENSUS_TZ_OFFSET_SECS", offset)
         .env_remove("CLAUDE_CODE_SESSION_ID")
@@ -153,7 +152,7 @@ fn claude_fixture(home: &Scratch) {
 /// The acus guard log: a deny, a hint and an escaped call, in the format acus writes.
 fn guard_fixture(home: &Scratch) {
     home.write(
-        "acus/guard.jsonl",
+        "state/acus/guard.jsonl",
         &jsonl(&[
             json!({"ts": 1791900000, "session": "s1", "cwd": "/work/app", "tool": "Bash",
                 "rule": "grep", "kind": "deny", "call": "grep -r x ."}),
@@ -315,14 +314,14 @@ fn limits_json_is_unchanged_in_plan_and_budget_mode() {
     golden("limits_empty", &out, empty.path(), 1);
 
     let budget = Scratch::new("golden-limits-budget");
-    budget_fixture(&budget, r#"{"mode":"budget","monthly_budget_usd":100.0}"#);
+    budget_fixture(&budget, "mode = \"budget\"\nmonthly_budget_usd = 100.0\n");
     let out = census(budget.path(), budget.path(), &["--json", "limits"], "");
     golden("limits_budget", &out, budget.path(), 0);
 
     let fixed = Scratch::new("golden-limits-fixed");
     budget_fixture(
         &fixed,
-        r#"{"mode":"budget","monthly_budget_usd":100.0,"daily_limit_usd":8.0}"#,
+        "mode = \"budget\"\nmonthly_budget_usd = 100.0\ndaily_limit_usd = 8.0\n",
     );
     let out = census(fixed.path(), fixed.path(), &["--json", "limits"], "");
     golden("limits_budget_fixed_daily", &out, fixed.path(), 0);
@@ -343,7 +342,7 @@ fn context_and_session_json_are_unchanged() {
 #[test]
 fn prune_dry_run_json_is_unchanged() {
     let home = Scratch::new("golden-prune");
-    budget_fixture(&home, r#"{"mode":"plan"}"#);
+    budget_fixture(&home, "mode = \"plan\"\n");
     let out = census(
         home.path(),
         home.path(),
@@ -367,7 +366,7 @@ fn self_config_show_json_is_unchanged() {
     let budget = Scratch::new("golden-config-budget");
     budget_fixture(
         &budget,
-        r#"{"mode":"budget","monthly_budget_usd":100.0,"daily_limit_usd":8.0}"#,
+        "mode = \"budget\"\nmonthly_budget_usd = 100.0\ndaily_limit_usd = 8.0\n",
     );
     let out = census(
         budget.path(),

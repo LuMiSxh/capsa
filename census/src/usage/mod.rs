@@ -12,7 +12,10 @@ pub(crate) mod time;
 mod tools;
 
 pub use handback::HandbackWeek;
-pub use prices::{Cost, PROVIDERS, knows_provider, refresh as refresh_prices};
+pub use prices::{
+    Cost, LOG as PRICE_LOG, LOG_LIMIT as PRICE_LOG_LIMIT, PROVIDERS, knows_provider,
+    refresh as refresh_prices,
+};
 pub use time::{parse_date, parse_ts};
 pub use tools::group;
 

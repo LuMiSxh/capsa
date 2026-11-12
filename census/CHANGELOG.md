@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Added
+
+- `census self skill --install --target claude|codex|all` writes the skill to Claude Code's skill
+  directory, to Codex's, or to both. `claude` stays the default.
+- `census self doctor` warns when a `config.json` from an older version is still there. The warning
+  names the new `config.toml` and `census self config set`, which writes the settings again.
+- `census self doctor` checks the price log, `prices.jsonl`, for its size and last entry.
+
+### Changed
+
+- The settings are in `config.toml` in the census config directory, not `config.json`. This is a
+  hard break: census neither reads nor migrates `config.json`. Set the settings again with
+  `census self config set`; `census self doctor` reports the old file.
+- `census usage --guard` reads acus's `guard.jsonl` from acus's state directory. It no longer reads
+  `ACUS_CONFIG`.
+- `census usage --guard` with no decisions prints its report with a hint to run `acus self setup`,
+  where it printed a line to stderr. The exit code stays 1; `--json` prints the empty report.
+- `census usage` ends the `models`, `sessions` and `tools` lists, and the guard's escaped commands,
+  with a footer that names the command for the rest (`census usage --top N`).
+- The doctor's hook log checks come from the shared doctor kit, and the error check is named
+  `hook errors`. The messages of `census self update`, `uninstall` and the doctor's directory check
+  come from `capsa-core`; the uninstall note names the full settings path.
+
 ### Fixed
 
 - `census self doctor` warns when it cannot read the hook log. It reported no errors before.

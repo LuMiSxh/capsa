@@ -221,6 +221,10 @@ fn models(doc: &mut Doc, r: &Report, top: usize, config: &Config) {
         "lllrrrr",
         rows,
     ));
+    let hidden = r.models.len().saturating_sub(top);
+    if hidden > 0 {
+        doc.more(hidden, "census usage --top N");
+    }
 }
 
 /// The top sessions, then a line counting the ones left out.
@@ -271,9 +275,7 @@ fn sessions(doc: &mut Doc, r: &Report, top: usize) {
     ));
     let hidden = r.sessions.len().saturating_sub(top);
     if hidden > 0 {
-        doc.line(format!(
-            "… {hidden} more sessions (raise --top or filter with --project/--days)"
-        ));
+        doc.more(hidden, "census usage --top N");
     }
 }
 
@@ -302,6 +304,10 @@ fn tools(doc: &mut Doc, r: &Report, top: usize) {
         })
         .collect();
     doc.table(table(&["tool", "calls", "input", "result"], "lrrr", rows));
+    let hidden = r.tools.len().saturating_sub(top);
+    if hidden > 0 {
+        doc.more(hidden, "census usage --top N");
+    }
 }
 
 /// One line of acus's `guard.jsonl`. Fields keep acus's order, so `--json` prints them as acus
@@ -327,12 +333,9 @@ struct Stamp {
     ts: u64,
 }
 
-/// The decision log acus writes: `guard.jsonl` next to its config file, which `ACUS_CONFIG` moves.
-fn guard_log_path() -> PathBuf {
-    std::env::var("ACUS_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| capsa_core::paths::config_dir("acus").join("config.toml"))
-        .with_file_name("guard.jsonl")
+/// The decision log acus writes in its state directory. `None` when no state directory is known.
+fn guard_log_path() -> Option<PathBuf> {
+    capsa_core::paths::log_file("acus", "guard.jsonl")
 }
 
 /// The lines of one log file, read on past a line that is not valid UTF-8. The file ends at its
@@ -376,6 +379,8 @@ struct GuardOut<'a> {
     decisions: usize,
     rules: Vec<RuleCount<'a>>,
     escaped: Vec<&'a GuardEntry>,
+    #[serde(skip)]
+    escaped_hidden: usize,
 }
 
 impl Render for GuardOut<'_> {
@@ -384,6 +389,10 @@ impl Render for GuardOut<'_> {
             "guard: {} decisions ({})",
             self.decisions, self.path
         ));
+        if self.decisions == 0 {
+            doc.hint("add the acus guard PreToolUse hook (acus self setup)");
+            return;
+        }
         let rows = self
             .rules
             .iter()
@@ -411,11 +420,14 @@ impl Render for GuardOut<'_> {
                 .collect();
             doc.table(table(&["rule", "call"], "ll", rows));
         }
+        if self.escaped_hidden > 0 {
+            doc.more(self.escaped_hidden, "census usage --guard --top N");
+        }
     }
 }
 
 fn guard(a: &Args, out: &Out) -> Result<Outcome> {
-    let path = guard_log_path();
+    let path = guard_log_path().unwrap_or_default();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
@@ -434,13 +446,6 @@ fn guard(a: &Args, out: &Out) -> Result<Outcome> {
                 .is_none_or(|p| e.cwd.as_deref().unwrap_or_default().contains(p.as_str()))
         })
         .collect();
-    if entries.is_empty() {
-        eprintln!(
-            "no guard decisions in {}\nhint: add the acus guard PreToolUse hook (acus self setup)",
-            path.display()
-        );
-        return Ok(Outcome::Empty);
-    }
     let mut counts: std::collections::BTreeMap<&str, [u64; 4]> = Default::default();
     for e in &entries {
         let slot = match e.kind.as_str() {
@@ -451,6 +456,7 @@ fn guard(a: &Args, out: &Out) -> Result<Outcome> {
         };
         counts.entry(e.rule.as_str()).or_default()[slot] += 1;
     }
+    let escapes = entries.iter().filter(|e| e.kind == "escape").count();
     let escaped: Vec<&GuardEntry> = entries
         .iter()
         .filter(|e| e.kind == "escape")
@@ -460,6 +466,7 @@ fn guard(a: &Args, out: &Out) -> Result<Outcome> {
     let body = GuardOut {
         path: path.display().to_string(),
         decisions: entries.len(),
+        escaped_hidden: escapes - escaped.len(),
         rules: counts
             .iter()
             .map(|(r, n)| RuleCount {
@@ -472,5 +479,10 @@ fn guard(a: &Args, out: &Out) -> Result<Outcome> {
             .collect(),
         escaped,
     };
-    emit(&body, out.format)
+    let outcome = emit(&body, out.format)?;
+    Ok(if body.decisions == 0 {
+        Outcome::Empty
+    } else {
+        outcome
+    })
 }

@@ -18,9 +18,9 @@ use common::Scratch;
 
 /// Where census reads its config under a scratch home: macOS ignores `XDG_CONFIG_HOME`.
 const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
-    "Library/Application Support/census/config.json"
+    "Library/Application Support/census/config.toml"
 } else {
-    "config/census/config.json"
+    "config/census/config.toml"
 };
 use serde_json::{Value, json};
 use std::io::Write;
@@ -139,7 +139,7 @@ fn october_spend(home: &Scratch, mode: &str) {
     );
     home.write(
         CONFIG_FILE,
-        &format!(r#"{{"mode":"{mode}","monthly_budget_usd":100.0}}"#),
+        &format!("mode = \"{mode}\"\nmonthly_budget_usd = 100.0\n"),
     );
 }
 

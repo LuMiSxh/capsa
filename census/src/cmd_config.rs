@@ -5,8 +5,9 @@ use crate::cmd_limits::today_row;
 use crate::now_secs;
 use crate::out::Out;
 use anyhow::Result;
+use capsa_core::config::ConfigFile;
 use capsa_core::exit::Outcome;
-use capsa_core::hint::Hinted;
+use capsa_core::hint::{Hinted, ResultExt};
 use capsa_core::render::{Doc, Render, emit};
 use census::config::{Billing, Config, Mode};
 use census::limits::{self, DailyStatus};
@@ -70,15 +71,6 @@ enum Key {
 enum DailyArg {
     Auto,
     Usd(f64),
-}
-
-impl DailyArg {
-    fn usd(self) -> Option<f64> {
-        match self {
-            DailyArg::Auto => None,
-            DailyArg::Usd(v) => Some(v),
-        }
-    }
 }
 
 fn daily_arg(s: &str) -> Result<DailyArg, String> {
@@ -193,35 +185,64 @@ impl Render for ConfigOut<'_> {
 }
 
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
-    let path = Config::path();
-    let mut config = Config::load_from(&path)?;
+    let file = Config::file();
     let mut warnings = Vec::new();
     if let Action::Set(set) = a.action {
-        match set.key {
-            Key::Mode { mode } => config.mode = mode.into(),
-            Key::MonthlyBudget { usd } => config.monthly_budget_usd = Some(usd),
-            Key::DailyLimit { value } => config.daily_limit_usd = value.usd(),
-            Key::PricesRefreshDays { days } => config.prices_refresh_days = days,
-            Key::Billing { provider, value } => {
-                let (provider, billing) = billing_key(&provider, &value)?;
-                if !knows_provider(&provider) {
-                    warnings.push(format!(
-                        "`{provider}` is not in the price table; the setting has no effect yet"
-                    ));
-                }
-                config.billing.insert(provider, billing);
-            }
-        }
-        config.save_to(&path)?;
+        apply(&file, set.key, &mut warnings)?;
     }
+    let config = file.load::<Config>().hinted()?;
     let today = today(&config)?;
     let body = ConfigOut {
         config: &config,
-        path: path.display().to_string(),
+        path: file.path().display().to_string(),
         today,
         warnings,
     };
     emit(&body, out.format)
+}
+
+/// Writes one `set` key to the config file. A billing is written with the whole billing table, so
+/// the default `anthropic` entry stays listed in a file that does not name it.
+fn apply(file: &ConfigFile, key: Key, warnings: &mut Vec<String>) -> Result<()> {
+    match key {
+        Key::Mode { mode } => {
+            file.set::<Config>("mode", Mode::from(mode).name())
+                .hinted()?;
+        }
+        Key::MonthlyBudget { usd } => {
+            file.set::<Config>("monthly_budget_usd", &format!("{usd:?}"))
+                .hinted()?;
+        }
+        Key::DailyLimit {
+            value: DailyArg::Usd(usd),
+        } => {
+            file.set::<Config>("daily_limit_usd", &format!("{usd:?}"))
+                .hinted()?;
+        }
+        Key::DailyLimit {
+            value: DailyArg::Auto,
+        } => {
+            let mut config = file.load::<Config>().hinted()?;
+            config.daily_limit_usd = None;
+            file.save(&config).hinted()?;
+        }
+        Key::PricesRefreshDays { days } => {
+            file.set::<Config>("prices_refresh_days", &days.to_string())
+                .hinted()?;
+        }
+        Key::Billing { provider, value } => {
+            let (provider, billing) = billing_key(&provider, &value)?;
+            if !knows_provider(&provider) {
+                warnings.push(format!(
+                    "`{provider}` is not in the price table; the setting has no effect yet"
+                ));
+            }
+            let mut config = file.load::<Config>().hinted()?;
+            config.billing.insert(provider, billing);
+            file.save(&config).hinted()?;
+        }
+    }
+    Ok(())
 }
 
 /// Returns today's spend against its daily limit in budget mode; `None` in plan mode or when no

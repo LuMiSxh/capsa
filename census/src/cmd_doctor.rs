@@ -5,6 +5,8 @@
 use crate::cmd_self::SKILL;
 use crate::out::Out;
 use anyhow::{Context, Result};
+use capsa_core::config::legacy_json;
+use capsa_core::doctor::{check, dir_check, log_checks, ok, path_check};
 use capsa_core::exit::Outcome;
 use capsa_core::hooks::{Agent, HookFile, StatusLineState};
 use capsa_core::log;
@@ -12,7 +14,7 @@ use capsa_core::render::{Check, Doctor, Group, Status, emit};
 use capsa_core::skill::{self, SkillState, Target};
 use census::config::Config;
 use census::hook::{self, ErrorLine};
-use std::borrow::Cow;
+use census::usage::{PRICE_LOG, PRICE_LOG_LIMIT};
 use std::path::Path;
 
 use crate::setup::{HOOKS, STATUS_LINE, TOOL};
@@ -33,24 +35,10 @@ pub fn run(out: &Out) -> Result<Outcome> {
     )
 }
 
-fn check(
-    name: impl Into<Cow<'static, str>>,
-    status: Status,
-    detail: impl Into<String>,
-    hint: Option<&str>,
-) -> Check {
-    Check {
-        name: name.into(),
-        status,
-        detail: detail.into(),
-        hint: hint.map(str::to_owned),
-    }
-}
-
 fn install_group() -> Group {
     let exe = std::env::current_exe().ok();
     let binary = match &exe {
-        Some(exe) => check("binary", Status::Ok, exe.display().to_string(), None),
+        Some(exe) => ok("binary", exe.display().to_string()),
         None => check(
             "binary",
             Status::Warn,
@@ -58,52 +46,29 @@ fn install_group() -> Group {
             None,
         ),
     };
-    let on_path = match (capsa_core::which::find(TOOL), &exe) {
-        (Some(on_path), Some(exe)) if !same_file(&on_path, exe) => check(
-            "PATH",
-            Status::Warn,
-            format!("census on PATH is {}", on_path.display()),
-            Some("the hooks run the census on PATH; remove the other copy or update it"),
-        ),
-        (Some(on_path), _) => check("PATH", Status::Ok, on_path.display().to_string(), None),
-        (None, _) => check(
-            "PATH",
-            Status::Warn,
-            "census is not on PATH",
-            Some("the hooks run bare `census`; add the directory of this binary to PATH"),
-        ),
-    };
+    let on_path = path_check(
+        TOOL,
+        capsa_core::which::find(TOOL).as_deref(),
+        exe.as_deref(),
+    );
     Group {
         name: "install",
         checks: vec![
-            check(
-                "version",
-                Status::Ok,
-                format!("census {}", env!("CARGO_PKG_VERSION")),
-                None,
-            ),
+            ok("version", format!("census {}", env!("CARGO_PKG_VERSION"))),
             binary,
             on_path,
         ],
     }
 }
 
-fn same_file(a: &Path, b: &Path) -> bool {
-    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_owned());
-    canon(a) == canon(b)
-}
-
 fn config_group() -> Group {
-    let path = Config::path();
-    let file = match Config::load_from(&path) {
-        Ok(_) if path.exists() => {
-            check("config file", Status::Ok, path.display().to_string(), None)
-        }
-        Ok(_) => check(
+    let file = Config::file();
+    let path = file.path().display().to_string();
+    let mut checks = vec![match file.load::<Config>() {
+        Ok(_) if file.path().exists() => ok("config file", path.as_str()),
+        Ok(_) => ok(
             "config file",
-            Status::Ok,
-            format!("{} (not created; defaults apply)", path.display()),
-            None,
+            format!("{path} (not created; defaults apply)"),
         ),
         Err(e) => check(
             "config file",
@@ -111,10 +76,20 @@ fn config_group() -> Group {
             e.to_string(),
             Some("fix or delete the config file; the message names the file"),
         ),
-    };
+    }];
+    if let Some(legacy) = legacy_json(TOOL) {
+        let hint =
+            format!("set the settings again in {path} with `census self config set <key> <value>`");
+        checks.push(check(
+            "legacy config",
+            Status::Warn,
+            format!("{} is no longer read", legacy.display()),
+            Some(hint.as_str()),
+        ));
+    }
     Group {
         name: "config",
-        checks: vec![file],
+        checks,
     }
 }
 
@@ -205,62 +180,43 @@ fn hooks_group(settings: &Path) -> Group {
 }
 
 fn state_group() -> Group {
+    let mut checks = vec![dir_check(
+        "state dir",
+        &capsa_core::paths::state_dir(TOOL),
+        "fix the permissions on the state directory",
+    )];
+    match hook::error_log() {
+        Some(file) => {
+            checks.extend(log_checks("hook", &file, hook::LOG_LIMIT));
+            checks.push(hook_error_check(&file));
+        }
+        None => checks.push(check(
+            "hook log",
+            Status::Warn,
+            "no state directory is known",
+            Some("set HOME or XDG_STATE_HOME"),
+        )),
+    }
+    if let Some(file) = capsa_core::paths::log_file(TOOL, PRICE_LOG) {
+        checks.extend(log_checks("prices", &file, PRICE_LOG_LIMIT));
+    }
     Group {
         name: "state",
-        checks: vec![
-            state_dir_check(&capsa_core::paths::state_dir(TOOL)),
-            hook_log_check(&hook::error_log()),
-        ],
+        checks,
     }
-}
-
-/// Whether `dir` takes a file: an existing directory is probed, a missing one is created on first
-/// use and so is not an error.
-fn state_dir_check(dir: &Path) -> Check {
-    if !dir.is_dir() {
-        return check(
-            "state dir",
-            Status::Ok,
-            format!("{} not created yet", dir.display()),
-            None,
-        );
-    }
-    match writable(dir) {
-        Ok(()) => check(
-            "state dir",
-            Status::Ok,
-            format!("{} writable", dir.display()),
-            None,
-        ),
-        Err(e) => check(
-            "state dir",
-            Status::Fail,
-            format!("{} is not writable: {e}", dir.display()),
-            Some("fix the permissions on the state directory"),
-        ),
-    }
-}
-
-fn writable(dir: &Path) -> std::io::Result<()> {
-    let probe = dir.join(format!(".census-doctor-{}", std::process::id()));
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)?;
-    std::fs::remove_file(&probe)
 }
 
 /// Reports the errors the hook has logged, the newest last. Past errors warn; they do not fail.
-fn hook_log_check(file: &Path) -> Check {
+fn hook_error_check(file: &Path) -> Check {
     let entries = match log::read::<ErrorLine>(file) {
         Ok(entries) => entries,
-        Err(e) => return check("hook log", Status::Warn, e.to_string(), None),
+        Err(e) => return check("hook errors", Status::Warn, e.to_string(), None),
     };
     let Some(last) = entries.last() else {
-        return check("hook log", Status::Ok, "no errors", None);
+        return ok("hook errors", "no errors");
     };
     check(
-        "hook log",
+        "hook errors",
         Status::Warn,
         format!(
             "{} error(s); last at {}: {}",

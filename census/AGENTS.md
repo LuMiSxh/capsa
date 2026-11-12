@@ -20,7 +20,8 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
   skill|setup|config|doctor|update|uninstall`; update and uninstall need feature `cmd-update`, on by
   default), `cmd_doctor.rs` (`self doctor`).
 - `src/cmd_config.rs`: `census self config`, which shows and sets the config.
-- `src/config.rs`: `config.json` in the census config directory: `mode` (`plan` or `budget`), the
+- `src/config.rs`: `config.toml` in the census config directory, read through `capsa_core::config`:
+  `mode` (`plan` or `budget`), the
   monthly budget, the daily limit, the daily thresholds, the days before the price list is
   fetched again and `billing`, how each provider is billed (`subscription` or `api`; `anthropic`
   is `subscription` by default).
@@ -89,7 +90,8 @@ Shared rules: see root AGENTS.md.
 - `census statusline` exits 0 and prints nothing unless `--line` is given. It never updates the
   ledger, so it stays fast, and it appends a snapshot only when a window's reading differs from the
   last one.
-- `--guard` reads acus's `guard.jsonl` as acus writes it. `rule` is a free string: names from older
+- `--guard` reads acus's `guard.jsonl` from `capsa_core::paths::log_file("acus", ...)` as acus
+  writes it. `rule` is a free string: names from older
   acus versions (such as `git-log`) must still parse, so do not validate rule names.
 - `census hook` exits 0 on every path and prints nothing on any error or for a subagent (input with
   `agent_id`). Keep it free of `unwrap`, indexing and panics: `panic = "abort"` makes one a failed
@@ -103,8 +105,8 @@ Shared rules: see root AGENTS.md.
 
 - The walk does not read `.gitignore` files, which acus's walk did. Transcript directories are not
   expected to be ignored.
-- The config directory of acus comes from `capsa_core::paths::config_dir("acus")`.
-  `CLAUDE_CONFIG_DIR` moves the transcripts and the settings that the threshold reads.
+- The guard log is in acus's state directory, not its config directory. `CLAUDE_CONFIG_DIR` moves
+  the transcripts and the settings that the threshold reads.
 - `census prune` never removes raw ledger rows: the 8-day windows need them.
 - Budget mode: `daily_limit_usd` unset means `auto`, the daily share of what is left of the monthly
   budget. `daily_thresholds` (50, 80 and 100 % by default) are announced by the hook once per local

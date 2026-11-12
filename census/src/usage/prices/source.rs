@@ -11,8 +11,8 @@ use std::time::Duration;
 
 const CACHE: &str = "prices.json";
 /// Refresh warnings go here, not to `hook.jsonl`, which `census self doctor` reads as hook errors.
-const LOG: &str = "prices.jsonl";
-const LOG_LIMIT: u64 = 256 * 1024;
+pub const LOG: &str = "prices.jsonl";
+pub const LOG_LIMIT: u64 = 256 * 1024;
 const URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);

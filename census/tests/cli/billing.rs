@@ -42,14 +42,14 @@ fn set_billing_stores_the_provider_and_warns_about_an_unknown_one() {
         text(&unknown.stdout)
     );
 
-    let saved: Value = serde_json::from_str(
-        &std::fs::read_to_string(home.path().join(CONFIG_FILE)).expect("config file"),
-    )
-    .expect("config json");
-    assert_eq!(
-        saved["billing"],
-        json!({"anthropic": "subscription", "openai": "subscription", "mistral": "api"})
-    );
+    let saved = std::fs::read_to_string(home.path().join(CONFIG_FILE)).expect("config file");
+    for line in [
+        "anthropic = \"subscription\"",
+        "openai = \"subscription\"",
+        "mistral = \"api\"",
+    ] {
+        assert!(saved.contains(line), "{saved}");
+    }
 
     let anthropic = run(&[
         "--json",
@@ -126,7 +126,7 @@ fn usage_names_a_provider_billed_as_subscription_by_the_setting() {
 
     home.write(
         CONFIG_FILE,
-        r#"{"billing":{"anthropic":"subscription","openai":"subscription"}}"#,
+        "[billing]\nanthropic = \"subscription\"\nopenai = \"subscription\"\n",
     );
     let set = census(home.path(), home.path(), &["usage"], "", &[]);
     assert_eq!(set.status.code(), Some(0), "{}", text(&set.stderr));
@@ -158,14 +158,15 @@ fn limits_ignore_a_provider_billed_as_subscription() {
     let spent = |billing: &str| -> f64 {
         home.write(
             CONFIG_FILE,
-            &format!(r#"{{"mode":"budget","monthly_budget_usd":100.0,"billing":{billing}}}"#),
+            &format!("mode = \"budget\"\nmonthly_budget_usd = 100.0\n{billing}"),
         );
         let out = census(home.path(), home.path(), &["--json", "limits"], "", &env);
         let json: Value = serde_json::from_str(&text(&out.stdout)).expect("json");
         json["spent_usd"].as_f64().expect("spent_usd")
     };
-    let api = spent(r#"{"anthropic":"subscription"}"#);
-    let subscription = spent(r#"{"anthropic":"subscription","openai":"subscription"}"#);
+    let api = spent("[billing]\nanthropic = \"subscription\"\n");
+    let subscription =
+        spent("[billing]\nanthropic = \"subscription\"\nopenai = \"subscription\"\n");
     assert!(api > 0.0, "{api}");
     assert_eq!(subscription, api);
 }

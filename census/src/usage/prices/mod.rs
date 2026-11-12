@@ -11,6 +11,7 @@ use super::Tokens;
 use crate::ledger::family_of;
 use capsa_core::paths::state_dir;
 use serde::Serialize;
+pub use source::{LOG, LOG_LIMIT};
 use std::sync::OnceLock;
 pub use table::PROVIDERS;
 use table::{Price, Table};

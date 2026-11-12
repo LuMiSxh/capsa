@@ -6,12 +6,7 @@ use crate::out::Out;
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-use capsa_core::hint::Hinted;
 use capsa_core::skill::{self, Skill, Target};
-#[cfg(feature = "cmd-update")]
-use std::path::Path;
-#[cfg(feature = "cmd-update")]
-use std::process::{Command, Stdio};
 
 /// The skill shipped with this binary, so an installed copy matches its version.
 pub(crate) const SKILL: Skill = Skill {
@@ -37,7 +32,7 @@ pub struct Args {
 enum Action {
     /// Replace this binary with the latest release, then reinstall the skill.
     Update(UpdateArgs),
-    /// Print the skill for the main agent; --install writes it to ~/.claude/skills/census.
+    /// Prints the skill, or with --install writes it to the skill directory of --target.
     Skill(SkillArgs),
     /// Installs the skill, then adds census's hooks and statusLine to settings.json.
     Setup(crate::setup::Args),
@@ -65,9 +60,12 @@ pub struct UninstallArgs {
 
 #[derive(clap::Args)]
 struct SkillArgs {
-    /// Write SKILL.md to ~/.claude/skills/census instead of printing it.
+    /// Write SKILL.md to the skill directory of --target instead of printing it.
     #[arg(long)]
     install: bool,
+    /// The agent whose skill directory --install writes to: claude, codex or all.
+    #[arg(long, value_enum, default_value_t = Target::Claude, requires = "install")]
+    target: Target,
 }
 
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
@@ -87,7 +85,7 @@ fn skill(a: &SkillArgs) -> Result<Outcome> {
         return Ok(Outcome::Found);
     }
     let home = std::env::home_dir().context("no home directory")?;
-    for file in skill::install(&home, &SKILL, Target::Claude)? {
+    for file in skill::install(&home, &SKILL, a.target)? {
         println!("{}", file.display());
     }
     Ok(Outcome::Found)
@@ -95,46 +93,24 @@ fn skill(a: &SkillArgs) -> Result<Outcome> {
 
 #[cfg(not(feature = "cmd-update"))]
 fn update(_: UpdateArgs, _: Format) -> Result<Outcome> {
-    Err(Hinted::new(
-        "census was built without `cmd-update`",
-        "cargo install --path census --features cmd-update, or rerun the installer",
-    )
-    .into())
+    Err(capsa_core::hint::update_unavailable(
+        crate::setup::TOOL,
+        "census",
+    ))
 }
 
+/// Replaces the binary, then runs the new one's `self skill --install`, since the binary on disk
+/// carries the skill of its version.
 #[cfg(feature = "cmd-update")]
 fn update(a: UpdateArgs, format: Format) -> Result<Outcome> {
     capsa_core::update::run(&TOOL, a, format, |report| {
-        reinstall_skill(&report.exe, format)
+        capsa_core::update::reinstall_skill(&report.exe, TOOL.name, None, format)
     })
-}
-
-/// Runs the new binary's `self skill --install`, since the binary on disk carries the skill of its
-/// version. Under `--json` its path line is dropped, so stdout holds only the report.
-#[cfg(feature = "cmd-update")]
-fn reinstall_skill(exe: &Path, format: Format) -> Result<()> {
-    let mut command = Command::new(exe);
-    command.args(["self", "skill", "--install"]);
-    if format == Format::Json {
-        command.stdout(Stdio::null());
-    }
-    if command.status().is_ok_and(|s| s.success()) {
-        return Ok(());
-    }
-    Err(Hinted::new(
-        "cannot reinstall the skill",
-        "run census self skill --install",
-    )
-    .into())
 }
 
 #[cfg(not(feature = "cmd-update"))]
 fn uninstall(_: &UninstallArgs, _: Format) -> Result<Outcome> {
-    Err(Hinted::new(
-        "census was built without `cmd-update`",
-        "remove the binary by hand, or rebuild with --features cmd-update",
-    )
-    .into())
+    Err(capsa_core::hint::uninstall_unavailable(crate::setup::TOOL))
 }
 
 /// Removes the binary first and the skill after it, so a refused binary leaves the skill in place
@@ -154,9 +130,12 @@ fn uninstall(a: &UninstallArgs, format: Format) -> Result<Outcome> {
         Ok(())
     })?;
     if format != Format::Json && !a.dry_run {
-        println!(
-            "hooks and statusLine in ~/.claude/settings.json are left; remove the census entries by hand"
+        let note = capsa_core::update::leftover_note(
+            TOOL.name,
+            &capsa_core::hooks::Agent::ClaudeCode.path(),
+            "hooks and statusLine",
         );
+        println!("{note}");
     }
     Ok(outcome)
 }
