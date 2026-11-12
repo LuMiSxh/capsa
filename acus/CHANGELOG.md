@@ -4,6 +4,13 @@
 
 ### Added
 
+- `acus self doctor` gets an `update` line: ok with `<version> is the latest`, a warning with
+  `acus self update` as its fix when a newer release exists, or ok with `could not check for
+  updates` when GitHub does not answer within 3 seconds. The newest release is saved in
+  `latest.json` in acus's state directory and reused for a day; `acus self update` saves it too.
+  `CAPSA_UPDATE_CHECK=off` skips the lookup and reports the line as unchecked. Only `self doctor`
+  looks, so no hook, guard or proxy start reaches the network. The check and the release lookup
+  live in `capsa-core`.
 - `acus` publishes the guard blocks of each session in the capsa bulletin, `acus.json` with
   `guard_blocks`: the count per session id for the 16 latest sessions, current for a day. A block
   adds one to its session's count and rewrites the bulletin after the reply is printed. A

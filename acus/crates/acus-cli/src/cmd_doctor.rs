@@ -2,12 +2,16 @@
 //! `acus self doctor`: checks the install, config, skill, hooks and guard files. Exit 1 when a
 //! check fails; warnings do not change the exit code.
 
+#[cfg(feature = "cmd-update")]
+use crate::TOOL;
 use crate::cmd_hook;
 use crate::cmd_setup::HOOKS;
 use crate::cmd_skill::SKILL_DEF;
 use crate::config::{self, Config};
 use crate::guard_log;
 use anyhow::{Context, Result};
+#[cfg(feature = "cmd-update")]
+use capsa_core::doctor::update_check;
 use capsa_core::doctor::{
     check, dir_check, emit_report, log_checks, path_check, repair_hooks, repair_skill,
 };
@@ -17,6 +21,8 @@ use capsa_core::hint::ResultExt;
 use capsa_core::hooks::{Agent, HookFile, HookSpec, HookState};
 use capsa_core::render::{Check, Doctor, Group, Status};
 use capsa_core::skill::{self, SkillState, Target, installed_target};
+#[cfg(feature = "cmd-update")]
+use capsa_core::update;
 use std::path::{Path, PathBuf};
 
 /// Tools that must be matched by the PreToolUse guard hook.
@@ -71,6 +77,8 @@ fn install_group() -> Group {
         capsa_core::which::find("acus").as_deref(),
         exe.as_deref(),
     ));
+    #[cfg(feature = "cmd-update")]
+    checks.push(update_check(&TOOL, &update::check(&TOOL)));
     Group {
         name: "install",
         checks,

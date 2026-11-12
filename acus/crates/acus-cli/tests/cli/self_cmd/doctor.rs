@@ -41,12 +41,8 @@ fn doctor_json_is_healthy_after_setup_and_fails_on_a_broken_config() {
 
     let bad = dir.path().join("acus.toml");
     std::fs::write(&bad, "[commands\ndisabled = 1\n").unwrap();
-    let broken = [
-        ("HOME", h),
-        ("USERPROFILE", h),
-        ("CLAUDE_CONFIG_DIR", c),
-        ("ACUS_CONFIG", bad.to_str().unwrap()),
-    ];
+    let mut broken = env.to_vec();
+    broken.push(("ACUS_CONFIG", bad.to_str().unwrap()));
     let (code, out, _) = acus_env(&["self", "doctor", "--json"], &broken);
     assert_eq!(code, 1, "{out}");
     let broken_v = json_line(&out);
@@ -54,6 +50,64 @@ fn doctor_json_is_healthy_after_setup_and_fails_on_a_broken_config() {
     let config = broken_v["groups"][1]["checks"][0].clone();
     assert_eq!(config["name"], "config file");
     assert_eq!(config["status"], "fail");
+}
+
+/// Saves `latest` as the newest release in the state directory `acus self doctor` reads, dated now.
+#[cfg(feature = "cmd-update")]
+fn save_latest(state: &std::path::Path, latest: &str) {
+    let dir = if cfg!(windows) {
+        state.join("acus").join("state")
+    } else {
+        state.join("acus")
+    };
+    std::fs::create_dir_all(&dir).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let body = format!(r#"{{"checked_at":{now},"latest":"{latest}"}}"#);
+    std::fs::write(dir.join("latest.json"), body).unwrap();
+}
+
+#[test]
+#[cfg(feature = "cmd-update")]
+fn doctor_reports_whether_a_newer_release_exists_from_the_saved_latest() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let mut env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap()).to_vec();
+    env.push(("CAPSA_UPDATE_CHECK", "on"));
+    let update_line = |out: &str| {
+        json_line(out)["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["checks"].as_array().unwrap())
+            .find(|check| check["name"] == "update")
+            .unwrap()
+            .clone()
+    };
+
+    save_latest(&home, "99.0.0");
+    let (code, out, err) = acus_env(&["self", "doctor", "--json"], &env);
+    assert_eq!(code, 0, "{err}\n{out}");
+    let newer = update_line(&out);
+    assert_eq!(newer["status"], "warn");
+    assert_eq!(
+        newer["detail"],
+        format!("99.0.0 available (running {})", env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(newer["hint"], "run acus self update");
+
+    save_latest(&home, "0.0.1");
+    let (_, out, _) = acus_env(&["self", "doctor", "--json"], &env);
+    let current = update_line(&out);
+    assert_eq!(current["status"], "ok");
+    assert_eq!(
+        current["detail"],
+        format!("{} is the latest", env!("CARGO_PKG_VERSION"))
+    );
 }
 
 #[test]

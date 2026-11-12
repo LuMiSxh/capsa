@@ -32,12 +32,16 @@ fn a_disabled_name_still_blocks_its_self_action() {
     assert!(err.contains("disabled"), "{err}");
 }
 
-/// Runs acus with HOME, USERPROFILE and CLAUDE_CONFIG_DIR set, so no real user file is touched.
-fn sandboxed<'a>(home: &'a str, claude: &'a str) -> [(&'a str, &'a str); 3] {
+/// Runs acus with HOME, USERPROFILE, CLAUDE_CONFIG_DIR and the state directories set under `home`,
+/// with the update check off, so no test reads a real user file or asks GitHub.
+fn sandboxed<'a>(home: &'a str, claude: &'a str) -> [(&'a str, &'a str); 6] {
     [
         ("HOME", home),
         ("USERPROFILE", home),
         ("CLAUDE_CONFIG_DIR", claude),
+        ("XDG_STATE_HOME", home),
+        ("LOCALAPPDATA", home),
+        ("CAPSA_UPDATE_CHECK", "off"),
     ]
 }
 
