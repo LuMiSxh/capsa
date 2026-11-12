@@ -2,6 +2,7 @@
 //! Owns the checks every `self doctor` shares: the check constructors, the probes for directories
 //! and files, the PATH check and the health of a JSON-lines log.
 
+mod fix;
 mod log_health;
 mod on_path;
 mod probe;
@@ -12,6 +13,7 @@ use std::borrow::Cow;
 
 use crate::render::{Check, Status};
 
+pub use fix::{Repaired, emit_report, repair_hooks, repair_skill};
 pub use log_health::log_checks;
 pub use on_path::path_check;
 pub use probe::{dir_check, same_file, writable};

@@ -6,8 +6,8 @@ use std::path::Path;
 use super::log_health::{
     last_ts, log_age_check, log_file_check, log_size_check, now_secs, size_text,
 };
-use super::{check, dir_check, log_checks, ok, path_check, same_file, writable};
-use crate::render::{Check, Status};
+use super::{Repaired, check, dir_check, log_checks, ok, path_check, same_file, writable};
+use crate::render::{Check, Doctor, Group, Status};
 
 const KIB: u64 = 1024;
 const MIB: u64 = 1024 * KIB;
@@ -317,4 +317,26 @@ fn log_checks_name_the_log_after_its_label_in_order() {
 #[test]
 fn now_secs_is_after_the_start_of_2020() {
     assert!(now_secs() > 1_577_836_800);
+}
+
+#[test]
+fn repaired_json_keeps_the_report_and_adds_fixed() {
+    let report = Doctor::new(
+        "tool",
+        "1.0.0",
+        vec![Group {
+            name: "install",
+            checks: vec![ok("skill", "installed")],
+        }],
+    );
+    let fixed = vec![ok("hooks", "added 1 hook")];
+    let json = serde_json::to_value(Repaired {
+        report: &report,
+        fixed,
+    })
+    .unwrap();
+    assert_eq!(json["tool"], "tool");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["groups"][0]["name"], "install");
+    assert_eq!(json["fixed"][0]["name"], "hooks");
 }
