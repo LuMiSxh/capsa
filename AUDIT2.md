@@ -92,6 +92,8 @@ census reads `guard.jsonl` by contract. vicarius and acus know nothing about the
 | X4 | Guard blocks are visible only in `census usage --guard`. acus writes a per-session count at SessionStart and on hint writes (already off the decision), census shows it in the statusline. | acus `hints.rs`, census `statusline.rs` | S |
 | X6 | No doctor knows whether the sibling tools are installed and healthy. Each `self doctor` gets an `interop` group: per sibling, whether it is installed (`which::find`), its bulletin age, and which interop feature uses it, active or off (not installed = info, never a warning). Every tool works alone: an interop feature is off when the sibling is missing, and `self uninstall` removes the tool's own bulletin so a stale one is not read. | all doctors, `self uninstall` | S |
 | X8 | Update awareness: each tool records its version and the last known latest release in its bulletin; doctors and the statusline show "update available". Pairs with K19. | `core/src/update` | S |
+| X9 | Zed's picker via pons lacks models terminal `claude` has (Haiku 5.5, Fable 5.2): the adapter runs the Claude Code CLI bundled in its SDK (adapter 0.85.1 -> CLI 2.1.286), not the user's `claude`, and the pnpm install stayed at 0.85.1. pons doctor compares the adapter with npm `latest` and the bundled CLI with `claude --version`; the hint is the reinstall command (no `--fix`). OAuth `/v1/models` rejected: against the Claude Code terms, and the adapter refuses ids outside its list. | `pons/src/doctor/adapter.rs`, adapter `acp-agent.js:626-662` | S |
+| X10 | DeepSeek models (default `deepseek-flash` "Deepseek Flash", `deepseek-v4-pro` "Deepseek V4 Pro", names in a new pons `config.toml`) as main agent in pons while vicarius is active, off when it is absent; vicarius gains an "is active" check for pons. Open: the adapter adds custom ids only through Claude settings `availableModels` + `modelOverrides` (an allowlist read from `~/.claude` or `CLAUDE_CONFIG_DIR`), which would also restrict terminal `claude` or move the login. Spike again on adapter >= 0.106 before planning. | adapter `session-model.js:272-326`, `acp-agent.js:5448-5493` | M |
 
 ## Order
 
@@ -135,6 +137,8 @@ Rules for every agent:
 | 4e | worker | `acus-cli/src/cmd_ctx/**` | M6 | 2a | New per-session state, written after the command. |
 | 5a | worker | vicarius refresh, acus SessionStart, census statusline | X2, X4, X8, K19 | 1c, 2a-2d | Writers and the statusline reader of the bulletin. |
 | 5b | worker | doctors | X6 | 5a | Neighbours group reads the bulletins. |
+| 5c | worker | `pons/src/doctor/**` | X9 | — | Adapter and bundled CLI staleness checks. |
+| 5d | spike, then plan | pons, vicarius | X10 | 5b, 5c | Interop: off when vicarius is absent; doctor `interop` group shows it. |
 | 6 | test-runner, reviewer, benches | workspace | — | all | Full check, review against this plan, benches for T1-T5 and 4b, skill evals where SKILL.md changed. |
 
 Deferred: M8 (needs better hand-back data), D3/D4 if answered no, D5 (own step with security
