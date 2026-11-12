@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus run`: runs several acus commands from stdin, one per line or as a JSON array.
 
-use crate::hinted;
 use crate::out::{Out, capture, clip, fit_line};
 use crate::{Cli, execute};
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::hint::hinted;
 use clap::Parser;
 use std::io::{Read, Write};
 

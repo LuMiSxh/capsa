@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus outline`: the symbols of files and directories, nested and filtered by kind.
 
-use crate::hinted;
 use crate::out::{Budget, Out, clip};
 use crate::source::warn_missing_roots;
 use acus_syntax::{KINDS, Lang, Outline, outline};
@@ -9,6 +8,7 @@ use acus_walk::{WalkOpts, display_path, walk};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::hint::hinted;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 

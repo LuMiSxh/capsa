@@ -8,11 +8,11 @@ mod print;
 mod refs;
 
 use crate::config::Config;
-use crate::hinted;
 use crate::out::{Budget, Out};
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::hint::hinted;
 use capsa_core::render::{Tone, paint};
 use narrow::narrow;
 use noise::{clean, quiet, save_log};

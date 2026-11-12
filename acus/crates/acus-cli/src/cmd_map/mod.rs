@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus map`: the repository tree with line counts and top-level symbols, within a budget.
 
-use crate::hinted;
+use capsa_core::hint::hinted;
 mod render;
 
 use crate::out::{Budget, clip};

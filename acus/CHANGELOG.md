@@ -7,6 +7,11 @@
 - `acus self doctor` reports `guard log file`. A guard log that exists but cannot be opened for
   appending, such as one created by `sudo`, fails with a hint, instead of every decision being
   dropped unseen.
+- `acus self setup` moves a guard log that older releases left beside the config file, with its
+  `.old` copy, into the state directory. If the state directory already has a guard log, setup
+  merges the old lines in front of it instead, oldest first, and leaves the state `.old` copy as
+  it is. `--dry-run` only reports the move. `acus self doctor` warns about such a leftover, even
+  when the state log exists, and names `acus self setup` as the fix.
 
 ### Changed
 
@@ -16,6 +21,20 @@
   removes the `.lock` files of idle sessions and leftover `.brk` files of older versions.
   Benchmark: 1000 `hints::show` calls with `hint_every = 2` (`cargo test --release`, best of 7)
   take 248 ms before and 148 ms after.
+- The guard log lives in the state directory: `$XDG_STATE_HOME/acus/guard.jsonl`, by default
+  `~/.local/state/acus/guard.jsonl`, or `%LOCALAPPDATA%\acus\state\guard.jsonl` on Windows. It was
+  next to the config file. The guard hints stay next to the config file.
+- The config file is read through `capsa_core::config`. A config that does not parse reports the
+  line and column that `capsa-core` names, and the guard's config note carries that text instead of
+  the TOML snippet. The hint is unchanged. Benchmark: `acus hook` on a PreToolUse Bash call, release
+  build, `hyperfine -N -w 5 -r 50`: p50 2.07 ms before and 2.06 ms after, p95 2.74 ms and 2.49 ms,
+  median 23.38 M instructions both.
+- `acus self doctor` shows the age of the last guard entry in the units `acus log` uses, such as
+  `5m ago`, `2h ago` or `3d ago`. It showed `5 min`, `2 h` and `3 d`.
+- `acus self update` fails when adding the hooks of the new release fails, as it already did when
+  the skill reinstall failed. Before, the update reported success with the hooks missing.
+- In a build without the `cmd-update` feature, `acus self update` and `acus self uninstall` both
+  report that acus was built without `cmd-update`.
 
 ### Fixed
 

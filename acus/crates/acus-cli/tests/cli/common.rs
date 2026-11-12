@@ -10,10 +10,13 @@ pub fn snapshot_settings() -> insta::Settings {
     settings
 }
 
-/// The binary with any user config hidden.
+/// The binary with any user config hidden and the guard log kept out of the user's state directory.
 pub fn bin() -> Command {
+    let state = concat!(env!("CARGO_TARGET_TMPDIR"), "/state");
     let mut c = Command::new(env!("CARGO_BIN_EXE_acus"));
     c.env("ACUS_CONFIG", "/nonexistent/acus.toml")
+        .env("XDG_STATE_HOME", state)
+        .env("LOCALAPPDATA", state)
         .env_remove("ACUS_DISABLE");
     c
 }

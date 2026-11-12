@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Owns the throttling of the pure hints (`Verdict::Hint`), which would repeat on every call of a
-//! rule. The per-session counts live in the state files of `guard-hints`, next to guard.jsonl.
+//! rule. The per-session counts live in the state files of `guard-hints`, in `GuardConfig`'s
+//! `state_dir`.
 
 use crate::GuardConfig;
 use capsa_core::lock::{self, Lock};

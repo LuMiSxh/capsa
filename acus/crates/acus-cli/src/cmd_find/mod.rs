@@ -6,7 +6,6 @@ mod pattern;
 mod print;
 
 use crate::globs::{add_type_globs, searched_globs};
-use crate::hinted;
 use crate::out::{Budget, CUT, Out};
 use crate::source::{address, locate};
 use acus_search::{FileHits, FindOpts, Hit, attach_outlines};
@@ -15,6 +14,7 @@ use acus_walk::WalkOpts;
 use anyhow::{Result, anyhow};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::hint::hinted;
 use print::{print_blocks, print_json, print_lines, print_only};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

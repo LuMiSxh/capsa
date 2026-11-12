@@ -6,16 +6,15 @@ use crate::cmd_hook;
 use crate::cmd_setup::HOOKS;
 use crate::cmd_skill::SKILL_DEF;
 use crate::config::{self, Config};
+use crate::guard_log;
 use anyhow::{Context, Result};
+use capsa_core::doctor::{check, dir_check, log_checks, path_check};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hooks::{Agent, HookFile, HookSpec, HookState};
 use capsa_core::render::{Check, Doctor, Group, Status, emit};
 use capsa_core::skill::{self, SkillState, Target};
-use serde_json::Value;
-use std::borrow::Cow;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Tools that must be matched by the PreToolUse guard hook.
 const GUARDED: [&str; 5] = ["Bash", "Read", "Grep", "Glob", "PowerShell"];
@@ -37,26 +36,6 @@ pub fn run(format: Format) -> Result<Outcome> {
     )
 }
 
-fn check(
-    name: &'static str,
-    status: Status,
-    detail: impl Into<String>,
-    hint: Option<&str>,
-) -> Check {
-    Check {
-        name: Cow::Borrowed(name),
-        status,
-        detail: detail.into(),
-        hint: hint.map(str::to_owned),
-    }
-}
-
-/// The same file, resolved through symlinks where it can be.
-fn same_file(a: &Path, b: &Path) -> bool {
-    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_owned());
-    canon(a) == canon(b)
-}
-
 fn install_group() -> Group {
     let mut checks = vec![check(
         "version",
@@ -74,26 +53,11 @@ fn install_group() -> Group {
             None,
         )),
     }
-    match (capsa_core::which::find("acus"), &exe) {
-        (Some(on_path), Some(exe)) if !same_file(&on_path, exe) => checks.push(check(
-            "PATH",
-            Status::Warn,
-            format!("acus on PATH is {}", on_path.display()),
-            Some("the hooks run the acus on PATH; remove the other copy or update it"),
-        )),
-        (Some(on_path), _) => checks.push(check(
-            "PATH",
-            Status::Ok,
-            on_path.display().to_string(),
-            None,
-        )),
-        (None, _) => checks.push(check(
-            "PATH",
-            Status::Warn,
-            "acus is not on PATH",
-            Some("the hooks run bare `acus`; add the directory of this binary to PATH"),
-        )),
-    }
+    checks.push(path_check(
+        "acus",
+        capsa_core::which::find("acus").as_deref(),
+        exe.as_deref(),
+    ));
     Group {
         name: "install",
         checks,
@@ -248,122 +212,40 @@ fn covers(matcher: &str, tool: &str) -> bool {
 }
 
 fn guard_group(cfg: &Config) -> Group {
+    const DIR_HINT: &str = "make the directory writable, or point ACUS_CONFIG at another directory";
     let guard = cmd_hook::guard_config(cfg);
     let log_dir = guard
         .log_path
         .parent()
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    let mut checks = vec![dir_check("guard log dir", &log_dir)];
-    checks.push(log_file_check(&guard.log_path));
-    checks.push(log_size_check(&guard.log_path));
-    checks.push(log_age_check(&guard.log_path));
-    checks.push(dir_check("guard hints dir", &guard.state_dir));
+    let mut checks = vec![dir_check("guard log dir", &log_dir, DIR_HINT)];
+    checks.extend(log_checks(
+        "guard",
+        &guard.log_path,
+        acus_guard::log::MAX_BYTES,
+    ));
+    checks.extend(leftover_check(&cfg.path));
+    checks.push(dir_check("guard hints dir", &guard.state_dir, DIR_HINT));
     Group {
         name: "guard",
         checks,
     }
 }
 
-/// Whether `dir` takes a file: an existing directory is probed, a missing one is created on
-/// first use and so is not an error.
-fn dir_check(name: &'static str, dir: &Path) -> Check {
-    if !dir.is_dir() {
-        return check(
-            name,
-            Status::Ok,
-            format!("{} not created yet", dir.display()),
-            None,
-        );
-    }
-    match writable(dir) {
-        Ok(()) => check(
-            name,
-            Status::Ok,
-            format!("{} writable", dir.display()),
-            None,
-        ),
-        Err(e) => check(
-            name,
-            Status::Fail,
-            format!("{} not writable: {e}", dir.display()),
-            Some("make the directory writable, or point ACUS_CONFIG at another directory"),
-        ),
-    }
-}
-
-fn writable(dir: &Path) -> std::io::Result<()> {
-    let probe = dir.join(format!(".acus-doctor-{}", std::process::id()));
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)?;
-    std::fs::remove_file(&probe)
-}
-
-/// Opens an existing guard log for append without creating it, so a log that cannot take a
-/// decision is reported instead of dropping decisions unseen.
-fn log_file_check(log: &Path) -> Check {
-    match std::fs::OpenOptions::new().append(true).open(log) {
-        Ok(_) => check("guard log file", Status::Ok, "writable", None),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            check("guard log file", Status::Ok, "no log yet", None)
-        }
-        Err(e) => check(
-            "guard log file",
-            Status::Fail,
-            format!("{} not writable: {e}", log.display()),
-            Some("make the log writable, or delete it so the next decision creates a new one"),
-        ),
-    }
-}
-
-fn log_size_check(log: &Path) -> Check {
-    match std::fs::metadata(log) {
-        Ok(meta) => {
-            let status = if meta.len() > acus_guard::log::MAX_BYTES {
-                Status::Warn
-            } else {
-                Status::Ok
-            };
-            check(
-                "guard log size",
-                status,
-                format!("{} KiB", meta.len() / 1024),
-                (status == Status::Warn)
-                    .then_some("the log should rotate at 4 MiB; check the guard runs"),
-            )
-        }
-        Err(_) => check("guard log size", Status::Ok, "no log yet", None),
-    }
-}
-
-fn log_age_check(log: &Path) -> Check {
-    let last = std::fs::read_to_string(log).ok().and_then(|text| {
-        let line = text.lines().rev().find(|l| !l.trim().is_empty())?;
-        let entry: Value = serde_json::from_str(line).ok()?;
-        entry["ts"].as_u64()
-    });
-    match last {
-        Some(ts) => {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs());
-            check(
-                "last guard entry",
-                Status::Ok,
-                format!("{} ago", ago(now.saturating_sub(ts))),
-                None,
-            )
-        }
-        None => check("last guard entry", Status::Ok, "no entries yet", None),
-    }
-}
-
-/// A coarse age: minutes, hours or days.
-fn ago(secs: u64) -> String {
-    match secs {
-        0..3600 => format!("{} min", secs / 60),
-        3600..86_400 => format!("{} h", secs / 3600),
-        _ => format!("{} d", secs / 86_400),
-    }
+/// Warns about guard log files that older releases left beside the config file. `self setup`
+/// moves or merges them.
+fn leftover_check(config: &Path) -> Option<Check> {
+    let files = guard_log::leftovers(config);
+    (!files.is_empty()).then(|| {
+        let names: Vec<_> = files
+            .iter()
+            .map(|file| file.display().to_string())
+            .collect();
+        check(
+            "guard log location",
+            Status::Warn,
+            format!("{} left from before the move", names.join(", ")),
+            Some("run acus self setup"),
+        )
+    })
 }

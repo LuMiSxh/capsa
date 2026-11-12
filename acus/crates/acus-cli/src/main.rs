@@ -29,12 +29,14 @@ mod config;
 mod follow;
 mod git;
 mod globs;
+mod guard_log;
 mod source;
 
 use anyhow::{Result, bail};
 use capsa_core::cli::{App, FormatArgs};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::hint::hinted;
 use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 
@@ -139,11 +141,6 @@ impl App for Cli {
 }
 
 /// Runs one parsed command line in `format`; `run` calls this for every batch entry.
-/// Builds the error for a failure the user can fix: `message` says what failed, `hint` the fix.
-fn hinted(message: impl Into<String>, hint: impl Into<String>) -> anyhow::Error {
-    capsa_core::hint::Hinted::new(message, hint).into()
-}
-
 pub fn execute(cli: Cli, format: Format, nested: bool) -> Result<Outcome> {
     // A broken config file must not stop the hook, which answers every tool call: it runs with the
     // defaults and reports the problem to the agent.

@@ -2,13 +2,13 @@
 //! `acus follow`: the callers or callees of a symbol, as a tree of call edges.
 
 use crate::follow::{CALLABLE, Edge, Node, addr_of, callees, callers, container_of};
-use crate::hinted;
 use crate::out::{Budget, Out, clip};
 use acus_syntax::calls;
 use acus_syntax::{Address, Lang, Resolve, Target, resolve};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::hint::hinted;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;

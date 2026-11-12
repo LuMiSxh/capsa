@@ -4,6 +4,7 @@
 //! does nothing.
 
 use crate::config::Config;
+use crate::guard_log;
 use acus_guard::{BashDecision, GuardConfig, Rewrite, Scope, Verdict};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
@@ -23,12 +24,13 @@ pub struct Args {
     repeat: usize,
 }
 
-/// The guard's files, next to the config so they follow `ACUS_CONFIG`.
+/// The guard's files: the hints next to the config, so they follow `ACUS_CONFIG`, and the log in
+/// the state directory.
 pub fn guard_config(cfg: &Config) -> GuardConfig {
     GuardConfig {
         hint_every: cfg.guard.hint_every,
         state_dir: cfg.path.with_file_name("guard-hints"),
-        log_path: cfg.path.with_file_name("guard.jsonl"),
+        log_path: guard_log::path(&cfg.path),
     }
 }
 

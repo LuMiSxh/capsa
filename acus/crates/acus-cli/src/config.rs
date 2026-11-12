@@ -2,8 +2,9 @@
 //! Runtime configuration: `config.toml` in the platform config dir (or `$ACUS_CONFIG`),
 //! overridden by `ACUS_*` environment variables.
 
-use crate::hinted;
 use anyhow::Result;
+use capsa_core::config::{ConfigError, ConfigFile};
+use capsa_core::hint::hinted;
 use serde::Deserialize;
 use std::env::var;
 use std::path::{Path, PathBuf};
@@ -59,15 +60,13 @@ impl Default for Guard {
 }
 
 /// Returns the config file: ACUS_CONFIG when set, else config.toml in the platform config directory.
-pub fn config_path() -> PathBuf {
-    var("ACUS_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| capsa_core::paths::config_dir("acus").join("config.toml"))
+pub fn config_file() -> ConfigFile {
+    ConfigFile::locate("acus", "ACUS_CONFIG")
 }
 
 /// Loads the configuration; the ACUS_* variables override the file.
 pub fn load() -> Result<Config> {
-    let mut c = read(&config_path())?;
+    let mut c = read(&config_file())?;
     overrides(&mut c);
     Ok(c)
 }
@@ -75,12 +74,12 @@ pub fn load() -> Result<Config> {
 /// Loads the configuration like load, but a file that does not load gives the defaults at its
 /// path and the problem as text, so guard can still answer.
 pub fn load_or_default() -> (Config, Option<String>) {
-    let path = config_path();
-    let (mut c, problem) = match read(&path) {
+    let file = config_file();
+    let (mut c, problem) = match read(&file) {
         Ok(c) => (c, None),
         Err(e) => (
             Config {
-                path,
+                path: file.path().to_path_buf(),
                 ..Config::default()
             },
             Some(e.to_string()),
@@ -90,34 +89,26 @@ pub fn load_or_default() -> (Config, Option<String>) {
     (c, problem)
 }
 
-/// Reads the config file at path; a missing file counts as the defaults.
-fn read(path: &Path) -> Result<Config> {
-    let mut c: Config = match std::fs::read_to_string(path) {
-        Ok(s) => toml::from_str(&s).map_err(|e| invalid(path, &e))?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
-        Err(e) => {
-            return Err(hinted(
-                format!("cannot read {}: {e}", path.display()),
-                format!(
-                    "make {} readable, or point ACUS_CONFIG at another file",
-                    path.display()
-                ),
-            ));
-        }
-    };
-    c.path = path.to_path_buf();
+/// Reads the config file; a missing file counts as the defaults.
+fn read(file: &ConfigFile) -> Result<Config> {
+    let mut c: Config = file.load().map_err(|e| read_error(file.path(), &e))?;
+    c.path = file.path().to_path_buf();
     Ok(c)
 }
 
-/// The error of a config file that does not parse, with the file as its fix.
-fn invalid(path: &Path, e: &toml::de::Error) -> anyhow::Error {
-    hinted(
-        format!("invalid config {}: {e}", path.display()),
-        format!(
+/// The error of a config file that does not load, with the fix the file needs.
+fn read_error(path: &Path, e: &ConfigError) -> anyhow::Error {
+    let hint = match e {
+        ConfigError::Read { .. } => format!(
+            "make {} readable, or point ACUS_CONFIG at another file",
+            path.display()
+        ),
+        _ => format!(
             "fix {} (the message gives the line) or delete it",
             path.display()
         ),
-    )
+    };
+    hinted(e.to_string(), hint)
 }
 
 /// Applies ACUS_DISABLE, a comma-separated list of commands to refuse.

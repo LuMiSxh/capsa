@@ -4,13 +4,13 @@
 mod formatter;
 
 use crate::config::Config;
-use crate::hinted;
 use crate::out::{Out, more_lines};
 use acus_edit::{Change, FileText, Op, Region};
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::ResultExt;
+use capsa_core::hint::hinted;
 use formatter::{Tools, command_for, pipe};
 use similar::{Algorithm, DiffOp, TextDiff, capture_diff_slices};
 use std::io::Read;

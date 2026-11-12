@@ -446,7 +446,7 @@ fn hook_replies_keep_their_wire_bytes() {
     let bad = dir.path().join("bad.toml");
     std::fs::write(&bad, "[guard]\nhint_every = \"ten\"\n").unwrap();
     let note = run_hook(&bad, &["hook"], bash_call("c1", "ls"));
-    let want = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"acus config error: invalid config PATH: TOML parse error at line 2, column 14 | 2 | hint_every = \"ten\" | ^^^^^ invalid type: string \"ten\", expected usize; guard runs with defaults; fix PATH"}}"#;
+    let want = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"acus config error: invalid config PATH: line 2, column 14: invalid type: string \"ten\", expected usize; guard runs with defaults; fix PATH"}}"#;
     assert_eq!(
         note,
         format!("{}\n", want.replace("PATH", &bad.display().to_string()))

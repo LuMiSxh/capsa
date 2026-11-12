@@ -119,16 +119,7 @@ fn now() -> i64 {
 
 /// A compact age for a commit timestamp: `3d ago`, `2h ago`, `just now`.
 fn age(now: i64, at: i64) -> String {
-    let secs = now.saturating_sub(at).max(0) as u64;
-    let (n, unit) = match secs {
-        0..=59 => return "just now".to_owned(),
-        60..=3599 => (secs / 60, "m"),
-        3600..=86_399 => (secs / 3600, "h"),
-        86_400..=2_591_999 => (secs / 86_400, "d"),
-        2_592_000..=31_535_999 => (secs / 2_592_000, "mo"),
-        _ => (secs / 31_536_000, "y"),
-    };
-    format!("{n}{unit} ago")
+    capsa_core::format::ago(now.saturating_sub(at).max(0) as u64)
 }
 
 /// The human view: a titled table of commits with aligned columns, then the follow-up commands.

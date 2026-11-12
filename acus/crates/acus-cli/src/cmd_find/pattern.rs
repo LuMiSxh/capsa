@@ -2,8 +2,8 @@
 //! The patterns of `acus find`: the `-e` values or the first positional, with grep's `\|`.
 
 use super::Args;
-use crate::hinted;
 use anyhow::Result;
+use capsa_core::hint::hinted;
 
 /// The patterns: each `-e`, else the first positional; reads `\|` as alternation unless `-E`,
 /// `-P` or `-F` is given.

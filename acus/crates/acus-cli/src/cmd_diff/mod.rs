@@ -9,11 +9,11 @@ mod render;
 mod status;
 
 use crate::git::git;
-use crate::hinted;
 use crate::out::Out;
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::hint::hinted;
 use capsa_core::render::{Tone, paint};
 use raw::parse;
 use status::Status;
