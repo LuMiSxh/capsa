@@ -4,6 +4,17 @@
 
 ### Added
 
+- `acus` publishes the guard blocks of each session in the capsa bulletin, `acus.json` with
+  `guard_blocks`: the count per session id for the 16 latest sessions, current for a day. A block
+  adds one to its session's count and rewrites the bulletin after the reply is printed. A
+  SessionStart registers its session with its count, or 0; a compaction or `/clear` keeps the
+  count. An allowed call writes nothing. The per-session state is the `blocks` line of the hint
+  state file, `guard-hints/SESSION`. Benchmark (`hyperfine -N -w 5 -r 50`, release, p50 / p95): a
+  block decision 2.16 / 2.42 ms before and 2.34 / 2.75 ms after (a second run 2.29 / 2.54 ms); an
+  allowed call 2.06 / 2.27 ms before and 1.97 / 2.14 ms after, unchanged. The bulletin is written
+  without fsync: `capsa_core::bulletin` in `core` now writes through `fs::write_cache`, since a
+  lost write only reads as unknown. With the fsyncs of `write_atomic` a block decision took 10.80 /
+  12.07 ms. The bulletin lock costs nothing measurable (2.35 / 2.92 ms p50 / p95 without it).
 - `acus ctx` leads its output with `3rd identical failure of this command in this session, same
   key line: …` when the same command fails in the same directory with the same error lines three
   times in a row. A session is identified by `CLAUDE_CODE_SESSION_ID`, which Claude Code sets for

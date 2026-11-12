@@ -18,10 +18,13 @@ const DAY: Duration = Duration::from_secs(86_400);
 const MARKER: &str = ".pruned";
 /// Sets the longest `show` waits for the lock of a session.
 const WAIT: Duration = Duration::from_millis(50);
+/// Names the line of a session's state file that holds its block count and the unix time of its
+/// last block or start. No rule is named `blocks`, so the line is never taken for a rule's counts.
+pub(crate) const BLOCKS: &str = "blocks";
 
 /// Takes the lock of a session, or `None` when another process holds it for all of `WAIT` or the
 /// lock file cannot be opened.
-fn acquire(state: &Path) -> Option<Lock> {
+pub(crate) fn acquire(state: &Path) -> Option<Lock> {
     let path = state.with_extension("lock");
     std::fs::create_dir_all(path.parent()?).ok()?;
     lock::exclusive(&path, WAIT).ok().flatten()
@@ -69,18 +72,33 @@ pub fn show(cfg: &GuardConfig, session: &str, rule: &str) -> bool {
     show
 }
 
-/// Forgets the counts of `session`, so its hints show again.
+/// Forgets the hint counts of `session`, so its hints show again. The block count stays, since a
+/// compaction keeps the session.
 pub fn reset(cfg: &GuardConfig, session: &str) {
-    if let Some(path) = state_file(cfg, session) {
-        // Removed even when the lock times out: a reset must not leave old counts.
-        let _lock = acquire(&path);
-        let _ = std::fs::remove_file(path);
-    }
+    edit_session(cfg, session, |counts| {
+        counts.retain(|rule, _| rule == BLOCKS);
+    });
+}
+
+/// Runs `edit` on the counts of `session` under its lock, then writes them back. A lock that times
+/// out does not stop the write, so no count is skipped. Returns `None` when the session has no
+/// state file or the file cannot be read; an unreadable file is left as it is.
+pub(crate) fn edit_session<T>(
+    cfg: &GuardConfig,
+    session: &str,
+    edit: impl FnOnce(&mut BTreeMap<String, Count>) -> T,
+) -> Option<T> {
+    let path = state_file(cfg, session)?;
+    let _lock = acquire(&path);
+    let mut counts = read(&path, 1).ok()?;
+    let out = edit(&mut counts);
+    let _ = write(&path, &counts);
+    Some(out)
 }
 
 /// Returns the file of a session. Only letters, digits, `-` and `_` name one, so an id cannot
 /// leave the directory.
-fn state_file(cfg: &GuardConfig, session: &str) -> Option<PathBuf> {
+pub(crate) fn state_file(cfg: &GuardConfig, session: &str) -> Option<PathBuf> {
     let plain = !session.is_empty()
         && session
             .bytes()
@@ -88,16 +106,17 @@ fn state_file(cfg: &GuardConfig, session: &str) -> Option<PathBuf> {
     plain.then(|| cfg.state_dir.join(session))
 }
 
-/// The calls of one rule in a session, and the number of the last one that showed.
+/// The calls of one rule in a session, and the number of the last one that showed. For `BLOCKS`,
+/// the blocks and the time of the last one.
 #[derive(Default)]
-struct Count {
-    n: u64,
-    last: u64,
+pub(crate) struct Count {
+    pub(crate) n: u64,
+    pub(crate) last: u64,
 }
 
 /// Reads the counts of a session. A line from an older version has no `last`; it gets the call
 /// that showed under the old `n % every == 1` rule, so the next hint falls where that rule put it.
-fn read(path: &Path, every: u64) -> std::io::Result<BTreeMap<String, Count>> {
+pub(crate) fn read(path: &Path, every: u64) -> std::io::Result<BTreeMap<String, Count>> {
     let every = every.max(1);
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(text
@@ -120,7 +139,7 @@ fn read(path: &Path, every: u64) -> std::io::Result<BTreeMap<String, Count>> {
 
 /// Writes a temporary file and renames it over `path`, so a process crash leaves the old or the
 /// new state. There is no fsync: a power loss can lose the count, which only shows a hint again.
-fn write(path: &Path, counts: &BTreeMap<String, Count>) -> std::io::Result<()> {
+pub(crate) fn write(path: &Path, counts: &BTreeMap<String, Count>) -> std::io::Result<()> {
     std::fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))?;
     let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
     let mut f = std::fs::File::create(&tmp)?;
@@ -261,6 +280,27 @@ mod tests {
             !old.exists(),
             "a marker older than a day makes the pass due"
         );
+    }
+
+    #[test]
+    fn reset_keeps_the_block_count_and_drops_the_hint_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = GuardConfig {
+            hint_every: 10,
+            hint_min: 1,
+            hint_max: 40,
+            state_dir: dir.path().to_owned(),
+            log_path: dir.path().join("guard.jsonl"),
+        };
+        edit_session(&cfg, "s", |counts| {
+            counts.entry(BLOCKS.to_owned()).or_default().n = 3;
+            counts.entry("read-cat".to_owned()).or_default().n = 4;
+        })
+        .unwrap();
+        reset(&cfg, "s");
+        let counts = read(&dir.path().join("s"), 1).unwrap();
+        assert_eq!(counts.get(BLOCKS).map(|c| c.n), Some(3));
+        assert!(!counts.contains_key("read-cat"));
     }
 
     #[test]

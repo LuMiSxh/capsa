@@ -11,6 +11,7 @@
 
 mod acus_pipe;
 mod ast;
+pub mod blocks;
 mod build;
 mod convert;
 mod file_write;

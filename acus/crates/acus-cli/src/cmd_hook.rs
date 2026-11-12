@@ -53,14 +53,14 @@ pub fn run(a: &Args, cfg: &Config, config_problem: Option<&str>) -> Result<Outco
 }
 
 /// Prints the core skill for a SessionStart, forgetting the hint counts after a compaction or
-/// `/clear`.
+/// `/clear`, and registers the session in the bulletin with its block count.
 fn session_start(v: &Value, cfg: &Config) -> Result<Outcome> {
+    let gcfg = guard_config(cfg);
+    let session = v["session_id"].as_str().unwrap_or_default();
     if matches!(v["source"].as_str(), Some("compact" | "clear")) {
-        acus_guard::hints::reset(
-            &guard_config(cfg),
-            v["session_id"].as_str().unwrap_or_default(),
-        );
+        acus_guard::hints::reset(&gcfg, session);
     }
+    acus_guard::blocks::register(&gcfg, session);
     outprint!("{}", crate::cmd_skill::CORE);
     Ok(Outcome::Found)
 }
@@ -112,7 +112,9 @@ fn answer(mut v: Value, cfg: &Config, config_problem: Option<&str>) -> Result<Ou
     let gcfg = guard_config(cfg);
     let session = v["session_id"].as_str().unwrap_or_default();
     let note = config_problem.and_then(|p| config_note(&gcfg, session, p, &cfg.path));
-    let reply = match decide(&v, scope.as_ref(), cwd) {
+    let decision = decide(&v, scope.as_ref(), cwd);
+    let blocked = matches!(decision, Decision::Verdict(Verdict::Deny(..)));
+    let reply = match decision {
         Decision::Rewrite(rw) => {
             log_decision(&gcfg, &v, &Verdict::Rewrite(rw.rule));
             let input = v.get_mut("tool_input").map(Value::take).unwrap_or_default();
@@ -128,6 +130,10 @@ fn answer(mut v: Value, cfg: &Config, config_problem: Option<&str>) -> Result<Ou
     };
     if let Some(reply) = reply {
         print_reply(&reply)?;
+    }
+    // Counted after the reply is printed, so the agent's decision never waits for the bulletin.
+    if blocked {
+        acus_guard::blocks::record(&gcfg, v["session_id"].as_str().unwrap_or_default());
     }
     Ok(Outcome::Found)
 }
