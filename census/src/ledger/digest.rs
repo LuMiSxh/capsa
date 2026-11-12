@@ -2,7 +2,8 @@
 //! Keeps `digest.json`, the list-price USD of each raw request and hourly aggregate. The limits
 //! read it instead of the ledger files. The updater keeps it in step with `rows.jsonl` and
 //! `hourly.jsonl`. A digest that records other file sizes, another census version or another price
-//! list is stale.
+//! list is stale. The rows file is identified by its length and a hash of its last bytes, so a
+//! file that was cut or replaced is noticed even when it has the same length.
 
 use super::error::LedgerError;
 use super::model::{Hourly, Row};
@@ -11,13 +12,19 @@ use crate::usage::Tokens;
 use crate::usage::prices;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type Result<T> = std::result::Result<T, LedgerError>;
 
 /// Layout of `digest.json`. Bump it when a digest with the same fields would mean something else.
-const FORMAT: u32 = 2;
+const FORMAT: u32 = 3;
+
+/// Bytes at the end of `rows.jsonl` that the digest hashes. More than one row, so a replaced file
+/// with the same length still differs.
+const TAIL_BYTES: u64 = 256;
 
 /// The list-price USD of each raw request and each hourly aggregate, in file order.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -57,6 +64,8 @@ pub(super) struct Digest {
     /// Unix seconds of the last write.
     updated: u64,
     rows_len: u64,
+    /// FNV-1a hash of the last `TAIL_BYTES` bytes of `rows.jsonl` at `rows_len`.
+    rows_tail: u64,
     hourly_len: u64,
     /// Message id, time and USD of each raw row, the USD absent for a request billed to another
     /// provider. The ids let the updater skip requests it has read.
@@ -72,23 +81,63 @@ impl Digest {
         self.raw.iter().map(|(id, _, _)| id.clone()).collect()
     }
 
-    pub(super) fn into_priced(self) -> Priced {
-        Priced {
-            raw: self
-                .raw
-                .into_iter()
-                .filter_map(|(_, t, usd)| Some((t, usd?)))
-                .collect(),
-            hourly: self.hourly,
+    fn rows_key(&self) -> RowsKey {
+        RowsKey {
+            len: self.rows_len,
+            tail: self.rows_tail,
         }
     }
 
-    /// Adds the rows the updater appended to `rows.jsonl`, which now has `rows_len` bytes.
-    pub(super) fn append(&mut self, rows: &[Row], rows_len: u64, now: u64) {
+    pub(super) fn to_priced(&self) -> Priced {
+        Priced {
+            raw: self
+                .raw
+                .iter()
+                .filter_map(|(_, t, usd)| Some((*t, (*usd)?)))
+                .collect(),
+            hourly: self.hourly.clone(),
+        }
+    }
+
+    /// Adds the rows the updater appended to `rows.jsonl`, which now ends in `key`.
+    pub(super) fn append(&mut self, rows: &[Row], key: RowsKey, now: u64) {
         self.raw
             .extend(rows.iter().map(|r| (r.id.clone(), r.t, limit_usd(r))));
-        self.rows_len = rows_len;
+        self.rows_len = key.len;
+        self.rows_tail = key.tail;
         self.updated = now;
+    }
+}
+
+/// Identifies one state of `rows.jsonl`: its length and the hash of its last bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct RowsKey {
+    len: u64,
+    tail: u64,
+}
+
+impl RowsKey {
+    /// Reads the key of `path`; a missing file has length 0. The length is read first and the hash
+    /// covers only bytes below it, so a file that grows meanwhile gives an older, consistent key.
+    pub(super) fn of(path: &Path) -> Self {
+        let empty = RowsKey { len: 0, tail: 0 };
+        let Ok(mut file) = File::open(path) else {
+            return empty;
+        };
+        let Ok(len) = file.metadata().map(|m| m.len()) else {
+            return empty;
+        };
+        let start = len.saturating_sub(TAIL_BYTES);
+        let mut tail = Vec::new();
+        if file.seek(SeekFrom::Start(start)).is_err()
+            || file.take(len - start).read_to_end(&mut tail).is_err()
+        {
+            return empty;
+        }
+        let hash = tail.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
+        });
+        RowsKey { len, tail: hash }
     }
 }
 
@@ -109,23 +158,24 @@ pub(super) fn read(layout: &Layout) -> Option<Digest> {
     let digest: Digest = serde_json::from_slice(&std::fs::read(&layout.digest).ok()?).ok()?;
     let current = digest.format == FORMAT
         && digest.census == env!("CARGO_PKG_VERSION")
-        && digest.rows_len == file_len(&layout.rows)
+        && digest.rows_key() == RowsKey::of(&layout.rows)
         && digest.hourly_len == file_len(&layout.hourly)
         && digest.prices == prices::fetched_at();
     current.then_some(digest)
 }
 
-/// Builds the digest from the ledger files. The sizes are read first, so a file that grows
+/// Builds the digest from the ledger files. The keys are read first, so a file that grows
 /// meanwhile makes the digest stale rather than wrong.
 pub(super) fn build(layout: &Layout, now: u64) -> Result<Digest> {
-    let (rows_len, hourly_len) = (file_len(&layout.rows), file_len(&layout.hourly));
+    let (rows_key, hourly_len) = (RowsKey::of(&layout.rows), file_len(&layout.hourly));
     let (folded, hourly) = state::load_hourly(&layout.hourly)?;
     let rows = state::load_rows(&layout.rows, folded)?;
     Ok(Digest {
         format: FORMAT,
         census: env!("CARGO_PKG_VERSION").to_owned(),
         updated: now,
-        rows_len,
+        rows_len: rows_key.len,
+        rows_tail: rows_key.tail,
         hourly_len,
         raw: rows
             .into_iter()
@@ -139,9 +189,10 @@ pub(super) fn build(layout: &Layout, now: u64) -> Result<Digest> {
     })
 }
 
-/// Replaces `digest.json` with `digest`.
+/// Replaces `digest.json` with `digest`. The file is a cache, so it is renamed into place without
+/// the syncs that make a crash keep it; a torn or missing file is built again.
 pub(super) fn write(layout: &Layout, digest: &Digest) -> Result<()> {
-    state::write_atomic(&layout.digest, &serde_json::to_vec(digest)?)
+    state::write_cache(&layout.digest, &serde_json::to_vec(digest)?)
 }
 
 /// Returns the USD of a request that counts toward the limits, or `None` for any other provider.

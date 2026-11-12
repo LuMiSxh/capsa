@@ -191,3 +191,23 @@ pub(crate) fn list_files(roots: &[PathBuf]) -> Vec<(PathBuf, Metadata)> {
     files.sort_by(|a, b| a.0.cmp(&b.0));
     files
 }
+
+/// Returns `path` with its metadata when it is a regular `*.jsonl` file below one of `roots`, the
+/// same kind of file `list_files` returns, without walking the directories. Paths with `.` or `..`
+/// components are refused, so the file keeps the key it has in `list_files`.
+pub(crate) fn one_file(path: &Path, roots: &[PathBuf]) -> Option<(PathBuf, Metadata)> {
+    let plain = !path.components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::CurDir | std::path::Component::ParentDir
+        )
+    });
+    let named = path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().ends_with(".jsonl"));
+    if !plain || !named || !roots.iter().any(|r| path.starts_with(r)) {
+        return None;
+    }
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    meta.is_file().then(|| (path.to_path_buf(), meta))
+}

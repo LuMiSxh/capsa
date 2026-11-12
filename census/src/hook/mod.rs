@@ -49,7 +49,8 @@ pub(super) struct Budget<'a> {
 /// What a call adds besides the level messages.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Opening {
-    /// The first prompt of a session may add the status line.
+    /// The first prompt of a session may add the status line, unless a warning in the same call
+    /// already says the same facts with the time.
     Prompt,
     /// A session start adds the usage-history hint.
     Session,
@@ -75,19 +76,17 @@ fn announce(
     if opening == Opening::Session {
         messages.extend(levels::usage_hint(&mut shown));
     }
-    if opening == Opening::Prompt {
-        let due = levels::prompt_due(&mut shown, now);
-        if due {
-            messages.extend(levels::status_message(
-                context,
-                limits,
-                budget.map(|b| b.month),
-            ));
-        }
+    let status_due = opening == Opening::Prompt && levels::prompt_due(&mut shown, now);
+    let warnings = levels::decide(context, limits, budget, compacted, now, &mut shown);
+    if status_due && warnings.is_empty() {
+        messages.extend(levels::status_message(
+            now,
+            context,
+            limits,
+            budget.map(|b| b.month),
+        ));
     }
-    messages.extend(levels::decide(
-        context, limits, budget, compacted, now, &mut shown,
-    ));
+    messages.extend(warnings);
     if shown != before {
         state::store(file, &shown)?;
     }

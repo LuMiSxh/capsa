@@ -1,20 +1,27 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The `census usage --handbacks` view: spawns and hand-backs per ISO week.
+//! The `census usage --handbacks` view: spawns and hand-backs per ISO week and per role.
 
 use super::{hand_back_rate, rate, table};
 use capsa_core::render::{Doc, Render};
-use census::usage::HandbackWeek;
-use serde::Serialize;
+use census::usage::{HandbackWeek, RoleHandbacks};
+use serde::{Serialize, Serializer};
 
-/// `census usage --handbacks`: spawns and hand-backs per ISO week, as its JSON. The hand-back count
-/// is a heuristic, and the view says so.
-#[derive(Serialize)]
-#[serde(transparent)]
-pub(crate) struct HandbacksView<'a>(pub &'a [HandbackWeek]);
+/// `census usage --handbacks`: spawns and hand-backs per ISO week and per role. Its JSON is the weeks
+/// alone. The hand-back count is a heuristic, and the view says so.
+pub(crate) struct HandbacksView<'a> {
+    pub weeks: &'a [HandbackWeek],
+    pub roles: &'a [RoleHandbacks],
+}
+
+impl Serialize for HandbacksView<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.weeks.serialize(serializer)
+    }
+}
 
 impl Render for HandbacksView<'_> {
     fn doc(&self, doc: &mut Doc) {
-        let rows = self.0;
+        let rows = self.weeks;
         doc.title("census usage --handbacks");
         doc.line(
             "hand-back heuristic: a senior-worker spawn starting within 30 min after a worker spawn of the same session ended (or started) counts; rate = hand-backs / worker spawns",
@@ -43,6 +50,28 @@ impl Render for HandbacksView<'_> {
             &["week", "workers", "senior-workers", "hand-backs", "rate"],
             "lrrrr",
             body,
+        ));
+        doc.section("by role");
+        doc.line(
+            "a hand-back counts against the role of the worker spawn it followed; minutes run from that spawn's start to the senior-worker spawn's start",
+        );
+        let rows = self
+            .roles
+            .iter()
+            .map(|r| {
+                vec![
+                    r.role.clone(),
+                    r.spawns.to_string(),
+                    r.handbacks.to_string(),
+                    r.median_min
+                        .map_or_else(|| "n/a".to_owned(), |m| format!("{m:.1}")),
+                ]
+            })
+            .collect();
+        doc.table(table(
+            &["role", "spawns", "hand-backs", "median min"],
+            "lrrr",
+            rows,
         ));
     }
 }

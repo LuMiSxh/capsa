@@ -8,12 +8,14 @@ use census::usage::{Cost, HandbackWeek, Report};
 mod agents;
 mod by;
 mod compare;
+mod guard;
 mod handbacks;
 mod tools;
 
 pub(crate) use agents::AgentsView;
 pub(crate) use by::ByView;
 pub(crate) use compare::CompareOut;
+pub(crate) use guard::GuardView;
 pub(crate) use handbacks::HandbacksView;
 pub(crate) use tools::ToolsView;
 

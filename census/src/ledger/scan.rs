@@ -33,7 +33,19 @@ pub(super) fn pending(
     let present: HashSet<String> = files.iter().map(|(p, _)| key(p)).collect();
     let before = index.files.len();
     index.files.retain(|k, _| present.contains(k));
-    let mut changed = index.files.len() != before;
+    let removed = index.files.len() != before;
+    let (todo, changed) = stale(files, index);
+    (todo, changed || removed)
+}
+
+/// Returns the files of `files` whose bytes are not all read, and resets the state of those whose
+/// identity changed or that shrank. The entries of other files stay, so one transcript can be
+/// checked alone between full sweeps.
+pub(super) fn stale(
+    files: Vec<(PathBuf, Metadata)>,
+    index: &mut Index,
+) -> (Vec<(PathBuf, Metadata)>, bool) {
+    let mut changed = false;
     let mut todo = Vec::new();
     for (path, meta) in files {
         let id = file_id(&meta);

@@ -442,6 +442,39 @@ fn handbacks_follow_worker_spawns_within_thirty_minutes() {
 }
 
 #[test]
+fn handback_roles_time_each_worker_spawn_to_its_senior() {
+    let d = tempfile::tempdir().unwrap();
+    let at = |h: u32, m: u32| format!("2026-10-14T{h:02}:{m:02}:00.000Z");
+    write(
+        d.path(),
+        "-x-Proj/s1.jsonl",
+        &[
+            spawn(&at(10, 0), "w1", "worker"),
+            answer(&at(10, 10), "w1"),
+            // 35 minutes after the worker started, 25 after it finished.
+            spawn(&at(10, 35), "h1", "senior-worker"),
+            // Never answered: the worker counts from its start.
+            spawn(&at(13, 0), "w2", "worker"),
+            spawn(&at(13, 29), "h2", "senior-worker"),
+        ],
+    );
+    let r = claude_only(d.path());
+    let worker = r
+        .handback_roles
+        .iter()
+        .find(|x| x.role == "worker")
+        .expect("worker role");
+    assert_eq!((worker.spawns, worker.handbacks), (2, 2));
+    assert!((worker.median_min.unwrap() - 32.0).abs() < 1e-9);
+    let senior = r
+        .handback_roles
+        .iter()
+        .find(|x| x.role == "senior-worker")
+        .expect("senior-worker role");
+    assert_eq!((senior.spawns, senior.handbacks), (2, 0));
+}
+
+#[test]
 fn expired_cache_and_busts_per_role() {
     let d = tempfile::tempdir().unwrap();
     let at = |h: u32, m: u32| format!("2026-10-14T{h:02}:{m:02}:00.000Z");

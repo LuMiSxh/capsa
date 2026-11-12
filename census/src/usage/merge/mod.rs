@@ -253,6 +253,7 @@ impl<'a> Acc<'a> {
         }
         r.agents = agent_stats(self.roles, r.weighted);
         r.handbacks = handback::weeks(&self.spawns);
+        r.handback_roles = handback::roles(&self.spawns);
         r
     }
 }

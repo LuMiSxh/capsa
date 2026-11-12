@@ -6,12 +6,15 @@ use crate::cmd_self::SKILL;
 use crate::out::Out;
 use anyhow::{Context, Result};
 use capsa_core::config::legacy_json;
-use capsa_core::doctor::{check, dir_check, log_checks, ok, path_check};
+use capsa_core::doctor::{
+    check, dir_check, emit_report, log_checks, ok, path_check, repair_hooks, repair_skill,
+};
 use capsa_core::exit::Outcome;
+use capsa_core::hint::ResultExt;
 use capsa_core::hooks::{Agent, HookFile, StatusLineState};
 use capsa_core::log;
-use capsa_core::render::{Check, Doctor, Group, Status, emit};
-use capsa_core::skill::{self, SkillState, Target};
+use capsa_core::render::{Check, Doctor, Group, Status};
+use capsa_core::skill::{self, SkillState, Target, installed_target};
 use census::config::Config;
 use census::hook::{self, ErrorLine};
 use census::usage::{PRICE_LOG, PRICE_LOG_LIMIT};
@@ -19,9 +22,19 @@ use std::path::Path;
 
 use crate::setup::{HOOKS, STATUS_LINE, TOOL};
 
-pub fn run(out: &Out) -> Result<Outcome> {
+#[derive(clap::Args)]
+pub struct Args {
+    /// Repairs what is safe to repair first: updates an outdated skill, and adds census's
+    /// statusLine and hooks where they are missing or outdated. Deletions, config values and a
+    /// statusLine that census does not own keep their hints.
+    #[arg(long)]
+    pub fix: bool,
+}
+
+pub fn run(out: &Out, fix: bool) -> Result<Outcome> {
     let home = std::env::home_dir().context("no home directory")?;
     let settings = Agent::ClaudeCode.path();
+    let fixed = fix.then(|| repair(&home, &settings)).transpose()?;
     let groups = vec![
         install_group(),
         config_group(),
@@ -29,8 +42,9 @@ pub fn run(out: &Out) -> Result<Outcome> {
         hooks_group(&settings),
         state_group(),
     ];
-    emit(
+    emit_report(
         &Doctor::new(TOOL, env!("CARGO_PKG_VERSION"), groups),
+        fixed,
         out.format,
     )
 }
@@ -226,4 +240,38 @@ fn hook_error_check(file: &Path) -> Check {
         ),
         Some("fix the cause; the hook logs its errors to hook.jsonl in the state directory"),
     )
+}
+
+/// Makes the repairs `--fix` names and returns one check per repair made.
+fn repair(home: &Path, settings: &Path) -> Result<Vec<Check>> {
+    let mut fixed = Vec::new();
+    fixed.extend(repair_skill(home, &SKILL, Target::Claude, "claude skill")?);
+    fixed.extend(repair_settings(home, settings)?);
+    Ok(fixed)
+}
+
+/// Adds census's statusLine when it is missing, and its hooks where they are missing or outdated,
+/// to an existing Claude Code setup. A statusLine that census does not own is left alone, and so
+/// is an outdated one, which the report already passes.
+fn repair_settings(home: &Path, settings: &Path) -> Result<Vec<Check>> {
+    let set_up = matches!(
+        installed_target(home, TOOL),
+        Some(Target::Claude | Target::All)
+    );
+    if !set_up || !settings.exists() {
+        return Ok(Vec::new());
+    }
+    let Ok(mut file) = HookFile::open_at(Agent::ClaudeCode, settings) else {
+        return Ok(Vec::new());
+    };
+    let mut checks = Vec::new();
+    if matches!(file.status_line(&STATUS_LINE), StatusLineState::Missing) {
+        file.set_status_line(&STATUS_LINE);
+        checks.push(ok("statusLine", "census statusline"));
+    }
+    checks.extend(repair_hooks(&mut file, &HOOKS));
+    if !checks.is_empty() {
+        file.write().hinted()?;
+    }
+    Ok(checks)
 }

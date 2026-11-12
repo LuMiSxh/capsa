@@ -41,7 +41,7 @@ enum Action {
     /// Shows or sets the limit mode (plan or budget), the monthly budget and the daily limit.
     Config(crate::cmd_config::Args),
     /// Checks the binary, config, skill, hooks, state files and hook log; exits 1 on a failure.
-    Doctor,
+    Doctor(crate::cmd_doctor::Args),
 }
 
 #[cfg(feature = "cmd-update")]
@@ -75,7 +75,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         Action::Update(a) => update(a, out.format),
         Action::Uninstall(a) => uninstall(&a, out.format),
         Action::Config(a) => crate::cmd_config::run(a, out),
-        Action::Doctor => crate::cmd_doctor::run(out),
+        Action::Doctor(a) => crate::cmd_doctor::run(out, a.fix),
     }
 }
 

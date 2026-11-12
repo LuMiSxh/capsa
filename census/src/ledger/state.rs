@@ -63,6 +63,9 @@ pub(super) struct Index {
     version: u32,
     /// Time of the oldest raw row, or `None` without rows.
     pub oldest_t: Option<u64>,
+    /// Unix time at which the last complete sweep of all transcripts began. `None` when no sweep
+    /// has completed, which includes an index written before this field existed.
+    pub swept_at: Option<u64>,
     pub files: BTreeMap<String, FileState>,
 }
 
@@ -71,6 +74,7 @@ impl Default for Index {
         Index {
             version: INDEX_VERSION,
             oldest_t: None,
+            swept_at: None,
             files: BTreeMap::new(),
         }
     }
@@ -86,13 +90,28 @@ pub(super) fn load_index(path: &Path) -> Index {
         .unwrap_or_default()
 }
 
+/// Saves the index without syncs. It is a cache: a lost or torn file makes `load_index` return an
+/// empty index and the next update rescans, while `rows.jsonl`, the source of truth, is appended
+/// with a sync and deduplicates by message id.
 pub(super) fn save_index(path: &Path, index: &Index) -> Result<()> {
-    write_atomic(path, &serde_json::to_vec(index)?)
+    write_cache(path, &serde_json::to_vec(index)?)
 }
 
 /// Replaces `path` with `bytes` through a temporary file, so a reader sees the old file or the new.
 pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     capsa_core::fs::write_atomic(path, bytes).map_err(io_at(path))
+}
+
+/// Like [`write_atomic`] without the syncs, for a file that can be built again. A reader still
+/// sees the old file or the new one; after a crash it may see neither.
+pub(super) fn write_cache(path: &Path, bytes: &[u8]) -> Result<()> {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    let written = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written.map_err(io_at(path))
 }
 
 fn read_file(path: &Path) -> Result<Vec<u8>> {

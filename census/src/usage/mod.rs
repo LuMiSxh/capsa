@@ -2,8 +2,11 @@
 //! Token and tool-call analytics over Claude Code (`~/.claude/projects`) and Codex
 //! (`~/.codex/sessions`) JSONL transcripts.
 
+mod bulletin;
 mod claude;
 mod codex;
+mod follow;
+mod guard;
 mod handback;
 mod merge;
 pub(crate) mod prices;
@@ -11,7 +14,12 @@ mod read;
 pub(crate) mod time;
 mod tools;
 
-pub use handback::HandbackWeek;
+pub use bulletin::{guard_follow, refresh_guard_follow, write_guard_follow};
+pub use follow::{Follow, MIN_SAMPLE, WINDOW_SECS, follow_rates};
+pub use guard::{
+    GuardEntry, ProjectRule, Tally, by_project, by_rule, log_path as guard_log_path, read_log,
+};
+pub use handback::{HandbackWeek, RoleHandbacks};
 pub use prices::{
     Cost, LOG as PRICE_LOG, LOG_LIMIT as PRICE_LOG_LIMIT, PROVIDERS, knows_provider,
     refresh as refresh_prices,
@@ -188,6 +196,9 @@ pub struct Report {
     pub compaction_context: [u64; 3],
     /// Spawns and hand-backs per ISO week, see `handback`.
     pub handbacks: Vec<HandbackWeek>,
+    /// Spawns and hand-backs per role, see `handback`. Kept out of the JSON, which stays the weeks.
+    #[serde(skip)]
+    pub handback_roles: Vec<RoleHandbacks>,
 }
 
 /// One model of the report, with the provider that bills its requests.

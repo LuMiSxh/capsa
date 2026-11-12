@@ -9,9 +9,55 @@
 - `census self doctor` warns when a `config.json` from an older version is still there. The warning
   names the new `config.toml` and `census self config set`, which writes the settings again.
 - `census self doctor` checks the price log, `prices.jsonl`, for its size and last entry.
+- `census hook` warns once per five-hour window, before 75 %, when the list-price burn of the last
+  15 minutes is at least twice the typical rate of this hour, with the time it fills at that rate,
+  such as `census: now Wed 10:00; 5h burn $4.8/h, 2x your typical rate; at this rate full around
+  Wed 10:34, reset Wed 13:00. Avoid large parallel agent batches; tell Luca.` The typical rate is
+  the expected cost of the hour of the week from the history; under $0.25 in the last 15 minutes
+  is too little to compare. `census limits --json` gains a `surge` object only while one applies.
+- `census usage --guard` shows a follow rate per rule: the share of its observed refusals, hints
+  and rewrites that the rule did not repeat in the same session within 10 minutes. A rule shows a
+  rate after 5 observed decisions, and `n/a` before that. The log keeps no hint text, so this is a
+  proxy; a switch to acus is invisible, because passes are not logged.
+- `census usage --guard --by-project` lists the decisions per project and rule, so a rule that
+  keeps firing in one repository shows.
+- `census usage --handbacks` adds a table per role: spawns, hand-backs, and the median minutes from
+  the worker spawn to the senior-worker spawn that followed it.
+- `census usage --guard` without `--days` or `--project` also writes the follow rates to the census
+  bulletin, `guard_follow`, current for 7 days, for `census` to read at session start.
+- `census self doctor --fix` makes the safe repairs before it reports: it updates an outdated
+  Claude Code skill, adds census's statusLine when it is missing, and adds the census hooks that
+  are missing or outdated, in an existing Claude Code setup. Each repair is listed under `fixed`,
+  and `--json` adds the same array. A missing skill, a statusLine that census does not own,
+  deletions, config values and the network are left alone.
 
 ### Changed
 
+- `census usage --guard --json` gains `observed` and `follow` on each rule. The change is additive,
+  and the golden report is updated. `census usage --handbacks --json` is unchanged.
+
+- `census hook` says a limit forecast again only when its "full around" or "runs out around" time
+  moved by at least 30 minutes, or the 60-minute burn at least doubled, since it was last said. A
+  new 75 % or 90 % level is still said once. Before, a forecast was said once per window.
+- A prompt whose call also has a warning no longer adds the status line. The warning starts with
+  the same time and states the same facts, so each appears once per prompt.
+- The calibration of a limit window reads snapshots up to 90 days old, not 30, while the last 30
+  days give fewer than four points, the number the spread needs. With four or more recent points
+  the results are unchanged.
+- Every warning of `census hook` starts with the local time, such as
+  `census: now Thu 08:12; 5h limit 60% (estimated), full around Thu 09:07, reset Thu 12:10.`, so
+  the main agent can place a forecast in the day. The per-prompt status line starts the same way,
+  `census: status: now Thu 07:58; context 90k of 300k ...`. The usage hint at SessionStart and
+  prompts without a line are unchanged.
+- `census hook` on a prompt that appends rows to the ledger is faster: 23.9 ms p50 / 25.9 ms p95
+  before, 9.1 ms / 9.7 ms after. The digest was already extended with new rows, but each write of
+  `digest.json` and `index.json` synced the file and its directory, and the next read parsed the
+  digest again. Both are caches and are now written without the syncs (a torn file is built again,
+  a torn index means a rescan that deduplicates by message id), and the update hands its digest to
+  the limits. `rows.jsonl` is still synced. The digest records the rows file's length and a hash of its last 256 bytes, so a cut or
+  replaced file is rebuilt even at the same length; digests of the old layout are rebuilt once.
+  Benchmark: `census/benches/hook_append.sh`, `hyperfine -N -w 5 -r 50`, release build, 10 000 rows
+  in a 1.9 MB `rows.jsonl`, two new rows per call.
 - The settings are in `config.toml` in the census config directory, not `config.json`. This is a
   hard break: census neither reads nor migrates `config.json`. Set the settings again with
   `census self config set`; `census self doctor` reports the old file.
