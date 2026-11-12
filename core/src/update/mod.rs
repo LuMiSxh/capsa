@@ -7,6 +7,9 @@ mod archive;
 #[cfg(feature = "clap")]
 mod args;
 mod binary;
+mod cache;
+#[cfg(test)]
+mod cache_tests;
 mod error;
 mod release;
 mod steps;
@@ -26,6 +29,7 @@ use crate::render::{Doc, Mark, Render, Status, emit};
 
 #[cfg(feature = "clap")]
 pub use args::{UninstallArgs, UpdateArgs};
+pub use cache::{UpdateCheck, check};
 pub use error::UpdateError;
 pub use steps::{leftover_note, reinstall_skill};
 
@@ -150,8 +154,9 @@ pub fn update(tool: &Tool, mode: Mode) -> Result<Report, UpdateError> {
     let exe = binary::resolve()?;
     binary::forget_old(&exe);
     let token = release::token();
-    let newest = release::newest(tool, token.as_deref())?;
+    let newest = release::newest(tool, token.as_deref(), None)?;
     let latest = newest.version(tool).to_owned();
+    cache::remember(tool, &latest);
     let newer = release::version(&latest) > release::version(tool.version);
     let install = match mode {
         Mode::Check => false,

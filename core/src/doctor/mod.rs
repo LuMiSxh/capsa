@@ -8,6 +8,10 @@ mod on_path;
 mod probe;
 #[cfg(test)]
 mod tests;
+#[cfg(feature = "update")]
+mod update;
+#[cfg(all(test, feature = "update"))]
+mod update_tests;
 
 use std::borrow::Cow;
 
@@ -17,6 +21,8 @@ pub use fix::{Repaired, emit_report, repair_hooks, repair_skill};
 pub use log_health::log_checks;
 pub use on_path::path_check;
 pub use probe::{dir_check, same_file, writable};
+#[cfg(feature = "update")]
+pub use update::update_check;
 
 /// Builds a check with its name, status, what it found and, when it failed, the fix.
 pub fn check(

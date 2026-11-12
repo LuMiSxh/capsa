@@ -31,4 +31,5 @@ pub mod render;
 pub mod skill;
 #[cfg(feature = "update")]
 pub mod update;
+pub mod version;
 pub mod which;
