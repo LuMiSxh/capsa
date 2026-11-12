@@ -6,6 +6,7 @@ mod narrow;
 mod noise;
 mod print;
 mod refs;
+mod repeat;
 
 use crate::config::Config;
 use crate::out::{Budget, Out};
@@ -188,6 +189,15 @@ pub fn run(a: &Args, out: &Out, cfg: &Config) -> Result<Outcome> {
     let (raw, code, timed_out, command) = source(a, out, cfg)?;
     let text = if a.raw { raw } else { clean(&raw) };
     let cwd = std::env::current_dir()?;
+    let all: Vec<&str> = text.lines().collect();
+    let (lines, passed, dropped) = if a.raw {
+        (all.iter().map(|l| l.to_string()).collect(), 0, 0)
+    } else {
+        quiet(&all, &extra)
+    };
+    let streak = command
+        .as_deref()
+        .and_then(|c| repeat::note(&cwd, c, code, &lines));
     if out.format == Format::Json {
         let shown = if narrowing {
             let lines = text.lines().map(str::to_owned).collect();
@@ -201,14 +211,8 @@ pub fn run(a: &Args, out: &Out, cfg: &Config) -> Result<Outcome> {
         } else {
             text
         };
-        return Ok(print_json(a, &cwd, &shown, code));
+        return Ok(print_json(a, &cwd, &shown, code, streak.as_ref()));
     }
-    let all: Vec<&str> = text.lines().collect();
-    let (lines, passed, dropped) = if a.raw {
-        (all.iter().map(|l| l.to_string()).collect(), 0, 0)
-    } else {
-        quiet(&all, &extra)
-    };
     let nothing_matched = grep
         .as_ref()
         .is_some_and(|re| !lines.is_empty() && !lines.iter().any(|l| re.is_match(l)));
@@ -224,6 +228,11 @@ pub fn run(a: &Args, out: &Out, cfg: &Config) -> Result<Outcome> {
         refs(&text, &cwd)
     };
     let mut budget = Budget::new(a.head.map(|n| n as usize));
+    // The repeat line leads what the command printed, so it stays outside the `--head` budget and
+    // that output is cut exactly as without it.
+    if let Some(s) = &streak {
+        outln!("{}", s.lead());
+    }
     // A saved log opens with its header, before any of its lines, so the first line says what
     // was read.
     if let Some(path) = &a.log {

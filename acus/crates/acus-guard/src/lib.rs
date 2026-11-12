@@ -15,6 +15,7 @@ mod build;
 mod convert;
 mod file_write;
 mod files;
+mod follow;
 mod git;
 pub mod hints;
 pub mod log;
@@ -63,6 +64,10 @@ use std::sync::LazyLock;
 pub struct GuardConfig {
     /// A repeated hint shows on its first occurrence and then every this many occurrences.
     pub hint_every: usize,
+    /// The fewest calls between two shown hints of a rule that agents ignore.
+    pub hint_min: usize,
+    /// The most calls between two shown hints of a rule that agents follow.
+    pub hint_max: usize,
     /// Directory of the per-session hint counts.
     pub state_dir: PathBuf,
     /// The JSON-lines decision log.

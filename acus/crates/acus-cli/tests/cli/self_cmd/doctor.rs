@@ -57,6 +57,169 @@ fn doctor_json_is_healthy_after_setup_and_fails_on_a_broken_config() {
 }
 
 #[test]
+fn doctor_fix_repairs_missing_hooks_and_then_has_nothing_to_fix() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let h = home.to_str().unwrap();
+    let c = claude.to_str().unwrap();
+    let env = sandboxed(h, c);
+    assert_eq!(acus_env(&["self", "setup"], &env).0, 0);
+    let settings = claude.join("settings.json");
+    std::fs::write(&settings, "{}\n").unwrap();
+
+    let (code, out, err) = acus_env(&["self", "doctor", "--fix", "--json"], &env);
+    assert_eq!(code, 0, "{err}\n{out}");
+    let v = json_line(&out);
+    assert_eq!(v["ok"], true);
+    let fixed: Vec<&str> = v["fixed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        fixed,
+        ["hook SessionStart", "hook PreToolUse", "hook SubagentStart"]
+    );
+    assert!(
+        std::fs::read_to_string(&settings)
+            .unwrap()
+            .contains("acus hook")
+    );
+
+    let (code, out, err) = acus_env(&["self", "doctor", "--fix"], &env);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(out.contains("fixed"), "{out}");
+    assert!(out.contains("nothing to fix"), "{out}");
+}
+
+#[test]
+fn doctor_fix_leaves_guard_logs_left_beside_the_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::write(claude.join("settings.json"), "{}").unwrap();
+    let old = dir.path().join("guard.jsonl");
+    let rotated = dir.path().join("guard.jsonl.old");
+    std::fs::write(&old, "old\n").unwrap();
+    std::fs::write(&rotated, "rotated\n").unwrap();
+    let state = dir.path().join("state");
+    let state_log = state.join("acus").join("guard.jsonl");
+    std::fs::create_dir_all(state_log.parent().unwrap()).unwrap();
+    std::fs::write(&state_log, "new\n").unwrap();
+    let config = dir.path().join("config.toml");
+    let mut env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap()).to_vec();
+    env.push(("ACUS_CONFIG", config.to_str().unwrap()));
+    env.push(("XDG_STATE_HOME", state.to_str().unwrap()));
+
+    let (code, out, err) = acus_env(&["self", "doctor", "--fix", "--json"], &env);
+    assert_eq!(code, 0, "{err}\n{out}");
+    for (path, text) in [
+        (&old, "old\n"),
+        (&rotated, "rotated\n"),
+        (&state_log, "new\n"),
+    ] {
+        assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+    }
+    let v = json_line(&out);
+    let check = v["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|g| g["checks"].as_array().unwrap())
+        .find(|c| c["name"] == "guard log location")
+        .unwrap();
+    assert_eq!(check["status"], "warn", "{check}");
+    assert_eq!(check["hint"], "run acus self setup", "{check}");
+}
+
+#[test]
+fn doctor_fix_leaves_a_missing_skill_to_its_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::write(claude.join("settings.json"), "{}").unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+
+    let (code, out, err) = acus_env(&["self", "doctor", "--fix", "--json"], &env);
+    assert_eq!(code, 0, "{err}\n{out}");
+    assert!(
+        !home.join(".claude/skills/acus/SKILL.md").exists(),
+        "--fix installed a missing skill"
+    );
+    let v = json_line(&out);
+    let skill = v["groups"][2]["checks"][0].clone();
+    assert_eq!(skill["name"], "claude skill");
+    assert_eq!(skill["status"], "warn", "{skill}");
+    assert_eq!(skill["hint"], "run acus self setup", "{skill}");
+}
+
+#[test]
+fn doctor_fix_updates_an_outdated_skill() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+    assert_eq!(acus_env(&["self", "setup"], &env).0, 0);
+    let skill = home.join(".claude/skills/acus/SKILL.md");
+    std::fs::write(&skill, "old\n").unwrap();
+
+    let (code, out, err) = acus_env(&["self", "doctor", "--fix", "--json"], &env);
+    assert_eq!(code, 0, "{err}\n{out}");
+    let v = json_line(&out);
+    let fixed: Vec<&str> = v["fixed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(fixed, ["claude skill"]);
+    assert_ne!(std::fs::read_to_string(&skill).unwrap(), "old\n");
+}
+
+#[test]
+fn doctor_fix_keeps_a_pretooluse_matcher_the_user_chose() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let h = home.to_str().unwrap();
+    let c = claude.to_str().unwrap();
+    let env = sandboxed(h, c);
+    assert_eq!(acus_env(&["self", "setup"], &env).0, 0);
+    let settings = claude.join("settings.json");
+    std::fs::write(
+        &settings,
+        r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"acus hook 2>/dev/null || true"}]}]}}"#,
+    )
+    .unwrap();
+
+    let (code, out, err) = acus_env(&["self", "doctor", "--fix", "--json"], &env);
+    assert_eq!(code, 0, "{err}\n{out}");
+    let v = json_line(&out);
+    let fixed = v["fixed"].as_array().unwrap();
+    assert!(
+        fixed.iter().all(|c| c["name"] != "hook PreToolUse"),
+        "{out}"
+    );
+    let pre = v["groups"][3]["checks"][1].clone();
+    assert_eq!(pre["name"], "PreToolUse hook");
+    assert_eq!(pre["status"], "warn");
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    let pre_tool = written["hooks"]["PreToolUse"].as_array().unwrap();
+    assert_eq!(pre_tool.len(), 1);
+    assert_eq!(pre_tool[0]["matcher"], "Bash");
+}
+
+#[test]
 fn doctor_warns_when_the_hook_matcher_misses_a_tool() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");

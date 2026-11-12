@@ -90,6 +90,7 @@ EOF
 ## Reading the output
 
 - Exit 0 = results, 1 = nothing found (not a failure), 2 = error with a `hint:` line naming the fix; `ctx` returns the command's own code.
+- `ctx` leads with `3rd identical failure …` after three identical failures of a command in one session. Fix the key line it repeats instead of rerunning the command.
 - `… N more …` names the follow-up command; run it instead of searching again.
 - `acus show` prints a whole file over 400 lines as its outline, first 60 lines and pointers, and stops a call near 24k characters; `--full` prints everything, `--head N` stops after N printed lines, and `--cut N` clips long lines. The two caps work on `find`, `outline`, `diff` and the other read commands.
 

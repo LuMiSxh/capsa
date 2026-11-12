@@ -8,21 +8,33 @@ use crate::cmd_skill::SKILL_DEF;
 use crate::config::{self, Config};
 use crate::guard_log;
 use anyhow::{Context, Result};
-use capsa_core::doctor::{check, dir_check, log_checks, path_check};
+use capsa_core::doctor::{
+    check, dir_check, emit_report, log_checks, path_check, repair_hooks, repair_skill,
+};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::hint::ResultExt;
 use capsa_core::hooks::{Agent, HookFile, HookSpec, HookState};
-use capsa_core::render::{Check, Doctor, Group, Status, emit};
-use capsa_core::skill::{self, SkillState, Target};
+use capsa_core::render::{Check, Doctor, Group, Status};
+use capsa_core::skill::{self, SkillState, Target, installed_target};
 use std::path::{Path, PathBuf};
 
 /// Tools that must be matched by the PreToolUse guard hook.
 const GUARDED: [&str; 5] = ["Bash", "Read", "Grep", "Glob", "PowerShell"];
 
-pub fn run(format: Format) -> Result<Outcome> {
+#[derive(clap::Args)]
+pub struct Args {
+    /// Repairs what is safe to repair first: updates an outdated skill and adds or updates hooks.
+    /// Deletions, config values, guard logs from older releases and network calls keep their hints.
+    #[arg(long)]
+    pub fix: bool,
+}
+
+pub fn run(format: Format, fix: bool) -> Result<Outcome> {
     let home = std::env::home_dir().context("no home directory")?;
     let (cfg, problem) = config::load_or_default();
     let settings = Agent::ClaudeCode.path();
+    let fixed = fix.then(|| repair(&home, &settings)).transpose()?;
     let groups = vec![
         install_group(),
         config_group(&cfg, problem.as_deref()),
@@ -30,8 +42,9 @@ pub fn run(format: Format) -> Result<Outcome> {
         hooks_group(&settings),
         guard_group(&cfg),
     ];
-    emit(
+    emit_report(
         &Doctor::new("acus", env!("CARGO_PKG_VERSION"), groups),
+        fixed,
         format,
     )
 }
@@ -105,12 +118,7 @@ fn config_group(cfg: &Config, problem: Option<&str>) -> Group {
 /// an agent the user does not run is no warning.
 fn skill_check(home: &Path, target: Target, name: &'static str, agent_home: &Path) -> Check {
     let state = skill::state(home, &SKILL_DEF, target);
-    let dirs = target
-        .dirs(home, SKILL_DEF.tool)
-        .iter()
-        .map(|d| d.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let dirs = skill_dirs(home, target);
     let present = agent_home.is_dir();
     match state {
         SkillState::Current => check(name, Status::Ok, format!("current in {dirs}"), None),
@@ -146,8 +154,7 @@ fn skill_group(home: &Path, settings: &Path) -> Group {
             claude_home,
         ));
     }
-    let codex_home =
-        std::env::var_os("CODEX_HOME").map_or_else(|| home.join(".codex"), PathBuf::from);
+    let codex_home = codex_dir(home);
     if codex_home.is_dir() {
         checks.push(skill_check(home, Target::Codex, "codex skill", &codex_home));
     }
@@ -248,4 +255,65 @@ fn leftover_check(config: &Path) -> Option<Check> {
             Some("run acus self setup"),
         )
     })
+}
+
+/// The directories a skill of `target` is installed in, for the report.
+fn skill_dirs(home: &Path, target: Target) -> String {
+    target
+        .dirs(home, SKILL_DEF.tool)
+        .iter()
+        .map(|d| d.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Codex's home: `CODEX_HOME` when set, else `~/.codex`.
+fn codex_dir(home: &Path) -> PathBuf {
+    std::env::var_os("CODEX_HOME").map_or_else(|| home.join(".codex"), PathBuf::from)
+}
+
+/// Makes the repairs `--fix` names and returns one check per repair made. A check that needs a
+/// choice, a deletion or a changed config value keeps its hint.
+fn repair(home: &Path, settings: &Path) -> Result<Vec<Check>> {
+    let mut fixed = repair_skills(home)?;
+    fixed.extend(repair_settings(home, settings)?);
+    Ok(fixed)
+}
+
+/// Updates an outdated skill for Claude Code and for Codex; a missing skill keeps its hint.
+fn repair_skills(home: &Path) -> Result<Vec<Check>> {
+    let mut fixed = Vec::new();
+    fixed.extend(repair_skill(
+        home,
+        &SKILL_DEF,
+        Target::Claude,
+        "claude skill",
+    )?);
+    fixed.extend(repair_skill(
+        home,
+        &SKILL_DEF,
+        Target::Codex,
+        "codex skill",
+    )?);
+    Ok(fixed)
+}
+
+/// Adds the missing acus hooks and replaces the outdated ones in an existing Claude Code setup.
+/// A settings file that does not parse is left to the hooks group to report.
+fn repair_settings(home: &Path, settings: &Path) -> Result<Vec<Check>> {
+    let set_up = matches!(
+        installed_target(home, SKILL_DEF.tool),
+        Some(Target::Claude | Target::All)
+    );
+    if !set_up || !settings.exists() {
+        return Ok(Vec::new());
+    }
+    let Ok(mut file) = HookFile::open_at(Agent::ClaudeCode, settings) else {
+        return Ok(Vec::new());
+    };
+    let checks = repair_hooks(&mut file, &HOOKS);
+    if !checks.is_empty() {
+        file.write().hinted()?;
+    }
+    Ok(checks)
 }

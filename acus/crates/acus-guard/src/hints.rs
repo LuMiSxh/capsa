@@ -3,7 +3,7 @@
 //! rule. The per-session counts live in the state files of `guard-hints`, in `GuardConfig`'s
 //! `state_dir`.
 
-use crate::GuardConfig;
+use crate::{GuardConfig, follow};
 use capsa_core::lock::{self, Lock};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -28,8 +28,13 @@ fn acquire(state: &Path) -> Option<Lock> {
 }
 // Hooks run in parallel, so the read-modify-write holds the session lock. A state file that cannot
 // be read or written shows the hint, so the throttle never hides a hint it cannot count.
-/// Reports whether this occurrence of the pure hint of `rule` shows: occurrence 1, N+1, 2N+1… for
-/// `[guard] hint_every` = N. The occurrence is counted either way.
+/// Reports whether this occurrence of the pure hint of `rule` shows: occurrence 1, then once the
+/// calls since the last shown one reach the interval of the rule. The interval is `[guard]
+/// hint_every` = N, unless census publishes a current follow rate for the rule, which moves it
+/// between `hint_every_min` and `hint_every_max`. The occurrence is counted either way.
+///
+/// The bulletin is read only when the calls since the last shown hint have reached the minimum and
+/// not yet the maximum, so most calls never touch it.
 pub fn show(cfg: &GuardConfig, session: &str, rule: &str) -> bool {
     let every = cfg.hint_every.max(1);
     if every == 1 {
@@ -41,14 +46,21 @@ pub fn show(cfg: &GuardConfig, session: &str, rule: &str) -> bool {
     let Some(_lock) = acquire(&path) else {
         return true;
     };
-    let Ok(mut counts) = read(&path) else {
+    let Ok(mut counts) = read(&path, every as u64) else {
         return true;
     };
-    let n = counts.entry(rule.to_owned()).or_insert(0);
-    *n += 1;
-    let n = *n;
-    let show = n % every as u64 == 1;
+    let count = counts.entry(rule.to_owned()).or_default();
+    count.n += 1;
+    let gap = count.n.saturating_sub(count.last);
+    let lo = cfg.hint_min.clamp(1, every) as u64;
+    let hi = cfg.hint_max.max(every) as u64;
+    let show = count.n == 1
+        || gap >= hi
+        || (gap >= lo
+            && gap
+                >= follow::interval(every, cfg.hint_min, cfg.hint_max, follow::rate(rule)) as u64);
     if show {
+        count.last = count.n;
         prune_if_due(&cfg.state_dir);
     }
     if write(&path, &counts).is_err() {
@@ -76,13 +88,29 @@ fn state_file(cfg: &GuardConfig, session: &str) -> Option<PathBuf> {
     plain.then(|| cfg.state_dir.join(session))
 }
 
-fn read(path: &Path) -> std::io::Result<BTreeMap<String, u64>> {
+/// The calls of one rule in a session, and the number of the last one that showed.
+#[derive(Default)]
+struct Count {
+    n: u64,
+    last: u64,
+}
+
+/// Reads the counts of a session. A line from an older version has no `last`; it gets the call
+/// that showed under the old `n % every == 1` rule, so the next hint falls where that rule put it.
+fn read(path: &Path, every: u64) -> std::io::Result<BTreeMap<String, Count>> {
+    let every = every.max(1);
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(text
             .lines()
             .filter_map(|l| {
-                let (rule, n) = l.split_once(' ')?;
-                Some((rule.to_owned(), n.trim().parse().ok()?))
+                let mut f = l.split_whitespace();
+                let rule = f.next()?.to_owned();
+                let n: u64 = f.next()?.parse().ok()?;
+                let last: u64 = match f.next() {
+                    Some(s) => s.parse().ok()?,
+                    None => n.saturating_sub(n.saturating_sub(1) % every),
+                };
+                Some((rule, Count { n, last }))
             })
             .collect()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
@@ -92,12 +120,12 @@ fn read(path: &Path) -> std::io::Result<BTreeMap<String, u64>> {
 
 /// Writes a temporary file and renames it over `path`, so a process crash leaves the old or the
 /// new state. There is no fsync: a power loss can lose the count, which only shows a hint again.
-fn write(path: &Path, counts: &BTreeMap<String, u64>) -> std::io::Result<()> {
+fn write(path: &Path, counts: &BTreeMap<String, Count>) -> std::io::Result<()> {
     std::fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))?;
     let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
     let mut f = std::fs::File::create(&tmp)?;
-    for (rule, n) in counts {
-        writeln!(f, "{rule} {n}")?;
+    for (rule, c) in counts {
+        writeln!(f, "{rule} {} {}", c.n, c.last)?;
     }
     std::fs::rename(&tmp, path)
 }
@@ -197,6 +225,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = crate::GuardConfig {
             hint_every: 2,
+            hint_min: 1,
+            hint_max: 8,
             state_dir: dir.path().to_path_buf(),
             log_path: dir.path().join("guard.jsonl"),
         };
@@ -230,6 +260,37 @@ mod tests {
         assert!(
             !old.exists(),
             "a marker older than a day makes the pass due"
+        );
+    }
+
+    #[test]
+    fn an_old_line_puts_the_next_hint_where_the_old_rule_did() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s");
+        let last = |n: u64, every: u64| {
+            std::fs::write(&path, format!("grep {n}\n")).unwrap();
+            read(&path, every).unwrap()["grep"].last
+        };
+        assert_eq!(last(1, 3), 1);
+        assert_eq!(last(4, 3), 4);
+        assert_eq!(last(5, 3), 4, "the old rule showed at the fourth call");
+        assert_eq!(last(7, 3), 7);
+    }
+
+    #[test]
+    fn a_last_ahead_of_the_count_does_not_underflow() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::GuardConfig {
+            hint_every: 2,
+            hint_min: 1,
+            hint_max: 8,
+            state_dir: dir.path().to_path_buf(),
+            log_path: dir.path().join("guard.jsonl"),
+        };
+        std::fs::write(dir.path().join("s"), "grep 2 9\n").unwrap();
+        assert!(
+            !show(&cfg, "s", "grep"),
+            "a last ahead of the count stays quiet"
         );
     }
 }

@@ -51,11 +51,35 @@ pub struct Guard {
     /// Repeated pure guard hints show on the first call of a rule per session, then on every Nth;
     /// 1 shows every one, and 0 counts as 1.
     pub hint_every: usize,
+    /// The fewest calls between two shown hints of a rule that agents ignore, when census has a
+    /// follow rate for it; default: half of `hint_every`, at least 1.
+    pub hint_every_min: Option<usize>,
+    /// The most calls between two shown hints of a rule that agents follow, when census has a
+    /// follow rate for it; default: four times `hint_every`.
+    pub hint_every_max: Option<usize>,
 }
 
 impl Default for Guard {
     fn default() -> Self {
-        Guard { hint_every: 10 }
+        Guard {
+            hint_every: 10,
+            hint_every_min: None,
+            hint_every_max: None,
+        }
+    }
+}
+
+impl Guard {
+    /// Returns the configured lower bound of the adaptive interval, or the default.
+    pub fn hint_every_min(&self) -> usize {
+        self.hint_every_min
+            .unwrap_or_else(|| (self.hint_every / 2).max(1))
+    }
+
+    /// Returns the configured upper bound of the adaptive interval, or the default.
+    pub fn hint_every_max(&self) -> usize {
+        self.hint_every_max
+            .unwrap_or_else(|| self.hint_every.saturating_mul(4))
     }
 }
 

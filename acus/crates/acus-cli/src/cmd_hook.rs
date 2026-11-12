@@ -29,6 +29,8 @@ pub struct Args {
 pub fn guard_config(cfg: &Config) -> GuardConfig {
     GuardConfig {
         hint_every: cfg.guard.hint_every,
+        hint_min: cfg.guard.hint_every_min(),
+        hint_max: cfg.guard.hint_every_max(),
         state_dir: cfg.path.with_file_name("guard-hints"),
         log_path: guard_log::path(&cfg.path),
     }
@@ -220,6 +222,8 @@ fn shown(cfg: &GuardConfig, session: &str, verdict: &Verdict) -> bool {
 fn config_note(gcfg: &GuardConfig, session: &str, problem: &str, path: &Path) -> Option<String> {
     let once = GuardConfig {
         hint_every: usize::MAX,
+        hint_min: usize::MAX,
+        hint_max: usize::MAX,
         ..gcfg.clone()
     };
     acus_guard::hints::show(&once, session, "config").then(|| {

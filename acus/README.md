@@ -142,6 +142,8 @@ fmt = true                                          # as if every patch had --fm
 
 [guard]
 hint_every = 10                                     # repeated guard hints: 1st, 11th, 21st… call per session and rule; 1 = every time
+hint_every_min = 5                                  # interval for a rule agents ignore (census follow rate 0); default hint_every / 2
+hint_every_max = 40                                 # interval for a rule agents follow (census follow rate 1); default hint_every * 4
 ```
 
 `acus ctx --drop REGEX` does the same for one run. `ACUS_DISABLE` (comma-separated, e.g. `ACUS_DISABLE=usage`) adds to `[commands] disabled`.

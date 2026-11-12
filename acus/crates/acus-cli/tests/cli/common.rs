@@ -11,12 +11,20 @@ pub fn snapshot_settings() -> insta::Settings {
 }
 
 /// The binary with any user config hidden and the guard log kept out of the user's state directory.
+/// Each call is its own Claude Code session, so `ctx` repeat counts never carry between tests.
 pub fn bin() -> Command {
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let session = format!(
+        "test-{}-{}",
+        std::process::id(),
+        CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let state = concat!(env!("CARGO_TARGET_TMPDIR"), "/state");
     let mut c = Command::new(env!("CARGO_BIN_EXE_acus"));
     c.env("ACUS_CONFIG", "/nonexistent/acus.toml")
         .env("XDG_STATE_HOME", state)
         .env("LOCALAPPDATA", state)
+        .env("CLAUDE_CODE_SESSION_ID", session)
         .env_remove("ACUS_DISABLE");
     c
 }

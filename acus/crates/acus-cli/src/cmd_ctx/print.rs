@@ -3,24 +3,32 @@
 
 use super::Args;
 use super::refs::{refs, snippet};
+use super::repeat::Streak;
 use crate::out::{Budget, Out, clip};
 use capsa_core::exit::Outcome;
 use capsa_core::render::{Tone, paint};
 use std::path::{Path, PathBuf};
 
-/// Returns the `--json` document: the shown output, the exit code and the code at each
-/// reference.
-pub(super) fn print_json(a: &Args, cwd: &Path, shown: &str, code: i32) -> Outcome {
+/// Returns the `--json` document: the shown output, the exit code, the code at each reference,
+/// and `repeat` (count and key line) from the third identical failure on.
+pub(super) fn print_json(
+    a: &Args,
+    cwd: &Path,
+    shown: &str,
+    code: i32,
+    streak: Option<&Streak>,
+) -> Outcome {
     let locs: Vec<_> = refs(shown, cwd)
         .iter()
         .take(a.max_refs)
         .filter_map(|(p, l)| snippet(p, *l, a))
         .map(|s| serde_json::json!({"address": s.0, "start": s.1, "text": s.2.join("\n")}))
         .collect();
-    outln!(
-        "{}",
-        serde_json::json!({"exit": code, "output": shown, "locations": locs})
-    );
+    let mut doc = serde_json::json!({"exit": code, "output": shown, "locations": locs});
+    if let Some(s) = streak {
+        doc["repeat"] = serde_json::json!({"count": s.count, "key": s.key});
+    }
+    outln!("{}", doc);
     Outcome::Code(code.clamp(0, 255) as u8)
 }
 

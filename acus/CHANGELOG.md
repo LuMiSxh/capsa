@@ -4,6 +4,14 @@
 
 ### Added
 
+- `acus ctx` leads its output with `3rd identical failure of this command in this session, same
+  key line: …` when the same command fails in the same directory with the same error lines three
+  times in a row. A session is identified by `CLAUDE_CODE_SESSION_ID`, which Claude Code sets for
+  the commands it runs; without it, runs share one state file. A run more than 30 minutes after
+  the previous one starts a new count, and a success clears it. The state is
+  `acus/ctx/<session>.json` in the state directory. `--json` adds a `repeat` object (`count`,
+  `key`) from the third identical failure on; other output is unchanged. The lead line stays
+  outside the `--head` budget, so the command output is cut exactly as without it.
 - `acus self doctor` reports `guard log file`. A guard log that exists but cannot be opened for
   appending, such as one created by `sudo`, fails with a hint, instead of every decision being
   dropped unseen.
@@ -12,9 +20,25 @@
   merges the old lines in front of it instead, oldest first, and leaves the state `.old` copy as
   it is. `--dry-run` only reports the move. `acus self doctor` warns about such a leftover, even
   when the state log exists, and names `acus self setup` as the fix.
+- `acus self doctor --fix` makes the safe repairs before it reports: it updates an outdated skill
+  for Claude Code and Codex and adds missing or outdated hooks in an existing Claude Code setup.
+  Each repair is listed under `fixed`, and `--json` adds the same array. A missing skill, a guard
+  log an older release left beside the config file, deletions, config values and the network keep
+  their hints, and a PreToolUse matcher you chose stays as it is.
 
 ### Changed
 
+- Repeated guard hints adapt to how well the agent follows them. When census publishes a current
+  follow rate for a rule, the interval between shown hints moves from `[guard] hint_every` (rate
+  0.5) up to `hint_every_max` (rate 1.0, default 4 times `hint_every`) or down to
+  `hint_every_min` (rate 0.0, default half of `hint_every`, at least 1). A missing, stale or
+  unreadable bulletin keeps `hint_every`. The census bulletin is read only when a hint is due
+  within the bounds, so most calls never open it. The hint counts in `guard-hints/SESSION` gain a
+  third field, the call that last showed; older files still read. Benchmark: `hyperfine -N -w 5
+  -r 50 acus hook` (release, `hint_every` = 10, temp state dir) for `git status` (hint) and `ls`
+  (pass), p50/p95: hint 2.29/2.54 ms before, 2.27/2.95 ms after; pass 1.90/2.02 ms before,
+  1.97/2.10 ms after. A second before run read 2.30/2.39 and 2.13/2.25 ms, so the difference is
+  inside the run-to-run noise.
 - The guard's hint throttle locks a session with an OS file lock (`capsa_core::lock`) instead of a
   `create_new` lock file with a nonce and stale-lock breaking. The kernel drops the lock when a
   process dies, so a crashed guard no longer leaves a lock that hints wait out. Pruning also
@@ -40,6 +64,9 @@
 
 - `acus ctx --timeout` kills the whole command tree on Windows, with `taskkill`, as it already did
   on Unix. Before, only the shell was killed and its children kept running.
+- The guard's hint throttle no longer underflows when the stored last-shown call is ahead of the
+  count, and a count file from before the third field now sends the next hint where the old
+  `n % every == 1` rule showed it, instead of one interval after the last call.
 
 ## [0.22.1]
 

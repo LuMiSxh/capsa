@@ -226,7 +226,7 @@ fn concurrent_guard_calls_count_exactly() {
     let state = dir.path().join("guard-hints");
     let text = std::fs::read_to_string(state.join("par")).unwrap();
     assert_eq!(text.lines().count(), 1, "{text}");
-    let last: usize = text.trim_end().rsplit(' ').next().unwrap().parse().unwrap();
+    let last: usize = text.split_whitespace().nth(1).unwrap().parse().unwrap();
     assert!((1..=20).contains(&last), "{text}");
     assert_eq!(
         shown.load(Ordering::SeqCst),
@@ -301,6 +301,65 @@ fn unusable_hint_state_still_shows_hints() {
         let out = run_hook(&config, &["hook"], bash_call("s1", "git status"));
         assert!(!out.is_empty());
     }
+}
+
+/// Census's follow rate moves the interval of a rule between `hint_every_min` and `hint_every_max`
+/// (here 5 and 40, from `hint_every` = 10); a stale, unreadable or missing bulletin keeps 10.
+#[test]
+fn census_follow_rate_adapts_the_hint_interval() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
+    let state = dir.path().join("state");
+    let bulletin = state.join("capsa/bulletin");
+    std::fs::create_dir_all(&bulletin).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let shown_with = |session: &str, bulletin_text: Option<String>| -> Vec<usize> {
+        let file = bulletin.join("census.json");
+        match bulletin_text {
+            Some(text) => std::fs::write(&file, text).unwrap(),
+            None => drop(std::fs::remove_file(&file)),
+        }
+        let state = state.to_str().unwrap();
+        let cfg = config.display().to_string();
+        let env = [
+            ("ACUS_CONFIG", cfg.as_str()),
+            ("XDG_STATE_HOME", state),
+            ("LOCALAPPDATA", state),
+        ];
+        let proj =
+            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
+        (1..=42)
+            .filter(|_| {
+                let input = bash_call(session, "git status").to_string();
+                let (code, out, err) = acus_in_env(proj, &["hook"], &input, &env);
+                assert_eq!(code, 0, "{err}");
+                !out.is_empty()
+            })
+            .collect()
+    };
+    let rate = |r: f32, at: u64| {
+        Some(format!(
+            r#"{{"guard_follow":{{"at":{at},"ttl":3600,"value":{{"git-status":{r}}}}},"later":1}}"#
+        ))
+    };
+    assert_eq!(shown_with("hi", rate(1.0, now)), [1, 41]);
+    assert_eq!(
+        shown_with("lo", rate(0.0, now)),
+        [1, 6, 11, 16, 21, 26, 31, 36, 41]
+    );
+    assert_eq!(
+        shown_with("stale", rate(0.0, now - 7200)),
+        [1, 11, 21, 31, 41]
+    );
+    assert_eq!(
+        shown_with("junk", Some("{not json".into())),
+        [1, 11, 21, 31, 41]
+    );
+    assert_eq!(shown_with("none", None), [1, 11, 21, 31, 41]);
 }
 
 /// A config that does not parse must not stop the guard: it answers with the defaults, names the

@@ -244,6 +244,166 @@ fn ctx_log_missing_file_is_an_error() {
     assert!(err.contains("error: nope.output: not found"), "{err}");
 }
 
+/// Prints `error: $MSG` and exits with `$CODE`. Every call runs this same command in the same
+/// directory, so only the environment differs between runs.
+#[cfg(unix)]
+const FAILING: &str = "echo \"error: $MSG\"; exit $CODE";
+
+/// Runs `FAILING` in one session whose state lives under `state`.
+#[cfg(unix)]
+fn failing_run(
+    state: &std::path::Path,
+    msg: &str,
+    code: &str,
+    json: bool,
+) -> (i32, String, String) {
+    let state = state.to_str().unwrap();
+    let mut args = vec!["ctx", FAILING];
+    if json {
+        args.push("--json");
+    }
+    acus_env(
+        &args,
+        &[
+            ("XDG_STATE_HOME", state),
+            ("CLAUDE_CODE_SESSION_ID", "repeat-session"),
+            ("MSG", msg),
+            ("CODE", code),
+        ],
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn ctx_leads_with_the_repeat_line_from_the_third_identical_failure() {
+    let state = tempfile::tempdir().unwrap();
+    for _ in 0..2 {
+        let (code, out, err) = failing_run(state.path(), "mismatched", "1", false);
+        assert_eq!(code, 1, "{err}");
+        assert!(!out.contains("identical failure"), "{out}");
+    }
+    let (code, out, err) = failing_run(state.path(), "mismatched", "1", false);
+    assert_eq!(code, 1, "{err}");
+    assert_eq!(
+        out.lines().next(),
+        Some(
+            "… 3rd identical failure of this command in this session, same key line: error: mismatched"
+        )
+    );
+    let (_, out, _) = failing_run(state.path(), "mismatched", "1", false);
+    assert!(out.starts_with("… 4th identical failure"), "{out}");
+}
+
+#[cfg(unix)]
+#[test]
+fn ctx_repeat_count_restarts_when_the_failure_changes() {
+    let state = tempfile::tempdir().unwrap();
+    failing_run(state.path(), "mismatched", "1", false);
+    failing_run(state.path(), "mismatched", "1", false);
+    let (_, out, _) = failing_run(state.path(), "unresolved", "1", false);
+    assert!(!out.contains("identical failure"), "{out}");
+    failing_run(state.path(), "unresolved", "1", false);
+    let (_, out, _) = failing_run(state.path(), "unresolved", "1", false);
+    assert!(out.starts_with("… 3rd identical failure"), "{out}");
+}
+
+#[cfg(unix)]
+#[test]
+fn ctx_success_clears_the_repeat_count() {
+    let state = tempfile::tempdir().unwrap();
+    failing_run(state.path(), "mismatched", "1", false);
+    failing_run(state.path(), "mismatched", "1", false);
+    let (code, _, err) = failing_run(state.path(), "mismatched", "0", false);
+    assert_eq!(code, 0, "{err}");
+    for _ in 0..2 {
+        let (_, out, _) = failing_run(state.path(), "mismatched", "1", false);
+        assert!(!out.contains("identical failure"), "{out}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn ctx_repeat_lead_is_not_cut_by_head() {
+    let state = tempfile::tempdir().unwrap();
+    for _ in 0..2 {
+        failing_run(state.path(), "mismatched", "1", false);
+    }
+    let state_s = state.path().to_str().unwrap();
+    let env = [
+        ("XDG_STATE_HOME", state_s),
+        ("CLAUDE_CODE_SESSION_ID", "repeat-session"),
+        ("MSG", "mismatched"),
+        ("CODE", "1"),
+    ];
+    let (code, out, err) = acus_env(&["ctx", FAILING, "--head", "1"], &env);
+    assert_eq!(code, 1, "{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines[0].starts_with("… 3rd identical failure"), "{out}");
+    assert_eq!(lines[1], "error: mismatched", "{out}");
+    assert!(
+        lines[2].starts_with("… output cut at --head 1; 1 more line"),
+        "{out}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn ctx_session_id_cannot_leave_the_ctx_state_dir() {
+    let state = tempfile::tempdir().unwrap();
+    let state_s = state.path().to_str().unwrap();
+    let env = [
+        ("XDG_STATE_HOME", state_s),
+        ("CLAUDE_CODE_SESSION_ID", "../x"),
+        ("MSG", "mismatched"),
+        ("CODE", "1"),
+    ];
+    let (code, _, err) = acus_env(&["ctx", FAILING], &env);
+    assert_eq!(code, 1, "{err}");
+    let ctx = state.path().join("acus").join("ctx");
+    assert!(
+        ctx.join("shared.json").is_file(),
+        "an invalid session id uses the shared file"
+    );
+    assert!(
+        !state.path().join("acus").join("x.json").exists(),
+        "nothing is written outside the ctx state dir"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn ctx_ignores_a_state_dir_it_cannot_write() {
+    let d = tempfile::tempdir().unwrap();
+    let blocked = d.path().join("state");
+    std::fs::write(&blocked, "not a directory").unwrap();
+    for _ in 0..3 {
+        let (code, out, err) = failing_run(&blocked, "mismatched", "1", false);
+        assert_eq!(code, 1, "{err}");
+        assert_eq!(err, "");
+        assert!(out.starts_with("error: mismatched"), "{out}");
+        assert!(!out.contains("identical failure"), "{out}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn ctx_json_adds_repeat_from_the_third_identical_failure() {
+    let state = tempfile::tempdir().unwrap();
+    for _ in 0..2 {
+        let (_, out, _) = failing_run(state.path(), "mismatched", "1", true);
+        let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(doc.get("repeat").is_none(), "{out}");
+    }
+    let (code, out, err) = failing_run(state.path(), "mismatched", "1", true);
+    assert_eq!(code, 1, "{err}");
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["exit"], 1);
+    assert_eq!(
+        doc["repeat"],
+        serde_json::json!({"count": 3, "key": "error: mismatched"})
+    );
+}
+
 #[test]
 fn ctx_log_strips_github_actions_prefixes() {
     let d = tempfile::tempdir().unwrap();

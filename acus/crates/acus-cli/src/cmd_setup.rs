@@ -146,7 +146,7 @@ impl Render for Setup {
 
 /// Moves or merges the guard log that older releases kept beside the config file. Each step is a
 /// check of its own, and `--dry-run` reports the steps without making them.
-fn guard_log_moves(dry_run: bool) -> Result<Vec<Check>> {
+pub(crate) fn guard_log_moves(dry_run: bool) -> Result<Vec<Check>> {
     let config = crate::config::config_file();
     let moves = guard_log::migrate(config.path(), dry_run).context("cannot move the guard log")?;
     Ok(moves

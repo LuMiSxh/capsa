@@ -70,6 +70,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = GuardConfig {
             hint_every: 10,
+            hint_min: 5,
+            hint_max: 40,
             state_dir: dir.path().join("guard-hints"),
             log_path: dir.path().join("guard.jsonl"),
         };
@@ -110,6 +112,8 @@ mod tests {
         .unwrap();
         let cfg = GuardConfig {
             hint_every: 10,
+            hint_min: 5,
+            hint_max: 40,
             state_dir: dir.path().join("guard-hints"),
             log_path: path.clone(),
         };

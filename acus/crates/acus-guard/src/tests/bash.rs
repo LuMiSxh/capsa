@@ -387,6 +387,8 @@ fn logged_calls_are_cut_to_the_logged_length() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = crate::GuardConfig {
         hint_every: 10,
+        hint_min: 5,
+        hint_max: 40,
         state_dir: dir.path().join("guard-hints"),
         log_path: dir.path().join("guard.jsonl"),
     };
