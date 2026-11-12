@@ -74,7 +74,7 @@ fn launcher_checks(r: &Report) -> Vec<Check> {
     } else {
         Status::Fail
     };
-    vec![
+    let mut checks = vec![
         check("would run", status, detail, None),
         check(
             "claude-agent-acp adapter",
@@ -82,7 +82,9 @@ fn launcher_checks(r: &Report) -> Vec<Check> {
             adapter.detail.clone(),
             adapter.hint.as_deref(),
         ),
-    ]
+    ];
+    checks.extend(freshness_checks(&r.freshness));
+    checks
 }
 
 fn zed_checks(r: &Report) -> Vec<Check> {

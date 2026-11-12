@@ -158,6 +158,14 @@ impl Sys for RealSys {
         pkg::global_bin_dir(manager)
     }
 
+    fn latest_version(&self, package: &str) -> Option<String> {
+        registry_latest(package)
+    }
+
+    fn claude_version(&self, path: &Path) -> Option<String> {
+        claude_version_text(path)
+    }
+
     #[cfg(unix)]
     fn pons_processes(&self) -> Vec<Proc> {
         let Ok(out) = std::process::Command::new("ps")
@@ -187,6 +195,8 @@ pub struct Report {
     pub searched_dirs: usize,
     /// Whether the adapter can be started through the launcher's discovery.
     pub adapter: AdapterCheck,
+    /// The adapter's version against npm's `latest`, and the bundled Claude Code against `claude`.
+    pub freshness: Freshness,
     pub settings_path: Option<String>,
     /// `None`: not found or unreadable.
     pub settings: Option<Settings>,
@@ -217,10 +227,10 @@ pub fn gather(
 ) -> Report {
     let env = &inputs.env;
     let plan = launcher::plan(env, fs, &inputs.agent_cmd);
-    let configured_adapter = plan.as_ref().ok().and_then(|spawn| {
-        configured_adapter(Path::new(&spawn.program), &spawn.args, sys, read)
-            .map(|(v, p)| (v, p.display().to_string()))
-    });
+    let configured_adapter = plan
+        .as_ref()
+        .ok()
+        .and_then(|spawn| configured_adapter(Path::new(&spawn.program), &spawn.args, sys, read));
     let would_run = plan.map(|spawn| {
         let cmd = format!(
             "{} {}",
@@ -245,6 +255,19 @@ pub fn gather(
         configured_adapter.as_ref().map(|(v, _)| v.as_str()),
         || install_hint(env, fs, sys),
     );
+    let freshness = Freshness {
+        installed: configured_adapter.as_ref().map(|(v, _)| v.clone()),
+        latest: configured_adapter
+            .as_ref()
+            .and_then(|_| sys.latest_version(PACKAGE)),
+        bundled: configured_adapter
+            .as_ref()
+            .and_then(|(_, manifest)| bundled_claude_code(manifest, read)),
+        terminal: which::find_in(env, fs, "claude", None)
+            .and_then(|path| sys.claude_version(&path))
+            .and_then(|text| leading_version(&text)),
+        hint: install_hint_for(env, fs, sys, &format!("{PACKAGE}@latest")),
+    };
     let settings_path = settings_path(env);
     let settings = settings_path
         .as_ref()
@@ -279,6 +302,7 @@ pub fn gather(
         candidates,
         searched_dirs: which::search_dirs(env, fs).len(),
         adapter,
+        freshness,
         settings_path: settings_path.map(|p| p.display().to_string()),
         settings,
         registry_adapter,

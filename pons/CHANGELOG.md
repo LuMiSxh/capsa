@@ -5,6 +5,7 @@
 ### Added
 
 - `pons self doctor --all` shows every log note; by default the report shows the newest five and a footer names the command that shows the rest.
+- `pons self doctor` warns when the Claude ACP adapter is older than the npm `latest` version, or when the Claude Code it bundles is older than the `claude` on `PATH`. Either warning gives the command that installs the latest adapter for the detected package manager. An unreachable registry, a missing `claude` or an unreadable bundle is an `ok` line that says what was not checked; the registry request has a 5-second timeout.
 
 ### Changed
 

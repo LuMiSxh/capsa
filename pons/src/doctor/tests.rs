@@ -2,8 +2,9 @@
 
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-use capsa_core::render::{Render, emit_to};
+use capsa_core::render::{Render, Status, emit_to};
 use serde_json::json;
+use std::time::{Duration, Instant};
 
 use super::*;
 
@@ -337,6 +338,223 @@ fn the_report_is_ascii_and_survives_missing_everything() {
     assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(v["groups"][0]["checks"][0]["name"], "would run");
     assert_eq!(v["groups"][0]["checks"][0]["status"], "fail");
+}
+
+/// Answers the npm registry and `claude --version`, and nothing else.
+struct Machine {
+    latest: Option<&'static str>,
+    claude: Option<&'static str>,
+}
+
+impl Sys for Machine {
+    fn latest_version(&self, _: &str) -> Option<String> {
+        self.latest.map(str::to_owned)
+    }
+    fn claude_version(&self, _: &Path) -> Option<String> {
+        self.claude.map(str::to_owned)
+    }
+}
+
+/// Gathers the freshness facts for `files` executable on `/bin`, with the adapter 0.85.1 and the
+/// Claude Code 2.1.286 bundled in its SDK.
+fn freshness_of(files: &[&str], machine: &Machine) -> Freshness {
+    let mut env = env(Platform::Linux);
+    env.path = vec![PathBuf::from("/bin")];
+    let inputs = Inputs {
+        env,
+        agent_cmd: Vec::new(),
+        log: None,
+        all_notes: false,
+    };
+    let fs = Files(files.iter().map(PathBuf::from).collect());
+    let read = |p: &Path| match p.to_str()? {
+        "/bin/package.json" => Some(format!(r#"{{"name":"{PACKAGE}","version":"0.85.1"}}"#)),
+        "/bin/node_modules/@anthropic-ai/claude-agent-sdk/package.json" => Some(
+            r#"{"name":"@anthropic-ai/claude-agent-sdk","claudeCodeVersion":"2.1.286"}"#.to_owned(),
+        ),
+        _ => None,
+    };
+    gather(&inputs, &fs, &read, machine).freshness
+}
+
+#[test]
+fn a_stale_adapter_warns_with_the_latest_install_command_of_each_manager() {
+    let machine = Machine {
+        latest: Some("0.106.0"),
+        claude: None,
+    };
+    for (manager, command) in [
+        ("/bin/pnpm", "pnpm add -g"),
+        ("/bin/bun", "bun add -g"),
+        ("/bin/npm", "npm install -g"),
+    ] {
+        let freshness = freshness_of(&["/bin/claude-agent-acp", manager], &machine);
+        let checks = freshness_checks(&freshness);
+        let latest = &checks[0];
+        assert_eq!(latest.status, Status::Warn, "{manager}");
+        assert_eq!(latest.detail, "0.85.1 is older than the npm latest 0.106.0");
+        let expected = format!("{command} {PACKAGE}@latest");
+        assert_eq!(latest.hint.as_deref(), Some(expected.as_str()), "{manager}");
+    }
+}
+
+#[test]
+fn the_adapter_at_npm_latest_passes_and_an_unreachable_registry_only_informs() {
+    let machine = Machine {
+        latest: Some("0.85.1"),
+        claude: None,
+    };
+    let current = freshness_checks(&freshness_of(&["/bin/claude-agent-acp"], &machine));
+    assert_eq!(current[0].status, Status::Ok);
+    assert_eq!(current[0].hint, None);
+
+    let offline = Machine {
+        latest: None,
+        claude: None,
+    };
+    let checks = freshness_checks(&freshness_of(
+        &["/bin/claude-agent-acp", "/bin/npm"],
+        &offline,
+    ));
+    assert_eq!(checks[0].status, Status::Ok);
+    assert!(
+        checks[0].detail.starts_with("could not check"),
+        "{}",
+        checks[0].detail
+    );
+    assert_eq!(checks[0].hint, None);
+}
+
+#[test]
+fn an_older_bundled_claude_code_than_the_terminal_warns_with_the_install_command() {
+    let machine = Machine {
+        latest: Some("0.85.1"),
+        claude: Some("2.1.311 (Claude Code)\n"),
+    };
+    let freshness = freshness_of(
+        &["/bin/claude-agent-acp", "/bin/claude", "/bin/npm"],
+        &machine,
+    );
+    assert_eq!(freshness.bundled.as_deref(), Some("2.1.286"));
+    assert_eq!(freshness.terminal.as_deref(), Some("2.1.311"));
+    let checks = freshness_checks(&freshness);
+    assert_eq!(checks[0].status, Status::Ok);
+    let bundled = &checks[1];
+    assert_eq!(bundled.name, "bundled Claude Code");
+    assert_eq!(bundled.status, Status::Warn);
+    assert_eq!(
+        bundled.detail,
+        "the adapter runs Claude Code 2.1.286, terminal has 2.1.311; models added since 2.1.286 are missing from the picker"
+    );
+    assert_eq!(
+        bundled.hint.as_deref(),
+        Some(format!("npm install -g {PACKAGE}@latest").as_str())
+    );
+}
+
+#[test]
+fn a_missing_claude_skips_the_bundled_comparison() {
+    let machine = Machine {
+        latest: Some("0.85.1"),
+        claude: Some("2.1.311"),
+    };
+    let freshness = freshness_of(&["/bin/claude-agent-acp"], &machine);
+    assert_eq!(freshness.terminal, None);
+    let checks = freshness_checks(&freshness);
+    assert_eq!(checks[1].status, Status::Ok);
+    assert_eq!(
+        checks[1].detail,
+        "skipped: claude is not on PATH to compare with"
+    );
+    assert_eq!(checks[1].hint, None);
+}
+
+#[test]
+fn the_bundled_claude_code_is_read_beside_the_adapter_or_in_its_own_modules() {
+    const SDK_JSON: &str = r#"{"claudeCodeVersion":"2.1.286"}"#;
+    let adapter = Path::new("/x/node_modules/@agentclientprotocol/claude-agent-acp/package.json");
+    let hoisted = |p: &Path| {
+        (p == Path::new("/x/node_modules/@anthropic-ai/claude-agent-sdk/package.json"))
+            .then(|| SDK_JSON.to_owned())
+    };
+    let nested = |p: &Path| {
+        (p == Path::new(
+            "/x/node_modules/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/package.json",
+        ))
+        .then(|| SDK_JSON.to_owned())
+    };
+    assert_eq!(
+        bundled_claude_code(adapter, &hoisted).as_deref(),
+        Some("2.1.286")
+    );
+    assert_eq!(
+        bundled_claude_code(adapter, &nested).as_deref(),
+        Some("2.1.286")
+    );
+    assert_eq!(bundled_claude_code(adapter, &|_| None), None);
+}
+
+#[test]
+fn the_version_line_of_claude_gives_its_number() {
+    assert_eq!(
+        leading_version("2.1.311 (Claude Code)\n").as_deref(),
+        Some("2.1.311")
+    );
+    assert_eq!(leading_version("claude: not a version"), None);
+    assert_eq!(
+        leading_version("2.1.311-beta.1 (Claude Code)").as_deref(),
+        Some("2.1.311-beta.1")
+    );
+}
+
+/// The latest-version check's status for an installed adapter against the registry's `latest`.
+fn latest_status(installed: &str, latest: &str) -> Status {
+    freshness_checks(&Freshness {
+        installed: Some(installed.to_owned()),
+        latest: Some(latest.to_owned()),
+        bundled: None,
+        terminal: None,
+        hint: String::new(),
+    })[0]
+        .status
+}
+
+#[test]
+fn a_prerelease_is_older_than_its_release_and_versions_compare_by_semver_core() {
+    assert_eq!(latest_status("1.0.0-beta", "1.0.0"), Status::Warn);
+    assert_eq!(latest_status("1.0.0-beta.1", "1.0.0"), Status::Warn);
+    assert_eq!(latest_status("1.0.0", "1.0.0-beta.1"), Status::Ok);
+    assert_eq!(latest_status("1.0.0-beta.1", "1.0.0-beta.2"), Status::Ok);
+    assert_eq!(latest_status("2.1", "2.1.0"), Status::Ok);
+    assert_eq!(latest_status("2.1.0", "2.1"), Status::Ok);
+    assert_eq!(latest_status("0.85.1+build.7", "0.85.1"), Status::Ok);
+    assert_eq!(latest_status("0.85.1", "0.106.0"), Status::Warn);
+}
+
+#[test]
+fn an_unparseable_version_never_warns() {
+    assert_eq!(latest_status("garbage", "0.85.1"), Status::Ok);
+    assert_eq!(latest_status("0.85.1", "garbage"), Status::Ok);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_command_past_its_limit_is_killed_and_reported_as_none() {
+    let started = Instant::now();
+    assert_eq!(
+        run_bounded(Path::new("/bin/sleep"), &["30"], Duration::from_millis(100)),
+        None
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert_eq!(
+        run_bounded(
+            Path::new("/bin/echo"),
+            &["2.1.311 (Claude Code)"],
+            Duration::from_secs(10)
+        )
+        .as_deref(),
+        Some("2.1.311 (Claude Code)\n")
+    );
 }
 
 #[test]
