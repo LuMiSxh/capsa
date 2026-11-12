@@ -82,6 +82,7 @@ fn uninstall(_: &UninstallArgs, _: Format) -> Result<Outcome> {
 fn uninstall(a: &UninstallArgs, format: Format) -> Result<Outcome> {
     if !a.dry_run {
         crate::cmd_service::remove_integration()?;
+        vicarius::bulletin::withdraw(&capsa_core::bulletin::dir())?;
     }
     capsa_core::update::uninstall_run(&TOOL, a.dry_run, format, |_| Ok(()))
 }

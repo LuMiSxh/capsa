@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 pub mod agents;
 pub mod balance;
+pub mod bulletin;
 pub mod config;
 pub mod gate;
 pub mod proxy;

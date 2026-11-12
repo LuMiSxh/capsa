@@ -4,6 +4,12 @@
 
 ### Added
 
+- `vicarius` publishes the DeepSeek route to the capsa bulletin as `vicarius.json`: `open` and the
+  last `balance_usd` (USD only), current for twice `balance_refresh_minutes`. It is written after
+  each balance refresh and when a 401 or 402 closes the route, on a blocking thread so no request
+  waits on the disk, which lets census read the route without a socket call. `vicarius self
+  uninstall` removes the file. A failed write is logged as `bulletin.write` in `proxy.jsonl` and
+  otherwise ignored.
 - `vicarius self doctor --fix` rewrites an outdated SessionStart hook, such as
   `vicarius hook session-start`, to `vicarius hook`, and adds it when it is missing from an agent
   that was set up. The launchd plist, the settings `env` keys and the service are left to

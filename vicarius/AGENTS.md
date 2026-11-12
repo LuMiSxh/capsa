@@ -27,6 +27,9 @@ Paths are relative to `vicarius/`. vicarius depends on `capsa-core` only.
   `tests/balance.rs`.
 - `src/refresh.rs`: `Refresher` fetches `/user/balance`, sets the gate, syncs the agent files and
   withdraws them on shutdown.
+- `src/bulletin.rs`: publishes the gate to the capsa bulletin as `vicarius.json` from a blocking
+  thread, and `withdraw` for uninstall. `tests/bulletin.rs` tests the withdraw; the publish is
+  tested in `tests/refresh/`.
 - `tests/refresh/`: the refresher against a mock balance endpoint, with a temporary agents dir.
 - `src/service/`: the launchd plist, the `Launchctl` trait (faked in tests), the settings keys and
   the hook. `src/cmd_service/`: `self setup`, `start`, `stop` and the uninstall removal.

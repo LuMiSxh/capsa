@@ -4,6 +4,7 @@
 
 use crate::agents::{SyncReport, sync};
 use crate::balance::{Availability, decide, parse};
+use crate::bulletin::{self, Publisher};
 use crate::config::Config;
 use crate::gate::{Closed, Gate, unix_now};
 use crate::proxy::DeepseekKey;
@@ -14,12 +15,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex as AsyncMutex, watch};
+use tokio::task::JoinHandle;
 
 /// The base URL of the DeepSeek API, which serves `/user/balance`.
 pub const DEEPSEEK_API_URL: &str = "https://api.deepseek.com";
 
 /// The size past which the log rotates.
-const LOG_LIMIT: u64 = 8 * 1024 * 1024;
+pub(crate) const LOG_LIMIT: u64 = 8 * 1024 * 1024;
 
 /// How long one balance request may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -43,6 +45,8 @@ pub struct RefreshConfig {
     pub agents_dir: PathBuf,
     /// The log file, shared with the proxy.
     pub log_file: PathBuf,
+    /// The directory that holds the capsa bulletin, where the gate is published.
+    pub bulletin_dir: PathBuf,
     /// The time between two agent syncs.
     pub sync_every: Duration,
 }
@@ -56,6 +60,7 @@ impl RefreshConfig {
             config_file: Config::path(),
             agents_dir: claude_agents_dir(),
             log_file: crate::proxy_log_file(),
+            bulletin_dir: capsa_core::bulletin::dir(),
             sync_every: Duration::from_secs(60),
         }
     }
@@ -133,6 +138,7 @@ pub struct Refresher {
     agents_dir: PathBuf,
     log_file: PathBuf,
     sync_every: Duration,
+    publisher: Publisher,
     config: Mutex<Config>,
     inner: Mutex<Inner>,
     refresh_lock: AsyncMutex<()>,
@@ -160,6 +166,7 @@ impl Refresher {
             None => None,
         };
         let initial = Config::load_from(&config.config_file).unwrap_or_default();
+        let publisher = Publisher::new(config.bulletin_dir, config.log_file.clone(), gate.clone());
         Ok(Refresher {
             gate,
             client,
@@ -169,10 +176,23 @@ impl Refresher {
             agents_dir: config.agents_dir,
             log_file: config.log_file,
             sync_every: config.sync_every,
+            publisher,
             config: Mutex::new(initial),
             inner: Mutex::new(Inner::default()),
             refresh_lock: AsyncMutex::new(()),
         })
+    }
+
+    /// Writes the gate to the capsa bulletin in the background, with the TTL of the config last read.
+    ///
+    /// The returned handle may be dropped; the write finishes on its own.
+    pub fn publish_gate(&self) -> JoinHandle<()> {
+        let minutes = self
+            .config
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .balance_refresh_minutes;
+        self.publisher.spawn(bulletin::ttl_secs(minutes))
     }
 
     /// Returns the last sync report and the refresh timestamps.
@@ -211,6 +231,9 @@ impl Refresher {
         match &result {
             Ok(fetched) => self.apply(fetched, generation, now),
             Err(error) => self.record_error(error),
+        }
+        if result.is_ok() {
+            let _ = self.publish_gate().await;
         }
         let mut inner = self.inner();
         inner.completed += 1;

@@ -32,6 +32,7 @@ struct Rig {
     agents: PathBuf,
     config_file: PathBuf,
     log: PathBuf,
+    bulletin: PathBuf,
 }
 
 fn rig(base: &str, key: Option<&str>) -> Rig {
@@ -47,6 +48,7 @@ fn rig(base: &str, key: Option<&str>) -> Rig {
     config.agents_dir = agents.clone();
     config.log_file = tmp.path().join("proxy.jsonl");
     config.sync_every = Duration::from_millis(100);
+    config.bulletin_dir = tmp.path().join("bulletin");
     let refresher = Arc::new(Refresher::new(config.clone(), gate.clone()).unwrap());
     Rig {
         refresher,
@@ -54,6 +56,7 @@ fn rig(base: &str, key: Option<&str>) -> Rig {
         agents,
         config_file: config.config_file,
         log: config.log_file,
+        bulletin: config.bulletin_dir,
         tmp,
     }
 }
@@ -362,4 +365,82 @@ async fn post_refresh_returns_the_updated_status() {
     assert!(after["refresh"]["next_at"].is_u64());
     assert!(after["refresh"]["last_error"].is_null());
     assert!(rig.agents.join("senior-worker-ds.md").exists());
+}
+
+fn published(rig: &Rig) -> serde_json::Value {
+    let text = std::fs::read_to_string(rig.bulletin.join("vicarius.json")).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+async fn wait_for_open(rig: &Rig, open: bool) -> serde_json::Value {
+    for _ in 0..200 {
+        let written = std::fs::read_to_string(rig.bulletin.join("vicarius.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        if let Some(value) = written.filter(|v| v["deepseek"]["value"]["open"] == open) {
+            return value;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("the bulletin never showed open={open}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_available_balance_publishes_the_open_route_with_its_balance() {
+    let mock = balance_mock(200, balance_body(true, "5.00")).await;
+    let rig = rig(&mock.url(), Some(KEY));
+    rig.refresher.refresh().await;
+    let entry = &published(&rig)["deepseek"];
+    assert_eq!(
+        entry["value"],
+        serde_json::json!({"open": true, "balance_usd": 5.0})
+    );
+    assert_eq!(entry["ttl"], 1200);
+    assert!(entry["at"].is_u64());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_402_on_refresh_publishes_the_closed_route() {
+    let mock = balance_mock(402, "{}".to_owned()).await;
+    let rig = rig(&mock.url(), Some(KEY));
+    rig.gate.open(9.0, "USD", 1);
+    rig.refresher.refresh().await;
+    assert_eq!(
+        published(&rig)["deepseek"]["value"],
+        serde_json::json!({"open": false, "balance_usd": 9.0})
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_402_from_a_proxied_request_publishes_the_closed_route() {
+    let deepseek = Mock::start(|_| Reply::full(402, &[], b"insufficient balance")).await;
+    let rig = rig("http://127.0.0.1:1", Some(KEY));
+    rig.gate.open(9.0, "USD", 1);
+    let mut config = ProxyConfig::new(0, DeepseekKey::new(KEY));
+    config.deepseek_base = format!("{}/anthropic", deepseek.url());
+    config.log_file = rig.tmp.path().join("proxy.jsonl");
+    let proxy = Proxy::bind(config, rig.gate.clone())
+        .await
+        .unwrap()
+        .with_refresher(rig.refresher.clone());
+    let addr = proxy.local_addr().unwrap();
+    tokio::spawn(proxy.run(std::future::pending()));
+    let reply = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/messages"))
+        .body(r#"{"model":"deepseek-flash","messages":[]}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), 400);
+    let value = wait_for_open(&rig, false).await;
+    assert_eq!(value["deepseek"]["value"]["balance_usd"], 9.0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_published_ttl_is_twice_the_balance_refresh_period() {
+    let mock = balance_mock(200, balance_body(true, "5.00")).await;
+    let rig = rig(&mock.url(), Some(KEY));
+    std::fs::write(&rig.config_file, "balance_refresh_minutes = 3\n").unwrap();
+    rig.refresher.refresh().await;
+    assert_eq!(published(&rig)["deepseek"]["ttl"], 360);
 }
