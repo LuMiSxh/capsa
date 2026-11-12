@@ -192,7 +192,8 @@ pub(super) fn build(layout: &Layout, now: u64) -> Result<Digest> {
 /// Replaces `digest.json` with `digest`. The file is a cache, so it is renamed into place without
 /// the syncs that make a crash keep it; a torn or missing file is built again.
 pub(super) fn write(layout: &Layout, digest: &Digest) -> Result<()> {
-    state::write_cache(&layout.digest, &serde_json::to_vec(digest)?)
+    capsa_core::fs::write_cache(&layout.digest, &serde_json::to_vec(digest)?)
+        .map_err(state::io_at(&layout.digest))
 }
 
 /// Returns the USD of a request that counts toward the limits, or `None` for any other provider.

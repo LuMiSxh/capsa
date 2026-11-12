@@ -94,24 +94,12 @@ pub(super) fn load_index(path: &Path) -> Index {
 /// empty index and the next update rescans, while `rows.jsonl`, the source of truth, is appended
 /// with a sync and deduplicates by message id.
 pub(super) fn save_index(path: &Path, index: &Index) -> Result<()> {
-    write_cache(path, &serde_json::to_vec(index)?)
+    capsa_core::fs::write_cache(path, &serde_json::to_vec(index)?).map_err(io_at(path))
 }
 
 /// Replaces `path` with `bytes` through a temporary file, so a reader sees the old file or the new.
 pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     capsa_core::fs::write_atomic(path, bytes).map_err(io_at(path))
-}
-
-/// Like [`write_atomic`] without the syncs, for a file that can be built again. A reader still
-/// sees the old file or the new one; after a crash it may see neither.
-pub(super) fn write_cache(path: &Path, bytes: &[u8]) -> Result<()> {
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
-    let written = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
-    if written.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    written.map_err(io_at(path))
 }
 
 fn read_file(path: &Path) -> Result<Vec<u8>> {
