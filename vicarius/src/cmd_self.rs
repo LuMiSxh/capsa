@@ -9,7 +9,7 @@ use capsa_core::update::{UninstallArgs, UpdateArgs};
 
 /// This binary as the self-update and uninstall code sees it.
 #[cfg(feature = "cmd-update")]
-const TOOL: capsa_core::update::Tool = capsa_core::update::Tool {
+pub(crate) const TOOL: capsa_core::update::Tool = capsa_core::update::Tool {
     name: "vicarius",
     version: env!("CARGO_PKG_VERSION"),
 };

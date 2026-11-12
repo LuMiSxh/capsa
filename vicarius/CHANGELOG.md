@@ -4,6 +4,13 @@
 
 ### Added
 
+- `vicarius self doctor` gets an `update` line in its install group: ok with `<version> is the
+  latest`, a warning with `vicarius self update` as its fix when a newer release exists, or ok with
+  `could not check for updates` when GitHub does not answer within 3 seconds. The newest release is
+  saved in `latest.json` in vicarius's state directory and reused for a day; `vicarius self update`
+  saves it too. `CAPSA_UPDATE_CHECK=off` skips the lookup and reports the line as unchecked. Only
+  `self doctor` looks, so no hook, serve or proxy start reaches the network. The check and the
+  release lookup live in `capsa-core`.
 - `vicarius` publishes the DeepSeek route to the capsa bulletin as `vicarius.json`: `open` and the
   last `balance_usd` (USD only), current for twice `balance_refresh_minutes`. It is written after
   each balance refresh and when a 401 or 402 closes the route, on a blocking thread so no request

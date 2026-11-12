@@ -32,7 +32,10 @@ fn base(home: &Path) -> Command {
         .env("XDG_CONFIG_HOME", home.join("config"))
         .env("APPDATA", home.join("config"))
         .env_remove("CLAUDE_CONFIG_DIR")
-        .env("VICARIUS_LAUNCHCTL", "/usr/bin/false");
+        .env("VICARIUS_LAUNCHCTL", "/usr/bin/false")
+        .env("XDG_STATE_HOME", home.join("state"))
+        .env("LOCALAPPDATA", home.join("state"))
+        .env("CAPSA_UPDATE_CHECK", "off");
     command
 }
 
@@ -269,6 +272,39 @@ fn status_exits_2_with_a_hint_when_the_service_is_down() {
     assert!(
         stderr.contains("hint: start the service with `vicarius self start`"),
         "{stderr}"
+    );
+}
+
+#[test]
+#[cfg(feature = "cmd-update")]
+fn doctor_reports_a_newer_release_from_the_saved_latest() {
+    let home = tempfile::tempdir().unwrap();
+    let state = home.path().join("state");
+    let dir = if cfg!(windows) {
+        state.join("vicarius").join("state")
+    } else {
+        state.join("vicarius")
+    };
+    std::fs::create_dir_all(&dir).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let body = format!(r#"{{"checked_at":{now},"latest":"99.0.0"}}"#);
+    std::fs::write(dir.join("latest.json"), body).unwrap();
+    let mut command = base(home.path());
+    command
+        .env("CAPSA_UPDATE_CHECK", "on")
+        .args(["self", "doctor"]);
+    let out = command.output().unwrap();
+    let report = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{report}{}", text(&out.stderr));
+    assert!(
+        report.contains(&format!(
+            "99.0.0 available (running {})",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{report}"
     );
 }
 

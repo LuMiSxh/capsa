@@ -10,12 +10,16 @@ use std::time::Duration;
 
 use anyhow::Result;
 use capsa_core::claude_settings::{self, Settings, SettingsError};
+#[cfg(feature = "cmd-update")]
+use capsa_core::doctor::update_check;
 use capsa_core::doctor::{check, dir_check, emit_report, log_checks, ok, same_file};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::Hint;
 use capsa_core::hooks::{Agent, HookFile, HookState};
 use capsa_core::render::{Check, Doctor, Group, Status};
+#[cfg(feature = "cmd-update")]
+use capsa_core::update;
 use capsa_core::which;
 use serde_json::Value;
 use vicarius::config::Config;
@@ -83,9 +87,19 @@ pub fn run(format: Format, fix: bool) -> Result<Outcome> {
 
 fn install_group(install: &Install, path: Check) -> Group {
     let binary = ok("binary", install.exe.display().to_string());
+    #[cfg_attr(
+        not(feature = "cmd-update"),
+        expect(unused_mut, reason = "the update check is pushed only with cmd-update")
+    )]
+    let mut checks = vec![binary, path];
+    #[cfg(feature = "cmd-update")]
+    checks.push(update_check(
+        &crate::cmd_self::TOOL,
+        &update::check(&crate::cmd_self::TOOL),
+    ));
     Group {
         name: "install",
-        checks: vec![binary, path],
+        checks,
     }
 }
 
