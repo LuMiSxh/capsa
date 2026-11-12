@@ -130,7 +130,7 @@ impl Render for BudgetOut<'_> {
 }
 
 fn run_budget(config: &Config, out: &Out) -> Result<Outcome> {
-    let month = limits::month(now_secs(), config.monthly_budget_usd, None)?;
+    let month = limits::month(now_secs(), config.monthly_budget_usd, None, None)?;
     let body = BudgetOut {
         mode: "budget",
         month: &month,

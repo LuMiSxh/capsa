@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const CACHE: &str = "prices.json";
-/// Refresh warnings go here, not to `hook.jsonl`, which `census self doctor` reads as hook errors.
+/// Refresh warnings go here, beside the price list they describe.
 pub const LOG: &str = "prices.jsonl";
 pub const LOG_LIMIT: u64 = 256 * 1024;
 const URL: &str =

@@ -12,7 +12,7 @@ use capsa_core::doctor::{
 use capsa_core::exit::Outcome;
 use capsa_core::hint::ResultExt;
 use capsa_core::hooks::{Agent, HookFile, StatusLineState};
-use capsa_core::log;
+use capsa_core::log::{self, Level};
 use capsa_core::render::{Check, Doctor, Group, Status};
 use capsa_core::skill::{self, SkillState, Target, installed_target};
 use census::config::Config;
@@ -221,12 +221,18 @@ fn state_group() -> Group {
 }
 
 /// Reports the errors the hook has logged, the newest last. Past errors warn; they do not fail.
+/// Warning lines in the same file are not errors. A line without a level predates the envelope's
+/// level and was always an error.
 fn hook_error_check(file: &Path) -> Check {
     let entries = match log::read::<ErrorLine>(file) {
         Ok(entries) => entries,
         Err(e) => return check("hook errors", Status::Warn, e.to_string(), None),
     };
-    let Some(last) = entries.last() else {
+    let errors: Vec<_> = entries
+        .iter()
+        .filter(|e| e.level.is_none_or(|level| level == Level::Error))
+        .collect();
+    let Some(last) = errors.last() else {
         return ok("hook errors", "no errors");
     };
     check(
@@ -234,7 +240,7 @@ fn hook_error_check(file: &Path) -> Check {
         Status::Warn,
         format!(
             "{} error(s); last at {}: {}",
-            entries.len(),
+            errors.len(),
             last.ts,
             last.fields.message
         ),

@@ -33,6 +33,19 @@
 
 ### Changed
 
+- `census hook` skips the full transcript sweep when the prompt's transcript is fresh: the last
+  complete sweep is under a minute old and the transcript is the running session. Only that
+  transcript is read. Benchmark: `census/benches/hook_sweep.sh`, release build, 1400 transcripts,
+  three runs of 50 calls; p50 13.4 to 13.9 ms before, 10.7 to 11.0 ms after.
+- `census hook` at `SessionStart` refreshes the bulletin's `guard_follow` rates when they are older
+  than six hours, so the census bulletin is current for 7 days. `census usage --guard` always
+  refreshes them. A failed refresh is logged as a warning to `hook.jsonl`, and the hook still
+  prints. The refresh costs the session start, not a prompt. Benchmark:
+  `EVENT=SessionStart census/benches/hook_sweep.sh`, release build, a guard log of 1000 lines,
+  p50 1.7 to 1.8 ms with no refresh (before this change), 1.9 ms with a fresh bulletin, and 10.4 to
+  10.6 ms when the bulletin is stale (`STALE=1`).
+- `census self doctor` counts only the error lines of `hook.jsonl` as hook errors; the warnings
+  that the bulletin refresh logs there are not errors.
 - `census usage --guard --json` gains `observed` and `follow` on each rule. The change is additive,
   and the golden report is updated. `census usage --handbacks --json` is unchanged.
 

@@ -12,7 +12,7 @@ use crate::context;
 use crate::limits::{DailyStatus, LimitStatus, MonthStatus};
 use serde::{Deserialize, de::IgnoredAny};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The longest `additionalContext` the hook emits, in characters.
 const MAX_CHARS: usize = 900;
@@ -96,9 +96,10 @@ fn announce(
 /// Returns the hook output for `input`, the JSON text of `hookSpecificOutput`, or `None` when
 /// there is nothing new to say: a subagent, another event, or no level crossed.
 ///
-/// `SessionStart` points at the report commands once per session. `limits` and `month` run only
-/// for the other events, so the caller can bound their time. The caller supplies the one that the
-/// mode needs and `None` from the other.
+/// `SessionStart` points at the report commands once per session and refreshes the census
+/// bulletin. `limits` and `month` run only for the other events, so the caller can bound their
+/// time. The caller supplies the one that the mode needs and `None` from the other; each receives
+/// the transcript of the input, which the ledger reads first.
 ///
 /// # Errors
 /// Fails when the input is not JSON or the hint state cannot be read or written; the levels shown
@@ -107,8 +108,8 @@ pub fn run(
     input: &str,
     now: u64,
     config: &Config,
-    limits: impl FnOnce() -> Option<LimitStatus>,
-    month: impl FnOnce() -> Option<MonthStatus>,
+    limits: impl FnOnce(Option<&Path>) -> Option<LimitStatus>,
+    month: impl FnOnce(Option<&Path>) -> Option<MonthStatus>,
 ) -> Result<Option<String>, HookError> {
     let input: Input = serde_json::from_str(input)?;
     let event = match input.hook_event_name.as_deref() {
@@ -123,6 +124,7 @@ pub fn run(
         return Ok(None);
     };
     if event == "SessionStart" {
+        refresh_bulletin(now);
         let messages = announce(&file, None, None, None, None, now, Opening::Session)?;
         return Ok(output(event, &messages));
     }
@@ -137,8 +139,8 @@ pub fn run(
         .context
         .map(|(model, tokens)| context::measure_with(tokens, Some(&model), settings));
     let compacted = ends.compacted;
-    let limits = limits();
-    let month = month();
+    let limits = limits(input.transcript_path.as_deref());
+    let month = month(input.transcript_path.as_deref());
     let budget = month.as_ref().map(|m| Budget {
         month: m,
         daily: DailyStatus::of(m, config.daily_limit_usd),
@@ -159,6 +161,14 @@ pub fn run(
         opening,
     )?;
     Ok(output(event, &messages))
+}
+
+/// Writes the guard follow rates to the census bulletin. A failure is logged as a warning, and the
+/// hook carries on.
+fn refresh_bulletin(now: u64) {
+    if let Err(e) = crate::usage::refresh_guard_follow_unless_recent(now) {
+        state::log_warn("bulletin.refresh", &e.to_string());
+    }
 }
 
 /// Returns the hook output for `messages`, or `None` when there is nothing to say.

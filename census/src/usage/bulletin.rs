@@ -11,6 +11,8 @@ const TOOL: &str = "census";
 
 /// How long a written guard follow rate stays current.
 pub const GUARD_FOLLOW_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+/// How old the guard follow rates of the bulletin may be before a session start writes them again.
+const GUARD_FOLLOW_REFRESH_SECS: u64 = 6 * 60 * 60;
 
 /// The census bulletin. A field added later is an `Option` with `#[serde(default)]`, so a bulletin
 /// written by an older census still reads.
@@ -51,6 +53,24 @@ pub fn write_guard_follow(entries: &[GuardEntry], now: u64) -> Result<(), Bullet
 /// Fails when the bulletin cannot be encoded or written.
 pub fn refresh_guard_follow(now: u64) -> Result<(), BulletinError> {
     write_guard_follow(&read_log(0, None), now)
+}
+
+/// Refreshes the guard follow rates unless the bulletin's were written less than six hours before
+/// `now`. A missing or unreadable bulletin counts as stale.
+///
+/// Session start calls this, where the log read is the cost. `census usage --guard` always
+/// refreshes through `refresh_guard_follow`.
+///
+/// # Errors
+/// Fails when the bulletin cannot be encoded or written.
+pub fn refresh_guard_follow_unless_recent(now: u64) -> Result<(), BulletinError> {
+    let recent = bulletin::read::<Bulletin>(TOOL).is_some_and(|b| {
+        b.guard_follow.at <= now && now - b.guard_follow.at < GUARD_FOLLOW_REFRESH_SECS
+    });
+    if recent {
+        return Ok(());
+    }
+    refresh_guard_follow(now)
 }
 
 /// Returns the guard follow rates while they are current at `now`, or `None` when the bulletin is

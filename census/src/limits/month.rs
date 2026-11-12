@@ -7,6 +7,7 @@ use super::cost::Costed;
 use super::{History, LimitsError};
 use crate::ledger::{Ledger, Opts};
 use serde::Serialize;
+use std::path::Path;
 use std::time::Instant;
 
 /// The part of the month that is the local day of `now`.
@@ -126,6 +127,7 @@ pub fn month_stored(now: u64, budget_usd: Option<f64>) -> Result<MonthStatus, Li
 }
 
 /// Returns the month status at `now` after a ledger update that stops reading at `deadline`.
+/// `current` is the running session's transcript, which a fresh sweep reads alone.
 ///
 /// # Errors
 /// Fails when the ledger cannot be read or written.
@@ -133,9 +135,11 @@ pub fn month(
     now: u64,
     budget_usd: Option<f64>,
     deadline: Option<Instant>,
+    current: Option<&Path>,
 ) -> Result<MonthStatus, LimitsError> {
     let ledger = Ledger::open_and_update(&Opts {
         deadline,
+        current: current.map(Path::to_path_buf),
         ..Opts::defaults(now)
     })?;
     from_ledger(&ledger, now, budget_usd)

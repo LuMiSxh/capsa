@@ -251,6 +251,6 @@ fn today(config: &Config) -> Result<Option<DailyStatus>> {
     if config.mode != Mode::Budget {
         return Ok(None);
     }
-    let month = limits::month(now_secs(), config.monthly_budget_usd, None)?;
+    let month = limits::month(now_secs(), config.monthly_budget_usd, None, None)?;
     Ok(DailyStatus::of(&month, config.daily_limit_usd))
 }

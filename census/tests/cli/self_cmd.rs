@@ -238,3 +238,29 @@ fn doctor_warns_on_a_legacy_config_json_and_names_config_set() {
         "{legacy}"
     );
 }
+
+#[test]
+fn doctor_does_not_count_warnings_as_hook_errors() {
+    let home = Scratch::new("cli-doctor-hook-warn");
+    let cwd = home.path().to_path_buf();
+    home.write(
+        "state/census/hook.jsonl",
+        &jsonl(&[
+            json!({"ts": 10, "level": "error", "event": "hook.error", "message": "not JSON"}),
+            json!({"ts": 30, "level": "warn", "event": "bulletin.refresh", "message": "full"}),
+        ]),
+    );
+    let out = census(home.path(), &cwd, &["self", "doctor", "--json"], "", &[]);
+    let v: Value = serde_json::from_slice(&out.stdout).expect("doctor --json is one value");
+    let check = v["groups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|g| g["checks"].as_array().into_iter().flatten())
+        .find(|c| c["name"] == "hook errors")
+        .expect("the hook errors check");
+    assert!(
+        check.to_string().contains("1 error(s); last at 10"),
+        "{check}"
+    );
+}

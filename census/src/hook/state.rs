@@ -70,6 +70,15 @@ pub struct ErrorLine {
 
 /// Appends a `hook.error` line to `error_log`. Failures are ignored: the hook must stay silent.
 pub fn log_error(message: &str) {
+    append_line(Level::Error, "hook.error", message);
+}
+
+/// Appends a warning with `event` to `error_log`. Failures are ignored, as for `log_error`.
+pub fn log_warn(event: &str, message: &str) {
+    append_line(Level::Warn, event, message);
+}
+
+fn append_line(level: Level, event: &str, message: &str) {
     let Some(file) = error_log() else {
         return;
     };
@@ -79,5 +88,5 @@ pub fn log_error(message: &str) {
     let fields = ErrorLine {
         message: message.replace('\n', " "),
     };
-    let _ = log::append(&file, LOG_LIMIT, Level::Error, "hook.error", &fields);
+    let _ = log::append(&file, LOG_LIMIT, level, event, &fields);
 }

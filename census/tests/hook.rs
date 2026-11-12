@@ -13,6 +13,7 @@ const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
 };
 use serde_json::{Value, json};
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 /// 2026-10-14 08:00 UTC, the time of every hook call in these tests.
@@ -161,6 +162,74 @@ fn a_session_start_points_at_the_report_commands_once() {
          do not read ~/.claude transcripts."
     );
     assert_eq!(h.hook(h.input("SessionStart", 48_000).as_bytes()), None);
+}
+
+#[test]
+fn a_session_start_writes_the_guard_follow_bulletin() {
+    let h = Hook::new("hook-bulletin");
+    h.hook(h.input("SessionStart", 48_000).as_bytes());
+    let text = std::fs::read_to_string(h.home.path().join("state/capsa/bulletin/census.json"))
+        .expect("the census bulletin is written at session start");
+    let bulletin: Value = serde_json::from_str(&text).expect("bulletin json");
+    assert_eq!(bulletin["guard_follow"]["at"], NOW);
+}
+
+/// Returns the `at` of the census bulletin's guard follow rates, if the bulletin reads.
+fn bulletin_at(h: &Hook) -> Option<u64> {
+    let path = h.home.path().join("state/capsa/bulletin/census.json");
+    let bulletin: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    bulletin["guard_follow"]["at"].as_u64()
+}
+
+#[test]
+fn a_session_start_keeps_a_fresh_bulletin() {
+    let h = Hook::new("hook-bulletin-fresh");
+    h.home.write(
+        "state/capsa/bulletin/census.json",
+        &json!({"guard_follow": {"at": NOW - 3600, "ttl": 604_800, "value": {"grep": 0.5}}})
+            .to_string(),
+    );
+    h.hook(h.input("SessionStart", 48_000).as_bytes());
+    assert_eq!(bulletin_at(&h), Some(NOW - 3600));
+}
+
+#[test]
+fn a_session_start_rewrites_a_bulletin_older_than_six_hours() {
+    let h = Hook::new("hook-bulletin-stale");
+    h.home.write(
+        "state/capsa/bulletin/census.json",
+        &json!({"guard_follow": {"at": NOW - 6 * 3600, "ttl": 604_800, "value": {}}}).to_string(),
+    );
+    h.hook(h.input("SessionStart", 48_000).as_bytes());
+    assert_eq!(bulletin_at(&h), Some(NOW));
+}
+
+/// Returns the file size that the ledger index records for `file`, if it has one.
+fn indexed_size(h: &Hook, file: &Path) -> Option<u64> {
+    let text = std::fs::read_to_string(h.home.path().join("state/census/index.json")).ok()?;
+    let index: Value = serde_json::from_str(&text).ok()?;
+    index["files"][file.to_string_lossy().as_ref()]["size"].as_u64()
+}
+
+#[test]
+fn a_prompt_within_a_minute_of_a_sweep_reads_only_its_own_transcript() {
+    let mut h = Hook::new("hook-fresh-sweep");
+    let own = h.transcript(48_000);
+    let other = h.home.write(
+        "claude/projects/app/s2.jsonl",
+        &format!("{}\n", request(1_000)),
+    );
+    let input = hook_input("UserPromptSubmit", &own);
+    h.hook(input.as_bytes());
+    let swept = indexed_size(&h, &other);
+    assert!(swept.is_some(), "the first prompt sweeps every transcript");
+    h.home.write(
+        "claude/projects/app/s2.jsonl",
+        &format!("{}\n{}\n", request(1_000), request(2_000)),
+    );
+    h.now = NOW + 10;
+    h.hook(input.as_bytes());
+    assert_eq!(indexed_size(&h, &other), swept);
 }
 
 #[test]

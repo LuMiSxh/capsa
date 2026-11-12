@@ -14,7 +14,9 @@ mod read;
 pub(crate) mod time;
 mod tools;
 
-pub use bulletin::{guard_follow, refresh_guard_follow, write_guard_follow};
+pub use bulletin::{
+    guard_follow, refresh_guard_follow, refresh_guard_follow_unless_recent, write_guard_follow,
+};
 pub use follow::{Follow, MIN_SAMPLE, WINDOW_SECS, follow_rates};
 pub use guard::{
     GuardEntry, ProjectRule, Tally, by_project, by_rule, log_path as guard_log_path, read_log,

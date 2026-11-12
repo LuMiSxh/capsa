@@ -9,6 +9,7 @@ use census::config::{Config, Mode};
 use census::hook;
 use census::limits::{self, LimitStatus, MonthStatus};
 use std::io::{IsTerminal, Read, Write};
+use std::path::Path;
 use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
@@ -48,10 +49,14 @@ pub fn run() -> Outcome {
             &input,
             now,
             &config,
-            || (!budget).then(|| limits_within(start, now)).flatten(),
-            || {
+            |current| {
+                (!budget)
+                    .then(|| limits_within(start, now, current))
+                    .flatten()
+            },
+            |current| {
                 budget
-                    .then(|| month_within(start, now, config.monthly_budget_usd))
+                    .then(|| month_within(start, now, current, config.monthly_budget_usd))
                     .flatten()
             },
         );
@@ -86,16 +91,30 @@ fn read_input() -> Option<String> {
 
 /// Computes the limits on a helper thread and gives up when `limits_deadline` has passed since
 /// `start`. A busy ledger lock already makes `limits::status` skip its update.
-fn limits_within(start: Instant, now: u64) -> Option<LimitStatus> {
+fn limits_within(start: Instant, now: u64, current: Option<&Path>) -> Option<LimitStatus> {
+    // The helper thread outlives this call when it misses the deadline, so it owns the path.
+    let current = current.map(Path::to_path_buf);
     within(start, move || {
-        limits::status_by(now, Some(start + ledger_deadline())).ok()
+        limits::status_by(now, Some(start + ledger_deadline()), current.as_deref()).ok()
     })
 }
 
 /// Like `limits_within`, for the spend of the month in budget mode.
-fn month_within(start: Instant, now: u64, budget: Option<f64>) -> Option<MonthStatus> {
+fn month_within(
+    start: Instant,
+    now: u64,
+    current: Option<&Path>,
+    budget: Option<f64>,
+) -> Option<MonthStatus> {
+    let current = current.map(Path::to_path_buf);
     within(start, move || {
-        limits::month(now, budget, Some(start + ledger_deadline())).ok()
+        limits::month(
+            now,
+            budget,
+            Some(start + ledger_deadline()),
+            current.as_deref(),
+        )
+        .ok()
     })
 }
 

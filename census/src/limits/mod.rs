@@ -31,6 +31,7 @@ use clock::HOUR_S;
 use cost::Costed;
 use pattern::{Expect, WEEK_HOURS};
 use serde::Serialize;
+use std::path::Path;
 use std::time::Instant;
 use window::Span;
 
@@ -152,16 +153,21 @@ impl Table {
 /// # Errors
 /// Fails when the ledger or the snapshot file cannot be read or written.
 pub fn status(now: u64) -> Result<LimitStatus, LimitsError> {
-    status_by(now, None)
+    status_by(now, None, None)
 }
 
 /// Like [`status`], but the ledger update stops reading transcripts at `deadline`, keeps its
-/// progress and the limits are computed from what is read so far.
+/// progress and the limits are computed from what is read so far. `current` is the running
+/// session's transcript, which a fresh sweep reads alone (see [`crate::ledger::Opts::current`]).
 ///
 /// # Errors
 /// Fails when the ledger or the snapshot file cannot be read or written.
-pub fn status_by(now: u64, deadline: Option<Instant>) -> Result<LimitStatus, LimitsError> {
-    let (ledger, snapshots) = load(now, deadline)?;
+pub fn status_by(
+    now: u64,
+    deadline: Option<Instant>,
+    current: Option<&Path>,
+) -> Result<LimitStatus, LimitsError> {
+    let (ledger, snapshots) = load(now, deadline, current)?;
     let priced = ledger.priced()?;
     let history = History {
         priced: &priced,
@@ -175,7 +181,7 @@ pub fn status_by(now: u64, deadline: Option<Instant>) -> Result<LimitStatus, Lim
 /// # Errors
 /// Fails when the ledger or the snapshot file cannot be read or written.
 pub fn usage_by(now: u64, kind: Kind) -> Result<Table, LimitsError> {
-    let (ledger, snapshots) = load(now, None)?;
+    let (ledger, snapshots) = load(now, None, None)?;
     let costs = Costed::from_priced(&ledger.priced()?);
     let expect = Expect::build(&costs, weekly_spans(&snapshots), now);
     Ok(Table {
@@ -185,9 +191,14 @@ pub fn usage_by(now: u64, kind: Kind) -> Result<Table, LimitsError> {
     })
 }
 
-fn load(now: u64, deadline: Option<Instant>) -> Result<(Ledger, Vec<Snapshot>), LimitsError> {
+fn load(
+    now: u64,
+    deadline: Option<Instant>,
+    current: Option<&Path>,
+) -> Result<(Ledger, Vec<Snapshot>), LimitsError> {
     let ledger = Ledger::open_and_update(&Opts {
         deadline,
+        current: current.map(Path::to_path_buf),
         ..Opts::defaults(now)
     })?;
     let snapshots = census_snapshot::read_since(0)?;
