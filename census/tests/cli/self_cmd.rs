@@ -44,6 +44,48 @@ fn doctor_is_one_json_value_and_exits_1_only_when_a_check_fails() {
 }
 
 #[test]
+#[cfg(feature = "cmd-update")]
+fn doctor_reports_a_newer_release_from_the_saved_latest() {
+    let home = Scratch::new("cli-doctor-update");
+    let cwd = home.path().to_path_buf();
+    let home_str = home.path().to_str().expect("utf-8 path");
+    let state = home.path().join("state");
+    let state_str = state.to_str().expect("utf-8 path");
+    let dir = if cfg!(windows) {
+        state.join("census").join("state")
+    } else {
+        state.join("census")
+    };
+    std::fs::create_dir_all(&dir).expect("state dir");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_secs();
+    let body = format!(r#"{{"checked_at":{now},"latest":"99.0.0"}}"#);
+    std::fs::write(dir.join("latest.json"), body).expect("latest.json");
+    let extra = [
+        ("HOME", home_str),
+        ("XDG_STATE_HOME", state_str),
+        ("LOCALAPPDATA", state_str),
+        ("CAPSA_UPDATE_CHECK", "on"),
+    ];
+    let out = census(home.path(), &cwd, &["self", "doctor", "--json"], "", &extra);
+    let v: Value = serde_json::from_slice(&out.stdout).expect("doctor --json is one value");
+    let update = v["groups"][0]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|c| c["name"] == "update")
+        .expect("update check");
+    assert_eq!(update["status"], "warn");
+    assert_eq!(
+        update["detail"],
+        format!("99.0.0 available (running {})", env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(update["hint"], "run census self update");
+}
+
+#[test]
 fn doctor_fix_repairs_the_status_line_and_hooks_then_has_nothing_to_fix() {
     let home = Scratch::new("cli-doctor-fix");
     let cwd = home.path().to_path_buf();

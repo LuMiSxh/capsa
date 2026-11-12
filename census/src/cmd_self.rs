@@ -17,7 +17,7 @@ pub(crate) const SKILL: Skill = Skill {
 
 /// This binary as the self-update and uninstall code sees it.
 #[cfg(feature = "cmd-update")]
-const TOOL: capsa_core::update::Tool = capsa_core::update::Tool {
+pub(crate) const TOOL: capsa_core::update::Tool = capsa_core::update::Tool {
     name: "census",
     version: env!("CARGO_PKG_VERSION"),
 };

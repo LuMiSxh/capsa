@@ -6,6 +6,8 @@ use crate::cmd_self::SKILL;
 use crate::out::Out;
 use anyhow::{Context, Result};
 use capsa_core::config::legacy_json;
+#[cfg(feature = "cmd-update")]
+use capsa_core::doctor::update_check;
 use capsa_core::doctor::{
     check, dir_check, emit_report, log_checks, ok, path_check, repair_hooks, repair_skill,
 };
@@ -15,6 +17,8 @@ use capsa_core::hooks::{Agent, HookFile, StatusLineState};
 use capsa_core::log::{self, Level};
 use capsa_core::render::{Check, Doctor, Group, Status};
 use capsa_core::skill::{self, SkillState, Target, installed_target};
+#[cfg(feature = "cmd-update")]
+use capsa_core::update;
 use census::config::Config;
 use census::hook::{self, ErrorLine};
 use census::usage::{PRICE_LOG, PRICE_LOG_LIMIT};
@@ -65,13 +69,23 @@ fn install_group() -> Group {
         capsa_core::which::find(TOOL).as_deref(),
         exe.as_deref(),
     );
+    #[cfg_attr(
+        not(feature = "cmd-update"),
+        expect(unused_mut, reason = "the update check is pushed only with cmd-update")
+    )]
+    let mut checks = vec![
+        ok("version", format!("census {}", env!("CARGO_PKG_VERSION"))),
+        binary,
+        on_path,
+    ];
+    #[cfg(feature = "cmd-update")]
+    checks.push(update_check(
+        &crate::cmd_self::TOOL,
+        &update::check(&crate::cmd_self::TOOL),
+    ));
     Group {
         name: "install",
-        checks: vec![
-            ok("version", format!("census {}", env!("CARGO_PKG_VERSION"))),
-            binary,
-            on_path,
-        ],
+        checks,
     }
 }
 

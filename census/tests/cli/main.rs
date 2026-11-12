@@ -51,6 +51,7 @@ fn census(home: &Path, cwd: &Path, args: &[&str], stdin: &str, extra: &[(&str, &
         .env_remove("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
         .env_remove("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")
         .env("CENSUS_NO_PRICE_REFRESH", "1")
+        .env("CAPSA_UPDATE_CHECK", "off")
         .envs(extra.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
