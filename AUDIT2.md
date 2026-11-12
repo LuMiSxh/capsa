@@ -75,6 +75,9 @@ A daemon for `census statusline` or SessionStart gains nothing: both already run
 | M5 | Doctors report but never repair; every fix is a command the user retypes. `self doctor --fix` runs the safe fixes (missing hook, stale skill, missing dir) and prints what it did. | all doctors | M |
 | M6 | `acus ctx` does not notice the same build failing repeatedly in a session. After the third identical failure, lead with the previous failure's fix line. Needs a small per-session state file written after the command. | acus `cmd_ctx` | M |
 | M7 | `census usage --handbacks` shows counts per week, not which role handed back after how long. | census `usage/handback.rs:9-10`, `usage_views/handbacks.rs` | S |
+| M9 | Proposed, not scheduled: on SubagentStop census reports the returned agent's tokens, cost and duration, so roles are chosen from real numbers. | census hooks | M |
+| M10 | Proposed, not scheduled: the status line and warnings say whether the week runs ahead of or behind plan, not only its percentage. | census `hook/levels.rs`, `limits/forecast.rs` | S |
+| M11 | Proposed, not scheduled: the SessionStart line names hand-backs per role over 7 days. Needs M7. | census hook, `usage/handback.rs` | S |
 | M8 | The vicarius SessionStart line is fixed prose; it could name roles where -ds results were handed back often. Hand-backs are inferred from spawn timing only, so this needs a minimum sample. | vicarius `cmd_hook.rs:70-101` | L |
 
 ### Cross-tool (X)
@@ -87,7 +90,7 @@ census reads `guard.jsonl` by contract. vicarius and acus know nothing about the
 | X1 | No shared place for a tool's current status. Add `capsa_core::bulletin`: one small typed JSON per tool in `state_dir("capsa")/bulletin/<tool>.json`, written atomically off the hot path, every value with a timestamp and TTL; a missing or stale file reads as unknown. | `core/src/paths.rs:8-22` | M |
 | X2 | `census statusline` cannot show the DeepSeek balance or gate without a socket call. vicarius writes its gate and balance to the bulletin on each refresh; the statusline reads it. | vicarius `refresh.rs`, census `cmd_statusline.rs:20-42` | S |
 | X4 | Guard blocks are visible only in `census usage --guard`. acus writes a per-session count at SessionStart and on hint writes (already off the decision), census shows it in the statusline. | acus `hints.rs`, census `statusline.rs` | S |
-| X6 | No doctor knows whether the sibling tools are installed and healthy. Each `self doctor` gets a `neighbours` group from the bulletins and `which::find` (not installed = info). | all doctors | S |
+| X6 | No doctor knows whether the sibling tools are installed and healthy. Each `self doctor` gets an `interop` group: per sibling, whether it is installed (`which::find`), its bulletin age, and which interop feature uses it, active or off (not installed = info, never a warning). Every tool works alone: an interop feature is off when the sibling is missing, and `self uninstall` removes the tool's own bulletin so a stale one is not read. | all doctors, `self uninstall` | S |
 | X8 | Update awareness: each tool records its version and the last known latest release in its bulletin; doctors and the statusline show "update available". Pairs with K19. | `core/src/update` | S |
 
 ## Order
@@ -137,3 +140,13 @@ Rules for every agent:
 Deferred: M8 (needs better hand-back data), D3/D4 if answered no, D5 (own step with security
 review), K17 (keep `Code` for `ctx`), K21 (`Hint` is a trait; `Check` already keeps its hint as a
 separate field), C14-C16 from round 1.
+
+T4 and T5, measured 2026-11-12 and dropped:
+
+- T4: `acus hook` 2.21 ms p50 = process floor 0.74 + Rust exec and std init ~0.5 + acus startup
+  (clap, paging) ~0.55 + hook input ~0.16 + decision, reply and log ~0.22. Levers: a separate
+  `acus-hook` binary ~0.4-0.5 ms, dispatch before clap ~0.1-0.3 ms. Not worth a change.
+- T5: `vicarius --version` 3.33 ms against acus 2.20 ms; ~1.0-1.3 ms is dyld loading
+  Security and CoreFoundation, pulled in only by `rustls-platform-verifier` through reqwest's
+  `rustls` feature, with no feature to drop them. The only lever is a second `vicarius-hook`
+  binary, for about 1 ms once per session. Not worth it.
