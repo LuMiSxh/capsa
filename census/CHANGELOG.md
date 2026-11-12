@@ -30,6 +30,12 @@
   are missing or outdated, in an existing Claude Code setup. Each repair is listed under `fixed`,
   and `--json` adds the same array. A missing skill, a statusLine that census does not own,
   deletions, config values and the network are left alone.
+- `census statusline --line` adds two segments after the usage, read from the capsa bulletin:
+  `ds $8.66` for vicarius's DeepSeek gate (`ds open` without a balance, `ds off` when closed), and
+  `guard 3` for the session's guard blocks from acus, shown only above 0. A segment appears only
+  while its bulletin is current; a missing, stale or unreadable bulletin gives none. Benchmark:
+  release build, `hyperfine -N -w 5 -r 50` on a sample input with both bulletins current, mean
+  1.7 ms before and 1.7 ms after (σ 0.1 ms), memory 3.1 to 3.2 MiB. Only `--line` reads them.
 
 ### Changed
 

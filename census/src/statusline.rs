@@ -16,6 +16,7 @@ const TAIL_BYTES: u64 = 8192;
 /// The fields of the statusLine JSON that census reads.
 #[derive(Deserialize)]
 pub struct Input {
+    pub session_id: Option<String>,
     pub model: Option<Model>,
     pub context_window: Option<ContextWindow>,
     pub rate_limits: Option<RateLimits>,
@@ -112,7 +113,7 @@ pub fn record(file: &Path, snapshots: &[Snapshot]) -> Result<usize, SnapshotErro
 /// Renders the status line, such as `ctx 44k/400k · 5h 6% · wk 1%`: the context against the
 /// compaction threshold, then each limit window of `snapshots`. Empty when there is nothing
 /// to show.
-pub fn line(input: &Input, snapshots: &[Snapshot]) -> String {
+pub fn line(input: &Input, snapshots: &[Snapshot], interop: Vec<String>) -> String {
     let mut parts: Vec<String> = context_part(input).into_iter().collect();
     for snapshot in snapshots {
         let label = match snapshot.window {
@@ -121,13 +122,15 @@ pub fn line(input: &Input, snapshots: &[Snapshot]) -> String {
         };
         parts.push(format!("{label} {:.0}%", snapshot.used_percentage));
     }
+    parts.extend(interop);
     parts.join(" · ")
 }
 
 /// Renders the status line of the budget mode, such as `ctx 44k/400k · $42/$200 21% →$310`: the
 /// context, then the spend of the month with its budget and the projection to the end of the
-/// month, which is marked `↑` instead of `→` when it exceeds the budget.
-pub fn budget_line(input: &Input, month: &MonthStatus) -> String {
+/// month, which is marked `↑` instead of `→` when it exceeds the budget. The `interop` segments
+/// come last.
+pub fn budget_line(input: &Input, month: &MonthStatus, interop: Vec<String>) -> String {
     let mut parts: Vec<String> = context_part(input).into_iter().collect();
     let arrow = if month.projected_over { '↑' } else { '→' };
     parts.push(match (month.budget_usd, month.percent) {
@@ -137,6 +140,7 @@ pub fn budget_line(input: &Input, month: &MonthStatus) -> String {
         ),
         _ => format!("${:.0} {arrow}${:.0}", month.spent_usd, month.projected_usd),
     });
+    parts.extend(interop);
     parts.join(" · ")
 }
 

@@ -57,6 +57,7 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
 - `src/session.rs`: which transcript is the session, and the summary of a session with its
   subagents.
 - `src/statusline.rs`: the statusLine input, its limit snapshots and the status line text.
+- `src/interop.rs`: the capsa bulletins of vicarius and acus, read as status line segments.
 - `data/prices.snapshot.json`: the price table built into the binary, trimmed from LiteLLM's file
   (see Commands to regenerate it).
 - `src/transcript.rs`: the transcript records that the session and context views read.

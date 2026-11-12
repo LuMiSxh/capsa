@@ -4,6 +4,7 @@
 pub mod config;
 pub mod context;
 pub mod hook;
+pub mod interop;
 pub mod ledger;
 pub mod limits;
 pub mod session;

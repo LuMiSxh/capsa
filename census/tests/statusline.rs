@@ -68,5 +68,5 @@ fn record_compares_with_the_tail_of_a_long_file() {
 fn line_lists_the_present_windows() {
     let input = parse(LIMITS).expect("parses");
     let snaps = snapshots(&input, 100);
-    assert_eq!(line(&input, &snaps), "5h 6% · wk 1%");
+    assert_eq!(line(&input, &snaps, Vec::new()), "5h 6% · wk 1%");
 }
