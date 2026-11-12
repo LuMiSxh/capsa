@@ -18,16 +18,30 @@ static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 /// Fails when the temporary file cannot be created, written or synced, or when the rename fails.
 /// The temporary file is removed on failure, and `path` is left as it was.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace(path, bytes, true)
+}
+
+/// Replaces the file at `path` with `bytes` like [`write_atomic`], without syncs. A reader still
+/// sees the old file or the new one, but after a crash the file may be missing or empty, so use it
+/// only for a file that can be built again.
+///
+/// # Errors
+/// Same as [`write_atomic`].
+pub fn write_cache(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace(path, bytes, false)
+}
+
+fn replace(path: &Path, bytes: &[u8], durable: bool) -> io::Result<()> {
     let (tmp, mut file) = create_temp(path)?;
     let written = keep_permissions(path, &file)
         .and_then(|()| file.write_all(bytes))
-        .and_then(|()| file.sync_all());
+        .and_then(|()| if durable { file.sync_all() } else { Ok(()) });
     drop(file);
     let result = written.and_then(|()| fs::rename(&tmp, path));
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
     }
-    if result.is_ok() {
+    if durable && result.is_ok() {
         // The new bytes are already in place; some FUSE and network mounts refuse a directory
         // sync, and reporting that as a failed write would be wrong.
         let _ = sync_parent(path);
@@ -74,7 +88,7 @@ fn create_temp(path: &Path) -> io::Result<(PathBuf, File)> {
 
 #[cfg(test)]
 mod tests {
-    use super::write_atomic;
+    use super::{write_atomic, write_cache};
     use std::path::Path;
 
     fn names(dir: &Path) -> Vec<String> {
@@ -92,6 +106,16 @@ mod tests {
         let path = dir.path().join("settings.json");
         write_atomic(&path, b"{}\n").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"{}\n");
+    }
+
+    #[test]
+    fn cache_write_replaces_an_existing_file_and_leaves_no_temporary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("digest.json");
+        std::fs::write(&path, "old").unwrap();
+        write_cache(&path, b"new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        assert_eq!(names(dir.path()), ["digest.json"]);
     }
 
     #[test]

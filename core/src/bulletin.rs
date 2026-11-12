@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Keeps one small typed status file per tool, so that every tool can read the others' status.
+//! A write is atomic but not durable: a reader sees the old file or the new one, and a crash can
+//! lose the write, which then reads as unknown.
 
-use crate::fs::write_atomic;
+use crate::fs::write_cache;
 use crate::paths::state_dir;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fs;
@@ -43,7 +45,7 @@ pub enum BulletinError {
 
 /// Replaces the bulletin of `tool` with `value`, atomically, in the capsa state directory.
 ///
-/// Each call writes a whole file, so keep it off hot paths.
+/// Each call writes a whole file without syncs, so keep it off hot paths.
 ///
 /// # Errors
 /// Fails when `tool` is not a valid name, or when the value cannot be encoded or written.
@@ -79,7 +81,7 @@ pub fn write_in<T: Serialize>(base: &Path, tool: &str, value: &T) -> Result<(), 
     let body = serde_json::to_vec(value)?;
     let file = base.join(format!("{tool}.json"));
     fs::create_dir_all(base).map_err(|source| io_error(&file, source))?;
-    write_atomic(&file, &body).map_err(|source| io_error(&file, source))
+    write_cache(&file, &body).map_err(|source| io_error(&file, source))
 }
 
 /// Deletes the bulletin of `tool` from `base`, where a missing bulletin is not an error.
