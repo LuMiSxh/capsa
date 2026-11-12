@@ -63,11 +63,16 @@ pub fn now() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
-fn dir() -> PathBuf {
+/// Returns the directory that holds every tool's bulletin.
+pub fn dir() -> PathBuf {
     state_dir("capsa").join("bulletin")
 }
 
-fn write_in<T: Serialize>(base: &Path, tool: &str, value: &T) -> Result<(), BulletinError> {
+/// Replaces the bulletin of `tool` with `value`, atomically, in `base`, a directory from [`dir`].
+///
+/// # Errors
+/// Fails when `tool` is not a valid name, or when the value cannot be encoded or written.
+pub fn write_in<T: Serialize>(base: &Path, tool: &str, value: &T) -> Result<(), BulletinError> {
     if !valid_tool(tool) {
         return Err(BulletinError::InvalidTool(tool.to_owned()));
     }
@@ -75,6 +80,22 @@ fn write_in<T: Serialize>(base: &Path, tool: &str, value: &T) -> Result<(), Bull
     let file = base.join(format!("{tool}.json"));
     fs::create_dir_all(base).map_err(|source| io_error(&file, source))?;
     write_atomic(&file, &body).map_err(|source| io_error(&file, source))
+}
+
+/// Deletes the bulletin of `tool` from `base`, where a missing bulletin is not an error.
+///
+/// # Errors
+/// Fails when `tool` is not a valid name, or when the bulletin exists and cannot be removed.
+pub fn remove_in(base: &Path, tool: &str) -> Result<(), BulletinError> {
+    if !valid_tool(tool) {
+        return Err(BulletinError::InvalidTool(tool.to_owned()));
+    }
+    let file = base.join(format!("{tool}.json"));
+    match fs::remove_file(&file) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(io_error(&file, source)),
+    }
 }
 
 fn read_in<T: DeserializeOwned>(base: &Path, tool: &str) -> Option<T> {
@@ -199,6 +220,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("acus.json")).unwrap();
         assert_eq!(read_in::<Status>(dir.path(), "acus"), None);
+    }
+
+    #[test]
+    fn removing_a_bulletin_deletes_it_and_a_missing_one_is_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        write_in(dir.path(), "acus", &status(10)).unwrap();
+        remove_in(dir.path(), "acus").unwrap();
+        assert!(names(dir.path()).is_empty());
+        remove_in(dir.path(), "acus").unwrap();
     }
 
     #[test]
