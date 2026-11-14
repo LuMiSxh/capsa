@@ -4,6 +4,7 @@ use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::render::{Render, Status, emit_to};
 use serde_json::json;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use super::*;
