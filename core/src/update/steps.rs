@@ -51,8 +51,12 @@ pub fn leftover_note(tool: &str, settings: &Path, entries: &str) -> String {
 mod tests {
     use std::path::Path;
 
-    use super::{leftover_note, reinstall_skill};
+    use super::leftover_note;
+    #[cfg(unix)]
+    use super::reinstall_skill;
+    #[cfg(unix)]
     use crate::format::Format;
+    #[cfg(unix)]
     use crate::hint::find_hint;
 
     #[cfg(unix)]
