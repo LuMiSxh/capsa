@@ -29,6 +29,23 @@ pub fn bin() -> Command {
     c
 }
 
+/// Points `capsa_core::paths::state_dir` at `root`. It reads `XDG_STATE_HOME` on Unix and
+/// `LOCALAPPDATA` on Windows, so both are set and each platform reads its own.
+pub fn state_root_env(root: &str) -> [(&'static str, &str); 2] {
+    [("XDG_STATE_HOME", root), ("LOCALAPPDATA", root)]
+}
+
+/// Returns the directory of `tool`'s state under the state root `root`, laid out as
+/// `capsa_core::paths::state_dir` lays it out: `<root>/<tool>` on Unix, `<root>/<tool>/state` on
+/// Windows.
+pub fn tool_state_dir(root: &std::path::Path, tool: &str) -> std::path::PathBuf {
+    if cfg!(windows) {
+        root.join(tool).join("state")
+    } else {
+        root.join(tool)
+    }
+}
+
 pub fn acus(args: &[&str]) -> (i32, String, String) {
     acus_env(args, &[])
 }

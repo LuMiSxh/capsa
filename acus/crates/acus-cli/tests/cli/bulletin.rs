@@ -16,9 +16,10 @@ fn fresh_home(name: &str) -> PathBuf {
 
 /// Runs one hook event with the state and config under `home`, and returns its stdout.
 fn hook(home: &Path, input: &serde_json::Value) -> String {
+    let state = home.join("state");
     let mut child = bin()
         .arg("hook")
-        .env("XDG_STATE_HOME", home.join("state"))
+        .envs(state_root_env(state.to_str().unwrap()))
         .env("ACUS_CONFIG", home.join("acus.toml"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -48,7 +49,10 @@ fn session_start(session: &str, source: &str) -> serde_json::Value {
 }
 
 fn bulletin(home: &Path) -> Option<serde_json::Value> {
-    let text = std::fs::read_to_string(home.join("state/capsa/bulletin/acus.json")).ok()?;
+    let file = tool_state_dir(&home.join("state"), "capsa")
+        .join("bulletin")
+        .join("acus.json");
+    let text = std::fs::read_to_string(file).ok()?;
     serde_json::from_str(&text).ok()
 }
 

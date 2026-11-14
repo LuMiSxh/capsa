@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::{json_line, sandboxed};
-use crate::common::acus_env;
+use crate::common::{acus_env, state_root_env, tool_state_dir};
 #[cfg(feature = "cmd-update")]
 use crate::common::{decode, output_retrying_busy};
 
@@ -281,12 +281,12 @@ fn setup_moves_a_guard_log_left_beside_the_config_once() {
     let old = dir.path().join("guard.jsonl");
     std::fs::write(&old, "old\n").unwrap();
     std::fs::write(dir.path().join("guard.jsonl.old"), "older\n").unwrap();
-    let state = dir.path().join("state").join("acus");
+    let state = tool_state_dir(&dir.path().join("state"), "acus");
     let mut env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap()).to_vec();
     let config = dir.path().join("config.toml");
     let state_root = dir.path().join("state");
     env.push(("ACUS_CONFIG", config.to_str().unwrap()));
-    env.push(("XDG_STATE_HOME", state_root.to_str().unwrap()));
+    env.extend(state_root_env(state_root.to_str().unwrap()));
 
     let (code, out, err) = acus_env(&["self", "setup", "--dry-run", "--json"], &env);
     assert_eq!(code, 0, "{err}");
@@ -313,14 +313,14 @@ fn setup_merges_old_guard_log_files_in_front_of_the_state_log() {
     std::fs::create_dir(&home).unwrap();
     std::fs::write(dir.path().join("guard.jsonl.old"), "older\n").unwrap();
     std::fs::write(dir.path().join("guard.jsonl"), "old\n").unwrap();
-    let state = dir.path().join("state").join("acus");
+    let state = tool_state_dir(&dir.path().join("state"), "acus");
     std::fs::create_dir_all(&state).unwrap();
     std::fs::write(state.join("guard.jsonl"), "current\n").unwrap();
     let mut env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap()).to_vec();
     let config = dir.path().join("config.toml");
     let state_root = dir.path().join("state");
     env.push(("ACUS_CONFIG", config.to_str().unwrap()));
-    env.push(("XDG_STATE_HOME", state_root.to_str().unwrap()));
+    env.extend(state_root_env(state_root.to_str().unwrap()));
 
     let (code, out, err) = acus_env(&["self", "setup", "--dry-run", "--json"], &env);
     assert_eq!(code, 0, "{err}");
@@ -347,7 +347,7 @@ fn setup_merge_leaves_the_state_rotated_copy_untouched() {
     std::fs::create_dir(&home).unwrap();
     std::fs::write(dir.path().join("guard.jsonl.old"), "older\n").unwrap();
     std::fs::write(dir.path().join("guard.jsonl"), "old\n").unwrap();
-    let state = dir.path().join("state").join("acus");
+    let state = tool_state_dir(&dir.path().join("state"), "acus");
     std::fs::create_dir_all(&state).unwrap();
     std::fs::write(state.join("guard.jsonl"), "current\n").unwrap();
     std::fs::write(state.join("guard.jsonl.old"), "rotated\n").unwrap();
@@ -355,7 +355,7 @@ fn setup_merge_leaves_the_state_rotated_copy_untouched() {
     let config = dir.path().join("config.toml");
     let state_root = dir.path().join("state");
     env.push(("ACUS_CONFIG", config.to_str().unwrap()));
-    env.push(("XDG_STATE_HOME", state_root.to_str().unwrap()));
+    env.extend(state_root_env(state_root.to_str().unwrap()));
 
     assert_eq!(acus_env(&["self", "setup"], &env).0, 0);
     let merged = std::fs::read_to_string(state.join("guard.jsonl")).unwrap();

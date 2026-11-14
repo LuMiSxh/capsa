@@ -311,7 +311,7 @@ fn census_follow_rate_adapts_the_hint_interval() {
     let config = dir.path().join("config.toml");
     std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
     let state = dir.path().join("state");
-    let bulletin = state.join("capsa/bulletin");
+    let bulletin = tool_state_dir(&state, "capsa").join("bulletin");
     std::fs::create_dir_all(&bulletin).unwrap();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -505,9 +505,13 @@ fn hook_replies_keep_their_wire_bytes() {
     let bad = dir.path().join("bad.toml");
     std::fs::write(&bad, "[guard]\nhint_every = \"ten\"\n").unwrap();
     let note = run_hook(&bad, &["hook"], bash_call("c1", "ls"));
-    let want = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"acus config error: invalid config PATH: line 2, column 14: invalid type: string \"ten\", expected usize; guard runs with defaults; fix PATH"}}"#;
-    assert_eq!(
-        note,
-        format!("{}\n", want.replace("PATH", &bad.display().to_string()))
-    );
+    let path = bad.display().to_string();
+    let want = serde_json::json!({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": format!(
+            "acus config error: invalid config {path}: line 2, column 14: \
+             invalid type: string \"ten\", expected usize; guard runs with defaults; fix {path}"
+        ),
+    }});
+    assert_eq!(note, format!("{want}\n"));
 }
