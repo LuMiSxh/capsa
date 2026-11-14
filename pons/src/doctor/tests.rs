@@ -379,12 +379,17 @@ fn freshness_of(files: &[&str], machine: &Machine) -> Freshness {
         all_notes: false,
     };
     let fs = Files(files.iter().map(PathBuf::from).collect());
-    let read = |p: &Path| match p.to_str()? {
-        "/bin/package.json" => Some(format!(r#"{{"name":"{PACKAGE}","version":"0.85.1"}}"#)),
-        "/bin/node_modules/@anthropic-ai/claude-agent-sdk/package.json" => Some(
-            r#"{"name":"@anthropic-ai/claude-agent-sdk","claudeCodeVersion":"2.1.286"}"#.to_owned(),
-        ),
-        _ => None,
+    let read = |p: &Path| {
+        if p == Path::new("/bin/package.json") {
+            Some(format!(r#"{{"name":"{PACKAGE}","version":"0.85.1"}}"#))
+        } else if p == Path::new("/bin/node_modules/@anthropic-ai/claude-agent-sdk/package.json") {
+            Some(
+                r#"{"name":"@anthropic-ai/claude-agent-sdk","claudeCodeVersion":"2.1.286"}"#
+                    .to_owned(),
+            )
+        } else {
+            None
+        }
     };
     gather(&inputs, &fs, &read, machine).freshness
 }
