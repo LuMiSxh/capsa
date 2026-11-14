@@ -218,7 +218,11 @@ fn indexed_size(h: &Hook, file: &Path) -> Option<u64> {
     let text =
         std::fs::read_to_string(h.home.path().join(tool_state("census", "index.json"))).ok()?;
     let index: Value = serde_json::from_str(&text).ok()?;
-    index["files"][file.to_string_lossy().as_ref()]["size"].as_u64()
+    index["files"]
+        .as_object()?
+        .iter()
+        .find(|(key, _)| Path::new(key.as_str()) == file)
+        .and_then(|(_, state)| state["size"].as_u64())
 }
 
 #[test]
