@@ -11,16 +11,14 @@ pub enum WalkError {
     /// Every root is missing; `path` is the first one, as printed.
     #[error("path not found: {path}")]
     PathNotFound { path: String },
-    /// A glob does not compile.
+    /// A glob does not compile, or the globs together do not form a set; `glob` lists them all
+    /// in the second case.
     #[error("invalid glob `{glob}`")]
     InvalidGlob {
         glob: String,
         #[source]
         source: globset::Error,
     },
-    /// The globs do not form a set.
-    #[error(transparent)]
-    GlobSet(#[from] globset::Error),
 }
 
 /// Configures `walk`. The default visits `.`, honours ignore files and skips hidden entries.
@@ -60,28 +58,49 @@ fn glob_set(globs: &[String]) -> Result<Option<GlobSet>, WalkError> {
             source,
         })?);
     }
-    Ok(Some(b.build()?))
+    let set = b.build().map_err(|source| WalkError::InvalidGlob {
+        glob: globs.join(", "),
+        source,
+    })?;
+    Ok(Some(set))
 }
 
-/// Calls `visit` once per matching file, concurrently from several threads.
-pub fn walk<F: Fn(&Path) + Sync>(opts: &WalkOpts, visit: F) -> Result<(), WalkError> {
-    let include = glob_set(&opts.include)?;
-    let exclude = glob_set(&opts.exclude)?;
-    let roots = if opts.roots.is_empty() {
+/// The roots `walk` visits: `opts.roots`, or `.` when there are none.
+fn roots_of(opts: &WalkOpts) -> Vec<PathBuf> {
+    if opts.roots.is_empty() {
         vec![PathBuf::from(".")]
     } else {
         opts.roots.clone()
-    };
-    // Missing roots are reported and skipped while at least one root exists.
-    let (roots, missing): (Vec<PathBuf>, Vec<PathBuf>) =
-        roots.into_iter().partition(|r| r.exists());
+    }
+}
+
+/// The roots `walk` skips because they do not exist, as printed. Empty when every root is
+/// missing: `walk` then fails with `PathNotFound` and skips nothing.
+pub fn missing_roots(opts: &WalkOpts) -> Vec<String> {
+    let roots = roots_of(opts);
+    let missing: Vec<String> = roots
+        .iter()
+        .filter(|r| !r.exists())
+        .map(|r| display_path(r))
+        .collect();
+    if missing.len() == roots.len() {
+        Vec::new()
+    } else {
+        missing
+    }
+}
+
+/// Calls `visit` once per matching file, concurrently from several threads. Roots that do not
+/// exist are skipped; see [`missing_roots`] for the ones a caller may report.
+pub fn walk<F: Fn(&Path) + Sync>(opts: &WalkOpts, visit: F) -> Result<(), WalkError> {
+    let include = glob_set(&opts.include)?;
+    let exclude = glob_set(&opts.exclude)?;
+    let all = roots_of(opts);
+    let roots: Vec<PathBuf> = all.iter().filter(|r| r.exists()).cloned().collect();
     if roots.is_empty() {
         return Err(WalkError::PathNotFound {
-            path: display_path(&missing[0]),
+            path: display_path(&all[0]),
         });
-    }
-    for r in &missing {
-        eprintln!("warning: path not found: {}", display_path(r));
     }
     let keep = {
         let roots = roots.clone();

@@ -8,7 +8,7 @@ mod replace_all;
 mod search_replace;
 mod symbols;
 
-use acus_edit::{ApplyOptions, Change, EditError, apply, apply_with, apply_with_options, parse};
+use acus_edit::{ApplyOptions, Change, EditError, apply, parse};
 use capsa_core::hint::Hint;
 use std::fs;
 use std::path::Path;
@@ -37,8 +37,16 @@ impl Shown for EditError {
     }
 }
 
+/// Options that check a patch without writing it.
+fn check_only() -> ApplyOptions {
+    ApplyOptions {
+        check: true,
+        ..ApplyOptions::default()
+    }
+}
+
 fn run(root: &Path, patch: &str) -> Result<Vec<Change>, EditError> {
-    Ok(apply(&parse(patch)?, root, false)?.changes)
+    Ok(apply(&parse(patch)?, root, &ApplyOptions::default())?.changes)
 }
 
 fn read(root: &Path, p: &str) -> String {

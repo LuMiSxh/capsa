@@ -228,9 +228,7 @@ impl Engine {
         let mut notes = Vec::new();
         if m == "session/request_permission" && self.policy.is_on() {
             let params = msg.get("params").unwrap_or(&Value::Null);
-            let tool = params
-                .pointer("/toolCall/toolCallId")
-                .and_then(Value::as_str);
+            let tool = permission_tool_call_id(params);
             let tracked = sid
                 .zip(tool)
                 .and_then(|(s, t)| self.sessions.get(s)?.open_tools.get(t));

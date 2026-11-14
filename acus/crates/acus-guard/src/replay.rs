@@ -32,8 +32,7 @@ pub enum ReplayError {
 
 /// Names what the hook does with one Bash command.
 pub(super) struct Decision {
-    /// `rewrite`, `deny`, `hint`, `escape` or `pass`.
-    pub(super) kind: &'static str,
+    pub(super) kind: Kind,
     pub(super) rule: Option<&'static str>,
     pub(super) rewritten: Option<String>,
 }
@@ -48,7 +47,7 @@ impl From<Option<Verdict>> for Decision {
                 rewritten: None,
             },
             None => Decision {
-                kind: "pass",
+                kind: Kind::Pass,
                 rule: None,
                 rewritten: None,
             },
@@ -60,7 +59,7 @@ impl From<Option<Verdict>> for Decision {
 pub(super) fn decide(cmd: &str, scope: Option<&Scope>) -> Decision {
     match decide_bash(cmd, scope, true) {
         BashDecision::Rewrite(rw) => Decision {
-            kind: "rewrite",
+            kind: Kind::Rewrite,
             rule: Some(rw.rule.as_str()),
             rewritten: Some(rw.command),
         },
@@ -99,7 +98,7 @@ pub fn replay_file(file: &Path, repeat: usize) -> Result<(), ReplayError> {
         let d = decide(&cmd, scope.as_ref());
         let out = serde_json::json!({
             "cmd": cmd,
-            "kind": d.kind,
+            "kind": d.kind.as_str(),
             "rule": d.rule,
             "rewritten": d.rewritten,
         });

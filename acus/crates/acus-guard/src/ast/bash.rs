@@ -5,11 +5,9 @@
 //! its language. The few kinds only zsh produces (`repeat_statement`, `select_statement`) never
 //! occur in a Bash tree.
 
+use super::climb::{Climber, Ctx, Role, climb, commands};
 use super::*;
 use tree_sitter::{Language, Node};
-
-/// Limits the nesting of a command an agent would write; deeper, the call runs unchanged.
-const MAX_DEPTH: usize = 400;
 
 /// Returns the segments of `src` in the grammar `lang`, or `None` if it has a syntax error
 /// (zsh-only syntax such as `${(f)…}` in the Bash grammar), so the call runs unchanged rather than
@@ -20,25 +18,7 @@ pub(super) fn parse(src: &str, lang: &Language) -> Option<Parsed> {
     if tree.root_node().has_error() {
         return None;
     }
-    let mut commands = Vec::new();
-    let mut cur = tree.walk();
-    'walk: loop {
-        if cur.node().kind() == "command" {
-            commands.push(cur.node());
-        }
-        if cur.depth() as usize > MAX_DEPTH {
-            return None;
-        }
-        if cur.goto_first_child() {
-            continue;
-        }
-        while !cur.goto_next_sibling() {
-            if !cur.goto_parent() {
-                break 'walk;
-            }
-        }
-    }
-    let mut found: Vec<Found> = commands.into_iter().map(|n| one(src, n)).collect();
+    let mut found: Vec<Found> = commands(&tree)?.into_iter().map(|n| one(src, n)).collect();
     // The commands inside substitutions go last, so the segments of a pipeline stay neighbours
     // when a stage holds one: `cat $(f) | tee >(g)` is `cat`, `tee`, `f`, `g`.
     found.sort_by_key(|f| f.inside);
@@ -186,13 +166,20 @@ fn one(src: &str, n: Node) -> Found {
     } else {
         None
     };
-    let start = Climb {
+    let start = Ctx {
         out,
         stdin: r.stdin,
         nest: Nest::Top,
         inside: false,
+        gates: false,
     };
-    let c = climb(src, owner, &mut r, start);
+    let walk = &mut Walk {
+        src,
+        owner,
+        r: &mut r,
+        at_first: true,
+    };
+    let c = climb(owner, start, walk);
 
     let range = owner.start_byte()..r.end;
     let mut kids = n.walk();
@@ -204,15 +191,16 @@ fn one(src: &str, n: Node) -> Found {
     let lead = kids
         .get(assigns)
         .map_or(0, |c| c.start_byte().saturating_sub(range.start));
+    let low = quote_escaped_spaces(&masked(src, owner, &range));
     let seg = Segment {
-        low: quote_escaped_spaces(&masked(src, owner, &range)),
-        orig: src[range.clone()].to_owned(),
+        orig: distinct(&low, &src[range.clone()]),
+        low,
         range,
         lead,
         stdin: c.stdin,
         out: c.out.unwrap_or(Out::Agent),
         nest: c.nest,
-        gates: r.gates || gates(owner),
+        gates: c.gates || r.gates || gates(owner),
         assigns,
         heredoc: r.body.is_some(),
     };
@@ -223,34 +211,50 @@ fn one(src: &str, n: Node) -> Found {
     }
 }
 
-/// Where a segment's output, stdin and nesting come from, as the nodes around its command say.
-struct Climb {
-    out: Option<Out>,
-    stdin: bool,
-    nest: Nest,
-    /// Whether it sits inside a substitution.
-    inside: bool,
+/// Reads the lists, pipelines and redirects around a Bash command.
+struct Walk<'a> {
+    src: &'a str,
+    owner: Node<'a>,
+    r: &'a mut Redirs,
+    /// Turns false once the path from the command runs through a later element of a list.
+    at_first: bool,
 }
 
-/// Climbs from `owner` to the root, applying what each node on the way says about the segment.
-fn climb(src: &str, owner: Node, r: &mut Redirs, mut c: Climb) -> Climb {
-    // Turns false once the path from the command runs through a later element of a list.
-    let mut at_first = true;
-    let mut cur = owner;
-    while let Some(p) = cur.parent() {
+impl Climber for Walk<'_> {
+    fn role(p: Node, cur: Node) -> Role {
         match p.kind() {
             // What runs in these is data for the substitution or the function, not output.
-            "command_substitution" | "process_substitution" | "function_definition" => {
-                // A redirect inside `$( )` makes the output data for the substitution too.
-                c.out = Some(c.out.filter(|o| *o != Out::File).unwrap_or(Out::Capture));
-                if p.kind() == "function_definition" {
-                    c.nest = c.nest.max(Nest::Group);
-                } else {
-                    c.inside = true;
-                }
-                break;
+            "command_substitution" | "process_substitution" => Role::Capture {
+                inside: true,
+                nest: Nest::Top,
+            },
+            "function_definition" => Role::Capture {
+                inside: false,
+                nest: Nest::Group,
+            },
+            "redirected_statement" if is_body(p, cur) => Role::Chain,
+            "list" | "pipeline" => Role::Chain,
+            "for_statement"
+            | "c_style_for_statement"
+            | "while_statement"
+            | "repeat_statement"
+            | "select_statement" => Role::Nest(Nest::Loop),
+            "compound_statement" | "subshell" | "if_statement" | "case_statement" => {
+                Role::Nest(Nest::Group)
             }
-            "redirected_statement" if is_body(p, cur) => {
+            _ => Role::Plain,
+        }
+    }
+
+    /// A redirect inside `$( )` makes the output data for the substitution too.
+    fn captured(out: Option<Out>) -> Option<Out> {
+        Some(out.filter(|o| *o != Out::File).unwrap_or(Out::Capture))
+    }
+
+    fn chain(&mut self, p: Node, cur: Node, c: &mut Ctx) {
+        let (src, owner, r) = (self.src, self.owner, &mut *self.r);
+        match p.kind() {
+            "redirected_statement" => {
                 // The grammar wraps `a && b > f` and `a | b 2>&1` as a whole in the redirect,
                 // but the shell applies it to the last command only.
                 let chain = matches!(cur.kind(), "list" | "pipeline");
@@ -278,8 +282,8 @@ fn climb(src: &str, owner: Node, r: &mut Redirs, mut c: Climb) -> Climb {
             }
             // The grammar reads `cmd <<EOF | a && b` as a pipeline of the list `a && b`; only `a` is
             // piped.
-            "list" if p.child(0).map(|c| c.id()) != Some(cur.id()) => at_first = false,
-            "pipeline" if cur.kind() == "list" && !at_first => {}
+            "list" if p.child(0).map(|c| c.id()) != Some(cur.id()) => self.at_first = false,
+            "pipeline" if cur.kind() == "list" && !self.at_first => {}
             "pipeline" => {
                 if p.child(0).map(|c| c.id()) != Some(cur.id()) {
                     c.stdin = true;
@@ -288,19 +292,9 @@ fn climb(src: &str, owner: Node, r: &mut Redirs, mut c: Climb) -> Climb {
                     c.out.get_or_insert(Out::Pipe);
                 }
             }
-            "for_statement"
-            | "c_style_for_statement"
-            | "while_statement"
-            | "repeat_statement"
-            | "select_statement" => c.nest = Nest::Loop,
-            "compound_statement" | "subshell" | "if_statement" | "case_statement" => {
-                c.nest = c.nest.max(Nest::Group);
-            }
             _ => {}
         }
-        cur = p;
     }
-    c
 }
 
 /// Reports whether `&&` or `||` follows the node, directly or after the commands that end the list

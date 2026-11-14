@@ -162,6 +162,10 @@ async fn route(state: &Arc<State>, parts: &Parts, body: Bytes) -> Response<ResBo
         };
         if let Some(reason) = reason {
             state.gate.close(reason.clone(), unix_now());
+            if let Some(refresher) = &state.refresher {
+                // Detached: the bulletin write finishes after the response has gone out.
+                drop(refresher.publish_gate());
+            }
             state.recorder.refuse(route);
             line.status = 400;
             line.upstream_status = Some(status.as_u16());

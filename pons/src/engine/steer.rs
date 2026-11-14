@@ -19,7 +19,7 @@ impl Engine {
             raw,
             ended,
         } = sp;
-        let outcome = msg.pointer("/result/outcome").and_then(Value::as_str);
+        let outcome = ResponseView::new(msg).outcome;
         let mut out = Vec::new();
         // The old turn may have ended while the request was in flight.
         let finish_old = |this: &mut Self, out: &mut Vec<Action>| {

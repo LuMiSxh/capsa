@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-use capsa_core::hint::{Hinted, ResultExt};
+use capsa_core::hint::{ResultExt, hinted};
 use capsa_core::render::{Doc, Render, emit};
 use serde::Serialize;
 use vicarius::config::Config;
@@ -253,12 +253,14 @@ fn launch(install: &Install, lctl: &dyn Launchctl, reload: bool) -> Result<&'sta
         } else {
             "restarted"
         }),
-        Ok(call) => Err(Hinted::new(
+        Ok(call) => Err(hinted(
             format!("launchctl refused the agent: {}", call.stderr),
             log_hint(install),
-        )
-        .into()),
-        Err(e) => Err(Hinted::new(format!("cannot run launchctl: {e}"), log_hint(install)).into()),
+        )),
+        Err(e) => Err(hinted(
+            format!("cannot run launchctl: {e}"),
+            log_hint(install),
+        )),
     }
 }
 
@@ -306,14 +308,13 @@ fn wait_unloaded(
     let deadline = Instant::now() + timeout;
     while service::is_loaded(lctl, install) {
         if Instant::now() >= deadline {
-            return Err(Hinted::new(
+            return Err(hinted(
                 format!(
                     "launchd still has the agent loaded {:.1} s after bootout",
                     timeout.as_secs_f32()
                 ),
                 "wait a few seconds, then run `vicarius self start` again",
-            )
-            .into());
+            ));
         }
         thread::sleep(poll);
     }
@@ -326,14 +327,13 @@ fn wait_or_fail(install: &Install, port: u16, wait: Duration) -> Result<()> {
     if wait_for_status(port, wait) {
         return Ok(());
     }
-    Err(Hinted::new(
+    Err(hinted(
         format!(
             "vicarius does not answer on 127.0.0.1:{port} within {:.1} s",
             wait.as_secs_f32()
         ),
         log_hint(install),
-    )
-    .into())
+    ))
 }
 
 /// Polls the status endpoint until it answers or `wait` has passed.
@@ -386,12 +386,14 @@ fn bootout(install: &Install, lctl: &dyn Launchctl) -> Result<&'static str> {
     let (_, target) = install.launchd().context(NO_LAUNCHD)?;
     match lctl.run(&["bootout", target.as_str()]) {
         Ok(Call { ok: true, .. }) => Ok("stopped"),
-        Ok(call) => Err(Hinted::new(
+        Ok(call) => Err(hinted(
             format!("launchctl could not stop the agent: {}", call.stderr),
             log_hint(install),
-        )
-        .into()),
-        Err(e) => Err(Hinted::new(format!("cannot run launchctl: {e}"), log_hint(install)).into()),
+        )),
+        Err(e) => Err(hinted(
+            format!("cannot run launchctl: {e}"),
+            log_hint(install),
+        )),
     }
 }
 
@@ -399,11 +401,10 @@ fn ensure_macos() -> Result<()> {
     if cfg!(target_os = "macos") {
         return Ok(());
     }
-    Err(Hinted::new(
+    Err(hinted(
         "the vicarius service is set up on macOS only so far",
         "run `vicarius serve` by hand; Linux and Windows come later",
-    )
-    .into())
+    ))
 }
 
 fn load_config() -> Result<Config> {

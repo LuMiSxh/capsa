@@ -2,7 +2,10 @@
 
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-use capsa_core::render::{Render, emit_to};
+use capsa_core::render::{Render, Status, emit_to};
+use serde_json::json;
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 
 use super::*;
 
@@ -140,6 +143,7 @@ fn summarizes_the_log() {
         Some("exiting: error: agent exited (boom)")
     );
     // Eight notes in the log, the last five kept in order.
+    assert_eq!(s.notes_total, 8);
     assert_eq!(s.last_notes.len(), 5);
     assert!(s.last_notes[0].contains("subagent B launched"));
     assert!(s.last_notes[4].starts_with("exiting: error"));
@@ -182,6 +186,7 @@ fn detect_report(files: &[&str], path: &[&str]) -> Report {
         env,
         agent_cmd: Vec::new(),
         log: None,
+        all_notes: false,
     };
     let fs = Files(files.iter().map(PathBuf::from).collect());
     gather(&inputs, &fs, &|_| None, &NoSys)
@@ -284,17 +289,18 @@ fn explicit_commands_skip_the_check_and_text_and_json_show_it() {
     assert!(text(&view, true).contains('\x1b'));
     assert!(matches!(view.outcome(), Outcome::Empty));
     let v: Value = serde_json::from_str(&json_of(&view)).unwrap();
+    assert_eq!(v["tool"], "pons");
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(v["ok"], false);
     assert_eq!(v["groups"][0]["name"], "launcher");
     assert_eq!(v["groups"][0]["checks"][1]["status"], "fail");
-    assert_eq!(v["launcher"]["adapter"]["status"], "fail");
     assert!(
-        v["launcher"]["adapter"]["detail"]
+        v["groups"][0]["checks"][1]["detail"]
             .as_str()
             .is_some_and(|d| d.starts_with("not found"))
     );
     assert_eq!(
-        v["launcher"]["adapter"]["hint"],
+        v["groups"][0]["checks"][1]["hint"],
         format!("install Node.js, then run: npm install -g {PACKAGE}")
     );
 }
@@ -317,6 +323,7 @@ fn the_report_is_ascii_and_survives_missing_everything() {
         env: env(Platform::Macos),
         agent_cmd: Vec::new(),
         log: Some(PathBuf::from("/nope.log")),
+        all_notes: false,
     };
     let view = View::new(gather(&inputs, &NoFs, &|_| None, &NoSys));
     let plain = text(&view, false);
@@ -328,8 +335,276 @@ fn the_report_is_ascii_and_survives_missing_everything() {
     let json = json_of(&view);
     assert!(json.is_ascii());
     let v: Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(v["pons"]["version"], env!("CARGO_PKG_VERSION"));
-    assert!(v["launcher"]["would_run"].is_null());
+    assert_eq!(v["tool"], "pons");
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(v["groups"][0]["checks"][0]["name"], "would run");
+    assert_eq!(v["groups"][0]["checks"][0]["status"], "fail");
+    let groups = v["groups"].as_array().unwrap();
+    let interop = groups.last().unwrap();
+    assert_eq!(interop["name"], "interop");
+    assert_eq!(interop["checks"][0]["name"], "census");
+    assert!(
+        interop["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["status"] == "ok")
+    );
+}
+
+/// Answers the npm registry and `claude --version`, and nothing else.
+struct Machine {
+    latest: Option<&'static str>,
+    claude: Option<&'static str>,
+}
+
+impl Sys for Machine {
+    fn latest_version(&self, _: &str) -> Option<String> {
+        self.latest.map(str::to_owned)
+    }
+    fn claude_version(&self, _: &Path) -> Option<String> {
+        self.claude.map(str::to_owned)
+    }
+}
+
+/// Gathers the freshness facts for `files` executable on `/bin`, with the adapter 0.85.1 and the
+/// Claude Code 2.1.286 bundled in its SDK.
+fn freshness_of(files: &[&str], machine: &Machine) -> Freshness {
+    let mut env = env(Platform::Linux);
+    env.path = vec![PathBuf::from("/bin")];
+    let inputs = Inputs {
+        env,
+        agent_cmd: Vec::new(),
+        log: None,
+        all_notes: false,
+    };
+    let fs = Files(files.iter().map(PathBuf::from).collect());
+    let read = |p: &Path| {
+        if p == Path::new("/bin/package.json") {
+            Some(format!(r#"{{"name":"{PACKAGE}","version":"0.85.1"}}"#))
+        } else if p == Path::new("/bin/node_modules/@anthropic-ai/claude-agent-sdk/package.json") {
+            Some(
+                r#"{"name":"@anthropic-ai/claude-agent-sdk","claudeCodeVersion":"2.1.286"}"#
+                    .to_owned(),
+            )
+        } else {
+            None
+        }
+    };
+    gather(&inputs, &fs, &read, machine).freshness
+}
+
+#[test]
+fn a_stale_adapter_warns_with_the_latest_install_command_of_each_manager() {
+    let machine = Machine {
+        latest: Some("0.106.0"),
+        claude: None,
+    };
+    for (manager, command) in [
+        ("/bin/pnpm", "pnpm add -g"),
+        ("/bin/bun", "bun add -g"),
+        ("/bin/npm", "npm install -g"),
+    ] {
+        let freshness = freshness_of(&["/bin/claude-agent-acp", manager], &machine);
+        let checks = freshness_checks(&freshness);
+        let latest = &checks[0];
+        assert_eq!(latest.status, Status::Warn, "{manager}");
+        assert_eq!(latest.detail, "0.85.1 is older than the npm latest 0.106.0");
+        let expected = format!("{command} {PACKAGE}@latest");
+        assert_eq!(latest.hint.as_deref(), Some(expected.as_str()), "{manager}");
+    }
+}
+
+#[test]
+fn the_adapter_at_npm_latest_passes_and_an_unreachable_registry_only_informs() {
+    let machine = Machine {
+        latest: Some("0.85.1"),
+        claude: None,
+    };
+    let current = freshness_checks(&freshness_of(&["/bin/claude-agent-acp"], &machine));
+    assert_eq!(current[0].status, Status::Ok);
+    assert_eq!(current[0].hint, None);
+
+    let offline = Machine {
+        latest: None,
+        claude: None,
+    };
+    let checks = freshness_checks(&freshness_of(
+        &["/bin/claude-agent-acp", "/bin/npm"],
+        &offline,
+    ));
+    assert_eq!(checks[0].status, Status::Ok);
+    assert!(
+        checks[0].detail.starts_with("could not check"),
+        "{}",
+        checks[0].detail
+    );
+    assert_eq!(checks[0].hint, None);
+}
+
+#[test]
+fn an_older_bundled_claude_code_than_the_terminal_warns_with_the_install_command() {
+    let machine = Machine {
+        latest: Some("0.85.1"),
+        claude: Some("2.1.311 (Claude Code)\n"),
+    };
+    let freshness = freshness_of(
+        &["/bin/claude-agent-acp", "/bin/claude", "/bin/npm"],
+        &machine,
+    );
+    assert_eq!(freshness.bundled.as_deref(), Some("2.1.286"));
+    assert_eq!(freshness.terminal.as_deref(), Some("2.1.311"));
+    let checks = freshness_checks(&freshness);
+    assert_eq!(checks[0].status, Status::Ok);
+    let bundled = &checks[1];
+    assert_eq!(bundled.name, "bundled Claude Code");
+    assert_eq!(bundled.status, Status::Warn);
+    assert_eq!(
+        bundled.detail,
+        "the adapter runs Claude Code 2.1.286, terminal has 2.1.311; models added since 2.1.286 are missing from the picker"
+    );
+    assert_eq!(
+        bundled.hint.as_deref(),
+        Some(format!("npm install -g {PACKAGE}@latest").as_str())
+    );
+}
+
+#[test]
+fn a_missing_claude_skips_the_bundled_comparison() {
+    let machine = Machine {
+        latest: Some("0.85.1"),
+        claude: Some("2.1.311"),
+    };
+    let freshness = freshness_of(&["/bin/claude-agent-acp"], &machine);
+    assert_eq!(freshness.terminal, None);
+    let checks = freshness_checks(&freshness);
+    assert_eq!(checks[1].status, Status::Ok);
+    assert_eq!(
+        checks[1].detail,
+        "skipped: claude is not on PATH to compare with"
+    );
+    assert_eq!(checks[1].hint, None);
+}
+
+#[test]
+fn the_bundled_claude_code_is_read_beside_the_adapter_or_in_its_own_modules() {
+    const SDK_JSON: &str = r#"{"claudeCodeVersion":"2.1.286"}"#;
+    let adapter = Path::new("/x/node_modules/@agentclientprotocol/claude-agent-acp/package.json");
+    let hoisted = |p: &Path| {
+        (p == Path::new("/x/node_modules/@anthropic-ai/claude-agent-sdk/package.json"))
+            .then(|| SDK_JSON.to_owned())
+    };
+    let nested = |p: &Path| {
+        (p == Path::new(
+            "/x/node_modules/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/package.json",
+        ))
+        .then(|| SDK_JSON.to_owned())
+    };
+    assert_eq!(
+        bundled_claude_code(adapter, &hoisted).as_deref(),
+        Some("2.1.286")
+    );
+    assert_eq!(
+        bundled_claude_code(adapter, &nested).as_deref(),
+        Some("2.1.286")
+    );
+    assert_eq!(bundled_claude_code(adapter, &|_| None), None);
+}
+
+#[test]
+fn the_version_line_of_claude_gives_its_number() {
+    assert_eq!(
+        leading_version("2.1.311 (Claude Code)\n").as_deref(),
+        Some("2.1.311")
+    );
+    assert_eq!(leading_version("claude: not a version"), None);
+    assert_eq!(
+        leading_version("2.1.311-beta.1 (Claude Code)").as_deref(),
+        Some("2.1.311-beta.1")
+    );
+}
+
+/// The latest-version check's status for an installed adapter against the registry's `latest`.
+fn latest_status(installed: &str, latest: &str) -> Status {
+    freshness_checks(&Freshness {
+        installed: Some(installed.to_owned()),
+        latest: Some(latest.to_owned()),
+        bundled: None,
+        terminal: None,
+        hint: String::new(),
+    })[0]
+        .status
+}
+
+/// Answers a newer pons release and nothing else.
+struct Newer;
+
+impl Sys for Newer {
+    fn update_check(&self) -> UpdateCheck {
+        UpdateCheck::Available("9.9.9".to_owned())
+    }
+}
+
+#[test]
+fn a_newer_pons_release_warns_with_the_self_update_command() {
+    let inputs = Inputs {
+        env: env(Platform::Macos),
+        agent_cmd: Vec::new(),
+        log: None,
+        all_notes: false,
+    };
+    let view = View::new(gather(&inputs, &Files(Vec::new()), &|_| None, &Newer));
+    let v: Value = serde_json::from_str(&json_of(&view)).unwrap();
+    let update = v["groups"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "update")
+        .unwrap();
+    assert_eq!(update["status"], "warn");
+    assert_eq!(
+        update["detail"],
+        format!("9.9.9 available (running {})", env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(update["hint"], "run pons self update");
+}
+
+#[test]
+fn a_prerelease_is_older_than_its_release_and_versions_compare_by_semver_core() {
+    assert_eq!(latest_status("1.0.0-beta", "1.0.0"), Status::Warn);
+    assert_eq!(latest_status("1.0.0-beta.1", "1.0.0"), Status::Warn);
+    assert_eq!(latest_status("1.0.0", "1.0.0-beta.1"), Status::Ok);
+    assert_eq!(latest_status("1.0.0-beta.1", "1.0.0-beta.2"), Status::Ok);
+    assert_eq!(latest_status("2.1", "2.1.0"), Status::Ok);
+    assert_eq!(latest_status("2.1.0", "2.1"), Status::Ok);
+    assert_eq!(latest_status("0.85.1+build.7", "0.85.1"), Status::Ok);
+    assert_eq!(latest_status("0.85.1", "0.106.0"), Status::Warn);
+}
+
+#[test]
+fn an_unparseable_version_never_warns() {
+    assert_eq!(latest_status("garbage", "0.85.1"), Status::Ok);
+    assert_eq!(latest_status("0.85.1", "garbage"), Status::Ok);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_command_past_its_limit_is_killed_and_reported_as_none() {
+    let started = Instant::now();
+    assert_eq!(
+        run_bounded(Path::new("/bin/sleep"), &["30"], Duration::from_millis(100)),
+        None
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert_eq!(
+        run_bounded(
+            Path::new("/bin/echo"),
+            &["2.1.311 (Claude Code)"],
+            Duration::from_secs(10)
+        )
+        .as_deref(),
+        Some("2.1.311 (Claude Code)\n")
+    );
 }
 
 #[test]
@@ -384,6 +659,45 @@ fn the_configured_adapter_version_is_read_next_to_the_real_binary() {
 }
 
 #[test]
+fn more_notes_than_shown_get_a_footer_naming_all() {
+    let log = (0..8)
+        .map(|i| wire_line("pons", &format!("note {i}")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let inputs = Inputs {
+        env: env(Platform::Linux),
+        agent_cmd: Vec::new(),
+        log: Some(PathBuf::from("/log")),
+        all_notes: false,
+    };
+    let view = View::new(gather(
+        &inputs,
+        &Files(Vec::new()),
+        &|_| Some(log.clone()),
+        &NoSys,
+    ));
+    let plain = text(&view, false);
+    assert!(
+        plain.contains("… 3 more; run pons self doctor --all"),
+        "{plain}"
+    );
+
+    let inputs = Inputs {
+        all_notes: true,
+        ..inputs
+    };
+    let view = View::new(gather(
+        &inputs,
+        &Files(Vec::new()),
+        &|_| Some(log.clone()),
+        &NoSys,
+    ));
+    let plain = text(&view, false);
+    assert!(plain.contains("note 0"), "{plain}");
+    assert!(!plain.contains("more; run"), "{plain}");
+}
+
+#[test]
 fn exits_and_provisional_finishes_are_summarized() {
     let s = summarize_log(
         &[
@@ -410,107 +724,4 @@ fn json_of(view: &View) -> String {
     let mut out = Vec::new();
     emit_to(view, Format::Json, false, &mut out).unwrap();
     String::from_utf8(out).unwrap()
-}
-
-/// A machine with a launcher-found adapter, a Zed entry, a registry adapter, a wire log and
-/// one running proxy.
-fn fixture() -> Report {
-    Report {
-        version: env!("CARGO_PKG_VERSION"),
-        platform: "linux",
-        arch: "x86_64",
-        explicit_command: false,
-        would_run: Ok((
-            "npx".to_owned(),
-            "/bin/npx -y @agentclientprotocol/claude-agent-acp".to_owned(),
-        )),
-        candidates: vec![(
-            "npx -y @agentclientprotocol/claude-agent-acp".to_owned(),
-            Some("/bin/npx".to_owned()),
-        )],
-        searched_dirs: 3,
-        configured_adapter: None,
-        adapter: AdapterCheck {
-            status: "ok",
-            detail: "claude-agent-acp at /bin/claude-agent-acp (version 0.85.1)".to_owned(),
-            hint: None,
-        },
-        settings_path: Some("/h/.config/zed/settings.json".to_owned()),
-        settings: Some(Settings::Servers(vec![Server {
-            name: "claude-pons".to_owned(),
-            command: "/bin/pons".to_owned(),
-            args: vec!["--log".to_owned(), "/tmp/x".to_owned()],
-        }])),
-        registry_adapter: Some((
-            Some("0.85.1".to_owned()),
-            "/h/.local/share/zed/external_agents/registry/npx/claude-acp".to_owned(),
-        )),
-        log: Some(LogReport {
-            path: "/tmp/pons.log".to_owned(),
-            summary: Some(summarize_log(&wire_line(
-                "pons",
-                "background subagent A launched, card kept open",
-            ))),
-            size: Some(100),
-            rotated_size: None,
-        }),
-        processes: vec![Proc {
-            pid: 7,
-            age_secs: 60,
-        }],
-        exe_age_secs: Some(3600),
-    }
-}
-
-#[test]
-fn json_keeps_every_key_of_the_report() {
-    let mut v: Value = serde_json::from_str(&json_of(&View::new(fixture()))).unwrap();
-    assert_eq!(v["ok"], true);
-    assert_eq!(v["groups"].as_array().map(Vec::len), Some(4));
-    let object = v.as_object_mut().unwrap();
-    object.remove("ok");
-    object.remove("groups");
-    assert_eq!(
-        v,
-        json!({
-            "pons": {"version": env!("CARGO_PKG_VERSION"), "platform": "linux", "arch": "x86_64"},
-            "launcher": {
-                "explicit_command": false,
-                "would_run": "npx",
-                "command": "/bin/npx -y @agentclientprotocol/claude-agent-acp",
-                "error": null,
-                "candidates": [{"name": "npx -y @agentclientprotocol/claude-agent-acp", "path": "/bin/npx"}],
-                "searched_dirs": 3,
-                "adapter": {"status": "ok", "detail": "claude-agent-acp at /bin/claude-agent-acp (version 0.85.1)", "hint": null},
-                "configured_adapter": null,
-            },
-            "zed": {
-                "settings_path": "/h/.config/zed/settings.json",
-                "settings": {"servers": [{"name": "claude-pons", "command": "/bin/pons", "args": ["--log", "/tmp/x"]}]},
-                "registry_adapter": {"version": "0.85.1", "dir": "/h/.local/share/zed/external_agents/registry/npx/claude-acp"},
-            },
-            "processes": [{"pid": 7, "age_secs": 60, "stale": false}],
-            "exe_age_secs": 3600,
-            "log": {
-                "path": "/tmp/pons.log",
-                "size": 100,
-                "rotated_size": null,
-                "summary": {
-                    "lines": 1,
-                    "cancels_seen": 0,
-                    "cancels_dropped": 0,
-                    "cancels_forwarded": 0,
-                    "stop_escapes": 0,
-                    "subagents_tracked": 1,
-                    "subagents_finished": 0,
-                    "subagents_provisional": 0,
-                    "fail_safe_events": 0,
-                    "notifications_dropped": 0,
-                    "stepped_aside": false,
-                    "last_exit": null,
-                    "last_notes": ["background subagent A launched, card kept open"],
-                },
-            },
-        })
-    );
 }

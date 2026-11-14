@@ -5,14 +5,14 @@
 mod levels;
 mod state;
 
-pub use state::{ErrorLine, error_log, log_error};
+pub use state::{ErrorLine, LOG_LIMIT, error_log, log_error};
 
 use crate::config::Config;
 use crate::context;
 use crate::limits::{DailyStatus, LimitStatus, MonthStatus};
-use serde::Deserialize;
-use serde_json::{Value, json};
-use std::path::PathBuf;
+use serde::{Deserialize, de::IgnoredAny};
+use serde_json::json;
+use std::path::{Path, PathBuf};
 
 /// The longest `additionalContext` the hook emits, in characters.
 const MAX_CHARS: usize = 900;
@@ -32,7 +32,7 @@ struct Input {
     hook_event_name: Option<String>,
     session_id: Option<String>,
     transcript_path: Option<PathBuf>,
-    agent_id: Option<Value>,
+    agent_id: Option<IgnoredAny>,
 }
 
 /// Reads, decides and records the shown levels under the session's lock, so two concurrent calls
@@ -49,7 +49,8 @@ pub(super) struct Budget<'a> {
 /// What a call adds besides the level messages.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Opening {
-    /// The first prompt of a session may add the status line.
+    /// The first prompt of a session may add the status line, unless a warning in the same call
+    /// already says the same facts with the time.
     Prompt,
     /// A session start adds the usage-history hint.
     Session,
@@ -75,19 +76,17 @@ fn announce(
     if opening == Opening::Session {
         messages.extend(levels::usage_hint(&mut shown));
     }
-    if opening == Opening::Prompt {
-        let due = levels::prompt_due(&mut shown, now);
-        if due {
-            messages.extend(levels::status_message(
-                context,
-                limits,
-                budget.map(|b| b.month),
-            ));
-        }
+    let status_due = opening == Opening::Prompt && levels::prompt_due(&mut shown, now);
+    let warnings = levels::decide(context, limits, budget, compacted, now, &mut shown);
+    if status_due && warnings.is_empty() {
+        messages.extend(levels::status_message(
+            now,
+            context,
+            limits,
+            budget.map(|b| b.month),
+        ));
     }
-    messages.extend(levels::decide(
-        context, limits, budget, compacted, now, &mut shown,
-    ));
+    messages.extend(warnings);
     if shown != before {
         state::store(file, &shown)?;
     }
@@ -97,9 +96,10 @@ fn announce(
 /// Returns the hook output for `input`, the JSON text of `hookSpecificOutput`, or `None` when
 /// there is nothing new to say: a subagent, another event, or no level crossed.
 ///
-/// `SessionStart` points at the report commands once per session. `limits` and `month` run only
-/// for the other events, so the caller can bound their time. The caller supplies the one that the
-/// mode needs and `None` from the other.
+/// `SessionStart` points at the report commands once per session and refreshes the census
+/// bulletin. `limits` and `month` run only for the other events, so the caller can bound their
+/// time. The caller supplies the one that the mode needs and `None` from the other; each receives
+/// the transcript of the input, which the ledger reads first.
 ///
 /// # Errors
 /// Fails when the input is not JSON or the hint state cannot be read or written; the levels shown
@@ -108,8 +108,8 @@ pub fn run(
     input: &str,
     now: u64,
     config: &Config,
-    limits: impl FnOnce() -> Option<LimitStatus>,
-    month: impl FnOnce() -> Option<MonthStatus>,
+    limits: impl FnOnce(Option<&Path>) -> Option<LimitStatus>,
+    month: impl FnOnce(Option<&Path>) -> Option<MonthStatus>,
 ) -> Result<Option<String>, HookError> {
     let input: Input = serde_json::from_str(input)?;
     let event = match input.hook_event_name.as_deref() {
@@ -124,6 +124,7 @@ pub fn run(
         return Ok(None);
     };
     if event == "SessionStart" {
+        refresh_bulletin(now);
         let messages = announce(&file, None, None, None, None, now, Opening::Session)?;
         return Ok(output(event, &messages));
     }
@@ -138,8 +139,8 @@ pub fn run(
         .context
         .map(|(model, tokens)| context::measure_with(tokens, Some(&model), settings));
     let compacted = ends.compacted;
-    let limits = limits();
-    let month = month();
+    let limits = limits(input.transcript_path.as_deref());
+    let month = month(input.transcript_path.as_deref());
     let budget = month.as_ref().map(|m| Budget {
         month: m,
         daily: DailyStatus::of(m, config.daily_limit_usd),
@@ -160,6 +161,14 @@ pub fn run(
         opening,
     )?;
     Ok(output(event, &messages))
+}
+
+/// Writes the guard follow rates to the census bulletin. A failure is logged as a warning, and the
+/// hook carries on.
+fn refresh_bulletin(now: u64) {
+    if let Err(e) = crate::usage::refresh_guard_follow_unless_recent(now) {
+        state::log_warn("bulletin.refresh", &e.to_string());
+    }
 }
 
 /// Returns the hook output for `messages`, or `None` when there is nothing to say.

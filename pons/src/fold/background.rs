@@ -6,15 +6,15 @@ use super::*;
 impl Folds {
     /// Returns the sessions that have background subagents, running or finished.
     pub fn background_sessions(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self
+        let mut ids: Vec<&str> = self
             .entries
             .values()
             .filter(|e| e.background && !e.hidden)
-            .map(|e| e.session.clone())
+            .map(|e| e.session.as_str())
             .collect();
-        ids.sort();
+        ids.sort_unstable();
         ids.dedup();
-        ids
+        ids.into_iter().map(str::to_owned).collect()
     }
 
     /// Finishes one background card. When the entry is gone (forgotten or
@@ -131,45 +131,16 @@ impl Folds {
     /// nothing). Silence ends a card only by the rule in the module docs.
     pub fn poll(&mut self, now: Instant) -> Vec<Finished> {
         let mut out = Vec::new();
-        let mut due = Vec::new();
-        let settle = self.settle;
-        self.notifications.retain(|(s, t)| {
-            let ripe = now.saturating_duration_since(*t) >= settle;
-            if ripe {
-                due.push((s.clone(), *t));
-            }
-            !ripe
-        });
-        for (session, at) in due {
-            // A card whose `Monitor` runs is picked only when no other card qualifies.
-            let pick = [false, true].into_iter().find_map(|monitored| {
-                self.entries
-                    .values()
-                    .filter(|e| {
-                        e.session == session
-                            && e.marker_candidate(at)
-                            && e.monitoring(now) == monitored
-                    })
-                    .min_by_key(|e| {
-                        (
-                            u8::from(e.last_kind != Kind::Text),
-                            e.last_activity(),
-                            e.parent.clone(),
-                        )
-                    })
-                    .map(|e| e.parent.clone())
-            });
-            match pick {
-                Some(parent) => {
-                    out.extend(self.finish_background(
-                        &parent,
-                        false,
-                        Some(at),
-                        "notification",
-                        true,
-                        now,
-                    ));
-                }
+        for (session, at) in self.take_ripe_notifications(now) {
+            match self.notification_candidate(&session, at, now) {
+                Some(parent) => out.extend(self.finish_background(
+                    &parent,
+                    false,
+                    Some(at),
+                    "notification",
+                    true,
+                    now,
+                )),
                 None => self.notes.push(format!(
                     "task-notification in {session}: no background subagent qualifies (tools open, active since, or none running); finished nothing"
                 )),
@@ -184,11 +155,41 @@ impl Folds {
                     .map(|reason| (e.parent.clone(), reason))
             })
             .collect();
-        silent.sort();
+        silent.sort_unstable();
         for (parent, reason) in silent {
             out.extend(self.finish_background(&parent, false, None, reason, false, now));
         }
         out
+    }
+
+    /// Moves the markers that waited `settle` out of the queue and returns them.
+    fn take_ripe_notifications(&mut self, now: Instant) -> Vec<(String, Instant)> {
+        let settle = self.settle;
+        let (ripe, waiting) = std::mem::take(&mut self.notifications)
+            .into_iter()
+            .partition(|(_, t)| now.saturating_duration_since(*t) >= settle);
+        self.notifications = waiting;
+        ripe
+    }
+
+    /// Picks the card a marker at `at` most likely ended. A card whose `Monitor` runs is
+    /// picked only when no other card qualifies.
+    fn notification_candidate(&self, session: &str, at: Instant, now: Instant) -> Option<String> {
+        [false, true].into_iter().find_map(|monitored| {
+            self.entries
+                .values()
+                .filter(|e| {
+                    e.session == session && e.marker_candidate(at) && e.monitoring(now) == monitored
+                })
+                .min_by_key(|e| {
+                    (
+                        u8::from(e.last_kind != Kind::Text),
+                        e.last_activity(),
+                        e.parent.as_str(),
+                    )
+                })
+                .map(|e| e.parent.clone())
+        })
     }
 
     /// Lists the background subagents of `session` that may still be working: running
@@ -238,11 +239,11 @@ impl Folds {
     /// completed tool call: returns that update rewritten to `in_progress`, with the
     /// launch blob replaced by the running log.
     /// `launched_by` is the prompt that is outstanding, if any.
-    pub fn launch_background(
+    pub fn launch_background<'a>(
         &mut self,
         session: &str,
         parent: &str,
-        update: &Value,
+        update: impl Into<UpdateView<'a>>,
         launched_by: Option<&str>,
         now: Instant,
     ) -> Value {
@@ -264,7 +265,7 @@ impl Folds {
         entry.last_emit = Some(now);
         let title = entry.card_title(now);
         entry.last_title.clone_from(&title);
-        let mut out = update.clone();
+        let mut out = update.into().raw().clone();
         if let Some(obj) = out.as_object_mut() {
             obj.remove("rawOutput");
             obj.insert("status".into(), json!("in_progress"));

@@ -2,11 +2,12 @@
 //! `acus self setup`: installs the skill and registers acus's hooks in Claude Code's settings.
 
 use crate::cmd_skill::SKILL_DEF;
+use crate::guard_log;
 use anyhow::{Context, Result};
 use capsa_core::claude_settings::{Step, runs};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-use capsa_core::hint::{Hinted, ResultExt};
+use capsa_core::hint::{ResultExt, hinted};
 use capsa_core::hooks::{Agent, HookFile, HookSpec};
 use capsa_core::render::{Check, Doc, Render, Status, emit};
 use capsa_core::skill::{self, SkillState, Target, installed_target};
@@ -143,16 +144,45 @@ impl Render for Setup {
     }
 }
 
+/// Moves or merges the guard log that older releases kept beside the config file. Each step is a
+/// check of its own, and `--dry-run` reports the steps without making them.
+pub(crate) fn guard_log_moves(dry_run: bool) -> Result<Vec<Check>> {
+    let config = crate::config::config_file();
+    let moves = guard_log::migrate(config.path(), dry_run).context("cannot move the guard log")?;
+    Ok(moves
+        .iter()
+        .map(|step| Check {
+            name: Cow::Borrowed("guard log"),
+            status: Status::Ok,
+            detail: move_detail(step, dry_run),
+            hint: None,
+        })
+        .collect())
+}
+
+fn move_detail(step: &guard_log::Move, dry_run: bool) -> String {
+    match step {
+        guard_log::Move::Renamed { from, to } => {
+            let verb = if dry_run { "would move" } else { "moved" };
+            format!("{verb} {} to {}", from.display(), to.display())
+        }
+        guard_log::Move::Merged { from, to } => {
+            let verb = if dry_run { "would merge" } else { "merged" };
+            let names: Vec<_> = from.iter().map(|file| file.display().to_string()).collect();
+            format!("{verb} {} into {}", names.join(", "), to.display())
+        }
+    }
+}
+
 pub fn run(a: &Args, format: Format) -> Result<Outcome> {
     if a.add_missing {
         return add_missing(format);
     }
     if a.target == Target::Codex {
-        return Err(Hinted::new(
+        return Err(hinted(
             "setup registers Claude Code hooks",
             "use --target claude or --target all",
-        )
-        .into());
+        ));
     }
     let home = std::env::home_dir().context("no home directory")?;
     let dirs = a
@@ -187,6 +217,7 @@ pub fn run(a: &Args, format: Format) -> Result<Outcome> {
     if writes && !a.dry_run {
         file.write().hinted()?;
     }
+    checks.extend(guard_log_moves(a.dry_run)?);
     emit(
         &Setup {
             dry_run: a.dry_run,

@@ -31,6 +31,7 @@ use clock::HOUR_S;
 use cost::Costed;
 use pattern::{Expect, WEEK_HOURS};
 use serde::Serialize;
+use std::path::Path;
 use std::time::Instant;
 use window::Span;
 
@@ -38,6 +39,9 @@ use window::Span;
 const FRESH_S: u64 = 120;
 /// Length of the short burn window, in seconds.
 const QUARTER_HOUR_S: u64 = 900;
+/// The short burn window holds at least this much list-price cost before its rate is compared:
+/// one request alone would say more than the hour's habit.
+const SURGE_MIN_USD: f64 = 0.25;
 
 /// The ledger and snapshot data that the limit state is computed from.
 pub struct History<'a> {
@@ -56,6 +60,9 @@ pub struct LimitStatus {
     pub burn: Burn,
     /// The forecast of the weekly window; `None` without a weekly calibration.
     pub forecast: Option<Forecast>,
+    /// The five-hour burn against the typical rate of this hour; `None` when it is not comparable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub surge: Option<Surge>,
     pub five_hour: FiveHourDay,
     pub basis: Basis,
 }
@@ -103,6 +110,15 @@ pub struct Burn {
     pub usd_per_hour_60: f64,
 }
 
+/// Holds the burn of the last 15 minutes against the rate this hour usually costs.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct Surge {
+    /// Expected USD of this hour from the history: the typical rate, above zero.
+    pub typical_usd_per_hour: f64,
+    /// The five-hour window at the 15-minute rate: full at this time, or lasting to its reset.
+    pub full: Full,
+}
+
 /// Describes the history that the forecast and the tables were expected from.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Basis {
@@ -137,16 +153,21 @@ impl Table {
 /// # Errors
 /// Fails when the ledger or the snapshot file cannot be read or written.
 pub fn status(now: u64) -> Result<LimitStatus, LimitsError> {
-    status_by(now, None)
+    status_by(now, None, None)
 }
 
 /// Like [`status`], but the ledger update stops reading transcripts at `deadline`, keeps its
-/// progress and the limits are computed from what is read so far.
+/// progress and the limits are computed from what is read so far. `current` is the running
+/// session's transcript, which a fresh sweep reads alone (see [`crate::ledger::Opts::current`]).
 ///
 /// # Errors
 /// Fails when the ledger or the snapshot file cannot be read or written.
-pub fn status_by(now: u64, deadline: Option<Instant>) -> Result<LimitStatus, LimitsError> {
-    let (ledger, snapshots) = load(now, deadline)?;
+pub fn status_by(
+    now: u64,
+    deadline: Option<Instant>,
+    current: Option<&Path>,
+) -> Result<LimitStatus, LimitsError> {
+    let (ledger, snapshots) = load(now, deadline, current)?;
     let priced = ledger.priced()?;
     let history = History {
         priced: &priced,
@@ -160,7 +181,7 @@ pub fn status_by(now: u64, deadline: Option<Instant>) -> Result<LimitStatus, Lim
 /// # Errors
 /// Fails when the ledger or the snapshot file cannot be read or written.
 pub fn usage_by(now: u64, kind: Kind) -> Result<Table, LimitsError> {
-    let (ledger, snapshots) = load(now, None)?;
+    let (ledger, snapshots) = load(now, None, None)?;
     let costs = Costed::from_priced(&ledger.priced()?);
     let expect = Expect::build(&costs, weekly_spans(&snapshots), now);
     Ok(Table {
@@ -170,9 +191,14 @@ pub fn usage_by(now: u64, kind: Kind) -> Result<Table, LimitsError> {
     })
 }
 
-fn load(now: u64, deadline: Option<Instant>) -> Result<(Ledger, Vec<Snapshot>), LimitsError> {
+fn load(
+    now: u64,
+    deadline: Option<Instant>,
+    current: Option<&Path>,
+) -> Result<(Ledger, Vec<Snapshot>), LimitsError> {
     let ledger = Ledger::open_and_update(&Opts {
         deadline,
+        current: current.map(Path::to_path_buf),
         ..Opts::defaults(now)
     })?;
     let snapshots = census_snapshot::read_since(0)?;
@@ -202,6 +228,7 @@ pub fn compute(history: &History, now: u64) -> LimitStatus {
         burn.usd_per_hour_60,
     );
     let expect = Expect::build(&costs, weekly_spans(history.snapshots), now);
+    let surge = surge(&five, burn, &expect, seven.span, now);
     let forecast = match (seven.used, seven.status.calibration, seven.span) {
         (Some(used), Some(c), Some(span)) => Some(forecast::week(
             used,
@@ -225,9 +252,32 @@ pub fn compute(history: &History, now: u64) -> LimitStatus {
         windows: vec![five.status, seven.status],
         burn,
         forecast,
+        surge,
         five_hour,
         basis: basis(&expect),
     }
+}
+
+/// Returns the surge of the five-hour window: its 15-minute burn is comparable when its share is
+/// known and calibrated, the typical rate of this hour is above zero, and the 15 minutes hold at
+/// least `SURGE_MIN_USD`.
+fn surge(
+    five: &Estimate,
+    burn: Burn,
+    expect: &Expect,
+    week: Option<Span>,
+    now: u64,
+) -> Option<Surge> {
+    let (used, k, span) = (five.used?, five.status.calibration?.k, five.span?);
+    let typical_usd_per_hour = expect.at(now, week);
+    let cost_15 = burn.usd_per_hour_15 * QUARTER_HOUR_S as f64 / HOUR_S as f64;
+    if typical_usd_per_hour <= 0.0 || cost_15 < SURGE_MIN_USD {
+        return None;
+    }
+    Some(Surge {
+        typical_usd_per_hour,
+        full: full_at(used, k, burn.usd_per_hour_15, now, span.end),
+    })
 }
 
 /// One window's running span and share, with the status that reports them.

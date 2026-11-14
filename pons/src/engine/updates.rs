@@ -12,19 +12,15 @@ impl Engine {
         forward: Action,
         now: Instant,
     ) -> Vec<Action> {
-        let update = msg.pointer("/params/update").unwrap_or(&Value::Null);
-        let kind = update.get("sessionUpdate").and_then(Value::as_str);
-        let tool_id = update.get("toolCallId").and_then(Value::as_str);
-        let id = tool_id.unwrap_or_default();
+        let update = UpdateView::of_message(msg);
+        let kind = update.session_update;
+        let id = update.tool_call_id.unwrap_or_default();
         self.folds.note_input(id, update);
         let session = self.sessions.entry(sid.to_owned()).or_default();
-        let terminal = matches!(
-            update.get("status").and_then(Value::as_str),
-            Some("completed" | "failed")
-        );
+        let terminal = update.is_terminal();
         if self.cfg.fold
             && kind == Some("tool_call_update")
-            && update.get("status").and_then(Value::as_str) == Some("completed")
+            && update.status == Some("completed")
             && is_async_launch(update)
         {
             // The adapter reports a background launch as completed; the
@@ -62,7 +58,7 @@ impl Engine {
         &mut self,
         sid: &str,
         parent: &str,
-        update: &Value,
+        update: UpdateView<'_>,
         forward: Action,
         now: Instant,
     ) -> Vec<Action> {
@@ -86,7 +82,7 @@ impl Engine {
                 .iter()
                 .map(synthesized),
         );
-        if update.get("sessionUpdate").and_then(Value::as_str) == Some("tool_call") {
+        if update.session_update == Some("tool_call") {
             out.push(Action::Note(child_start_note(&root, update)));
         }
         // Activity after a finish: the entry announcing it was premature.
@@ -105,15 +101,15 @@ impl Engine {
         let Some(sid) = session_id(msg) else {
             return vec![forward];
         };
-        let update = msg.pointer("/params/update").unwrap_or(&Value::Null);
+        let update = UpdateView::of_message(msg);
         let session = self.sessions.entry(sid.to_owned()).or_default();
         session.last_activity = Some(now);
-        if let Some(parent) = parent_tool_use_id(msg, update) {
+        if let Some(parent) = update.parent_tool_use_id(msg) {
             return self.on_child_update(sid, parent, update, forward, now);
         }
 
-        let tool_id = update.get("toolCallId").and_then(Value::as_str);
-        let kind = update.get("sessionUpdate").and_then(Value::as_str);
+        let tool_id = update.tool_call_id;
+        let kind = update.session_update;
         if kind == Some("tool_call")
             && let Some(id) = tool_id
             && is_subagent_tool(update)
@@ -146,7 +142,7 @@ impl Engine {
         }
         if kind == Some("plan") && self.cfg.roster && self.cfg.fold {
             let items = self.folds.roster(sid, now);
-            if let Some(merged) = self.roster.on_adapter_plan(sid, update, &items) {
+            if let Some(merged) = self.roster.on_adapter_plan(sid, update.raw(), &items) {
                 out.push(synthesized(&merged));
                 return out;
             }
@@ -168,11 +164,11 @@ impl Engine {
             // With subagent text on, the adapter replays child text too; it
             // would show flat in the chat, and the cards of old subagents
             // are not rebuilt, so it is dropped.
-            let update = msg.pointer("/params/update").unwrap_or(&Value::Null);
+            let update = UpdateView::of_message(msg);
             if self.forwards_text
-                && parent_tool_use_id(msg, update).is_some()
+                && update.parent_tool_use_id(msg).is_some()
                 && matches!(
-                    update.get("sessionUpdate").and_then(Value::as_str),
+                    update.session_update,
                     Some("agent_message_chunk" | "agent_thought_chunk")
                 )
             {
@@ -185,14 +181,14 @@ impl Engine {
         if self.cfg.fold
             && let Some(sid) = session_id(msg)
         {
-            let update = msg.pointer("/params/update").unwrap_or(&Value::Null);
-            if parent_tool_use_id(msg, update).is_none() && is_task_notification(update) {
+            let update = UpdateView::of_message(msg);
+            if update.parent_tool_use_id(msg).is_none() && is_task_notification(update) {
                 // The adapter ends the turn that handled the notification with
                 // this marker, so its text is complete: finish the subagent
                 // now and let the held entries out.
                 // The marker names no task; log its raw `_meta` so a log shows
                 // whether a future adapter adds an id to match on.
-                let meta = update.get("_meta").unwrap_or(&Value::Null);
+                let meta = update.meta.unwrap_or(&Value::Null);
                 out.push(Action::Note(format!(
                     "task-notification marker in {sid}: _meta {meta}"
                 )));

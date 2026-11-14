@@ -2,17 +2,26 @@
 //! Runs `census hook` and `census self skill` as binaries under a scratch state and config.
 
 mod common;
+#[path = "common/state.rs"]
+mod state;
 
 use common::Scratch;
+use state::tool_state;
+
+/// Returns the relative path of `tool`'s capsa bulletin under the scratch root.
+fn bulletin(tool: &str) -> String {
+    tool_state("capsa", &format!("bulletin/{tool}.json"))
+}
 
 /// Where census reads its config under a scratch home: macOS ignores `XDG_CONFIG_HOME`.
 const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
-    "Library/Application Support/census/config.json"
+    "Library/Application Support/census/config.toml"
 } else {
-    "config/census/config.json"
+    "config/census/config.toml"
 };
 use serde_json::{Value, json};
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 /// 2026-10-14 08:00 UTC, the time of every hook call in these tests.
@@ -61,6 +70,8 @@ impl Hook {
             .env("APPDATA", self.home.path().join("config"))
             .env("LOCALAPPDATA", self.home.path().join("state"))
             .env("CENSUS_NOW", self.now.to_string())
+            // Fixes the local zone, so the clock in the status line is the same on every machine.
+            .env("CENSUS_TZ_OFFSET_SECS", "7200")
             // Parallel tests can starve the hook for longer than the 150 ms production deadline.
             .env("CENSUS_HOOK_DEADLINE_MS", "60000")
             .env_remove("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
@@ -127,7 +138,8 @@ fn hook_input(event: &str, transcript: &str) -> String {
     .to_string()
 }
 
-const REARM: &str = "census: context was compacted; now 100k of 400k (compaction at 400k). \
+const REARM: &str = "census: now Wed 10:00; context was compacted; now 100k of 400k (compaction at \
+    400k). \
     Earlier notes that the context is nearly full are outdated.";
 
 #[test]
@@ -161,6 +173,80 @@ fn a_session_start_points_at_the_report_commands_once() {
 }
 
 #[test]
+fn a_session_start_writes_the_guard_follow_bulletin() {
+    let h = Hook::new("hook-bulletin");
+    h.hook(h.input("SessionStart", 48_000).as_bytes());
+    let text = std::fs::read_to_string(h.home.path().join(bulletin("census")))
+        .expect("the census bulletin is written at session start");
+    let body: Value = serde_json::from_str(&text).expect("bulletin json");
+    assert_eq!(body["guard_follow"]["at"], NOW);
+}
+
+/// Returns the `at` of the census bulletin's guard follow rates, if the bulletin reads.
+fn bulletin_at(h: &Hook) -> Option<u64> {
+    let path = h.home.path().join(bulletin("census"));
+    let body: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    body["guard_follow"]["at"].as_u64()
+}
+
+#[test]
+fn a_session_start_keeps_a_fresh_bulletin() {
+    let h = Hook::new("hook-bulletin-fresh");
+    h.home.write(
+        &bulletin("census"),
+        &json!({"guard_follow": {"at": NOW - 3600, "ttl": 604_800, "value": {"grep": 0.5}}})
+            .to_string(),
+    );
+    h.hook(h.input("SessionStart", 48_000).as_bytes());
+    assert_eq!(bulletin_at(&h), Some(NOW - 3600));
+}
+
+#[test]
+fn a_session_start_rewrites_a_bulletin_older_than_six_hours() {
+    let h = Hook::new("hook-bulletin-stale");
+    h.home.write(
+        &bulletin("census"),
+        &json!({ "guard_follow": { "at": NOW - 6 * 3600, "ttl": 604_800, "value": {} } })
+            .to_string(),
+    );
+    h.hook(h.input("SessionStart", 48_000).as_bytes());
+    assert_eq!(bulletin_at(&h), Some(NOW));
+}
+
+/// Returns the file size that the ledger index records for `file`, if it has one.
+fn indexed_size(h: &Hook, file: &Path) -> Option<u64> {
+    let text =
+        std::fs::read_to_string(h.home.path().join(tool_state("census", "index.json"))).ok()?;
+    let index: Value = serde_json::from_str(&text).ok()?;
+    index["files"]
+        .as_object()?
+        .iter()
+        .find(|(key, _)| Path::new(key.as_str()) == file)
+        .and_then(|(_, state)| state["size"].as_u64())
+}
+
+#[test]
+fn a_prompt_within_a_minute_of_a_sweep_reads_only_its_own_transcript() {
+    let mut h = Hook::new("hook-fresh-sweep");
+    let own = h.transcript(48_000);
+    let other = h.home.write(
+        "claude/projects/app/s2.jsonl",
+        &format!("{}\n", request(1_000)),
+    );
+    let input = hook_input("UserPromptSubmit", &own);
+    h.hook(input.as_bytes());
+    let swept = indexed_size(&h, &other);
+    assert!(swept.is_some(), "the first prompt sweeps every transcript");
+    h.home.write(
+        "claude/projects/app/s2.jsonl",
+        &format!("{}\n{}\n", request(1_000), request(2_000)),
+    );
+    h.now = NOW + 10;
+    h.hook(input.as_bytes());
+    assert_eq!(indexed_size(&h, &other), swept);
+}
+
+#[test]
 fn a_prompt_does_not_repeat_the_usage_hint() {
     let h = Hook::new("hook-usage-prompt");
     h.hook(h.input("SessionStart", 48_000).as_bytes());
@@ -176,16 +262,14 @@ fn context_message_shows_once_then_the_handoff_level_adds_its_text() {
     let first = h.hook(h.input("UserPromptSubmit", 245_000).as_bytes());
     assert_eq!(
         first.as_deref(),
-        Some(
-            "census: status: context 245k of 400k (compaction at 400k). census: context 245k of 400k (compaction at 400k)."
-        )
+        Some("census: now Wed 10:00; context 245k of 400k (compaction at 400k).")
     );
     assert_eq!(h.hook(h.input("PostToolUse", 250_000).as_bytes()), None);
     let high = h.hook(h.input("PostToolUse", 325_000).as_bytes());
     assert_eq!(
         high.as_deref(),
         Some(
-            "census: context 325k of 400k (compaction at 400k). At the next task boundary, suggest a handoff to Luca (session-handoff skill)."
+            "census: now Wed 10:00; context 325k of 400k (compaction at 400k). At the next task boundary, suggest a handoff to Luca (session-handoff skill)."
         )
     );
     assert_eq!(h.hook(h.input("PostToolUse", 330_000).as_bytes()), None);
@@ -204,7 +288,7 @@ fn context_levels_show_again_after_a_drop_below_half() {
     let again = h.hook(h.input("PostToolUse", 245_000).as_bytes());
     assert_eq!(
         again.as_deref(),
-        Some("census: context 245k of 400k (compaction at 400k).")
+        Some("census: now Wed 10:00; context 245k of 400k (compaction at 400k).")
     );
     assert_eq!(
         h.hook(h.input("PostToolUse", 100_000).as_bytes())
@@ -225,7 +309,7 @@ fn the_compaction_message_says_once_how_many_tokens_it_removed() {
         h.hook(hook_input("PostToolUse", &path).as_bytes())
             .as_deref(),
         Some(
-            "census: context was compacted (345k → 15k); now 100k of 400k (compaction at 400k). \
+            "census: now Wed 10:00; context was compacted (345k → 15k); now 100k of 400k (compaction at 400k). \
              Earlier notes that the context is nearly full are outdated."
         )
     );
@@ -240,7 +324,7 @@ fn output_has_exactly_the_hook_shape() {
     assert_eq!(
         v,
         json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
-            "additionalContext": "census: status: context 245k of 400k (compaction at 400k). census: context 245k of 400k (compaction at 400k)."}})
+            "additionalContext": "census: now Wed 10:00; context 245k of 400k (compaction at 400k)."}})
     );
 }
 
@@ -268,7 +352,10 @@ fn a_limit_level_shows_once_per_window_and_again_for_a_new_one() {
     let input = h.input("UserPromptSubmit", 10_000);
     h.snapshot("five_hour", 82.0, NOW + 3 * 3600);
     let first = h.hook(input.as_bytes()).expect("a limit message");
-    assert!(first.contains("census: 5h limit 82%"), "{first}");
+    assert!(
+        first.contains("census: now Wed 10:00; 5h limit 82%"),
+        "{first}"
+    );
     assert!(
         first.ends_with("Avoid large parallel agent batches; tell Luca."),
         "{first}"
@@ -279,6 +366,45 @@ fn a_limit_level_shows_once_per_window_and_again_for_a_new_one() {
 }
 
 #[test]
+fn a_warning_in_the_first_prompt_replaces_the_status_line_it_repeats() {
+    let h = Hook::new("hook-no-duplicate");
+    h.snapshot("five_hour", 8.0, NOW + 3 * 3600);
+    let text = h
+        .hook(h.input("UserPromptSubmit", 250_000).as_bytes())
+        .expect("a context warning");
+    assert!(
+        text.starts_with("census: now Wed 10:00; context 250k of 400k"),
+        "{text}"
+    );
+    assert!(!text.contains("status:"), "{text}");
+}
+
+#[test]
+fn a_burn_far_above_the_typical_rate_is_said_once_per_window() {
+    let h = Hook::new("hook-surge");
+    // The same hour a week earlier sets the typical rate at $2 an hour.
+    let path = h.transcript_lines(&[
+        request_at("2026-10-07T08:30:00.000Z", "m0", 500_000),
+        request_at("2026-10-14T07:48:00.000Z", "m1", 150_000),
+        request_at("2026-10-14T07:52:00.000Z", "m2", 150_000),
+    ]);
+    h.snapshot("five_hour", 30.0, NOW + 3 * 3600);
+    let input = hook_input("UserPromptSubmit", &path);
+    let text = h.hook(input.as_bytes()).expect("a surge warning");
+    assert!(
+        text.starts_with(
+            "census: now Wed 10:00; 5h burn $4.8/h, 2x your typical rate; at this rate full around "
+        ),
+        "{text}"
+    );
+    assert!(
+        text.ends_with("reset Wed 13:00. Avoid large parallel agent batches; tell Luca."),
+        "{text}"
+    );
+    assert_eq!(h.hook(input.as_bytes()), None);
+}
+
+#[test]
 fn self_skill_prints_the_skill_and_install_writes_it() {
     let h = Hook::new("hook-skill");
     let out = h.run(&["self", "skill"], b"");
@@ -286,7 +412,7 @@ fn self_skill_prints_the_skill_and_install_writes_it() {
     // A Windows checkout may store the skill with CRLF line endings, so line endings are compared as LF.
     let text = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
     assert!(text.starts_with("---\nname: census\n"), "{text}");
-    assert!(text.lines().count() < 60);
+    assert!(text.lines().count() < 500);
     let out = h.run(&["self", "skill", "--install"], b"");
     assert_eq!(out.status.code(), Some(0));
     let installed = h.home.path().join(".claude/skills/census/SKILL.md");
@@ -302,10 +428,25 @@ fn the_first_prompt_of_a_session_adds_the_status_line() {
         .hook(h.input("UserPromptSubmit", 48_000).as_bytes())
         .expect("a status line");
     assert!(
-        text.starts_with("census: status: context 48k of 400k (compaction at 400k); 5h 8% (reset "),
+        text.starts_with(
+            "census: status: now Wed 10:00; context 48k of 400k (compaction at 400k); 5h 8% (reset "
+        ),
         "{text}"
     );
     assert!(text.ends_with(")."), "{text}");
+}
+
+#[test]
+fn the_status_line_starts_with_the_local_time_of_the_prompt() {
+    let mut h = Hook::new("hook-status-clock");
+    h.now = NOW + 26 * 3600;
+    let text = h
+        .hook(h.input("UserPromptSubmit", 48_000).as_bytes())
+        .expect("a status line");
+    assert_eq!(
+        text,
+        "census: status: now Thu 12:00; context 48k of 400k (compaction at 400k)."
+    );
 }
 
 #[test]
@@ -332,7 +473,10 @@ fn a_prompt_after_an_hour_adds_the_status_line_again() {
     let text = h
         .hook(h.input("UserPromptSubmit", 48_000).as_bytes())
         .expect("a status line");
-    assert!(text.starts_with("census: status: context 48k"), "{text}");
+    assert!(
+        text.starts_with("census: status: now Wed 11:00; context 48k"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -354,7 +498,7 @@ fn a_five_hour_forecast_at_sixty_percent_after_forty_minutes_is_said() {
         .hook(hook_input("UserPromptSubmit", &path).as_bytes())
         .expect("a forecast");
     assert!(
-        text.contains("census: 5h limit 60%, full around "),
+        text.contains("census: now Wed 10:00; 5h limit 60%, full around "),
         "{text}"
     );
 }
@@ -363,12 +507,15 @@ fn a_five_hour_forecast_at_sixty_percent_after_forty_minutes_is_said() {
 fn budget_mode_warns_when_the_month_spend_passes_the_budget() {
     let h = Hook::new("hook-budget");
     h.home
-        .write(CONFIG_FILE, r#"{"mode":"budget","monthly_budget_usd":0.5}"#);
+        .write(CONFIG_FILE, "mode = \"budget\"\nmonthly_budget_usd = 0.5\n");
     let path = h.transcript_lines(&[request_at("2026-10-02T10:00:00.000Z", "m1", 400_000)]);
     let text = h
         .hook(hook_input("UserPromptSubmit", &path).as_bytes())
         .expect("a budget warning");
-    assert!(text.contains("census: monthly budget used up"), "{text}");
+    assert!(
+        text.contains("census: now Wed 10:00; monthly budget used up"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -376,13 +523,16 @@ fn daily_budget_reached_is_said_once_per_day() {
     let h = Hook::new("hook-daily");
     h.home.write(
         CONFIG_FILE,
-        r#"{"mode":"budget","monthly_budget_usd":100.0,"daily_limit_usd":0.01}"#,
+        "mode = \"budget\"\nmonthly_budget_usd = 100.0\ndaily_limit_usd = 0.01\n",
     );
     // The request is at the clock's instant, so it falls on today in any time zone.
     let path = h.transcript_lines(&[request_at("2026-10-14T08:00:00.000Z", "m1", 400_000)]);
     let input = hook_input("UserPromptSubmit", &path);
     let text = h.hook(input.as_bytes()).expect("a daily warning");
-    assert!(text.contains("census: daily budget reached: $"), "{text}");
+    assert!(
+        text.contains("census: now Wed 10:00; daily budget reached: $"),
+        "{text}"
+    );
     assert_eq!(h.hook(input.as_bytes()), None);
 }
 
@@ -390,7 +540,7 @@ fn daily_budget_reached_is_said_once_per_day() {
 fn plan_mode_never_reports_the_monthly_budget() {
     let h = Hook::new("hook-budget-plan");
     h.home
-        .write(CONFIG_FILE, r#"{"mode":"plan","monthly_budget_usd":0.5}"#);
+        .write(CONFIG_FILE, "mode = \"plan\"\nmonthly_budget_usd = 0.5\n");
     let path = h.transcript_lines(&[request_at("2026-10-02T10:00:00.000Z", "m1", 400_000)]);
     let text = h
         .hook(hook_input("UserPromptSubmit", &path).as_bytes())

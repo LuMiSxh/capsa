@@ -12,6 +12,7 @@ struct Guard {
 
 fn counts(path: &Path) -> Vec<u64> {
     read::<Value>(path)
+        .unwrap()
         .iter()
         .map(|e| e.fields["n"].as_u64().unwrap())
         .collect()
@@ -86,7 +87,7 @@ fn envelope_fields_come_before_the_tool_fields() {
         .map(String::as_str)
         .collect();
     assert_eq!(keys, ["ts", "level", "event", "message"]);
-    let entries = read::<Value>(&path);
+    let entries = read::<Value>(&path).unwrap();
     assert_eq!(entries[0].level, Some(Level::Warn));
     assert_eq!(entries[0].event.as_deref(), Some("hook.error"));
 }
@@ -97,7 +98,7 @@ fn entry_parses_lines_written_before_level_and_event() {
     let path = dir.path().join("guard.jsonl");
     let old = r#"{"ts":1,"session":"s","cwd":"c","tool":"Bash","rule":"grep","kind":"rewrite","call":"x"}"#;
     std::fs::write(&path, format!("{old}\n")).unwrap();
-    let entries: Vec<Entry<Guard>> = read(&path);
+    let entries: Vec<Entry<Guard>> = read(&path).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].ts, 1);
     assert_eq!(entries[0].level, None);
@@ -161,4 +162,23 @@ fn read_skips_malformed_lines() {
         "{\"ts\":1,\"n\":1}\nnot json\n\n{\"n\":9}\n{\"ts\":2,\"n\":\"x\"\n{\"ts\":3,\"n\":3}\n";
     std::fs::write(&path, text).unwrap();
     assert_eq!(counts(&path), [1, 3]);
+}
+
+#[test]
+fn read_of_a_missing_file_has_no_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+        read::<Value>(&dir.path().join("none.jsonl"))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn read_fails_on_a_file_it_cannot_read() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(matches!(
+        read::<Value>(dir.path()),
+        Err(LogError::Read { .. })
+    ));
 }

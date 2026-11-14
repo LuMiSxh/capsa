@@ -2,6 +2,122 @@
 
 ## [Unreleased]
 
+## [0.7.0]
+
+### Added
+
+- `census self doctor` gets an `update` line in its install group: ok with
+  `<version> is the latest`, a warning with `census self update` as its fix when a newer release
+  exists, or ok with `could not check for updates` when GitHub does not answer within 3 seconds.
+  The newest release is saved in `latest.json` in census's state directory and reused for a day;
+  `census self update` saves it too. `CAPSA_UPDATE_CHECK=off` skips the lookup and reports the
+  line as unchecked. Only `self doctor` looks, so no hook or statusline reaches the network. The
+  check and the release lookup live in `capsa-core`.
+- `census self skill --install --target claude|codex|all` writes the skill to Claude Code's skill
+  directory, to Codex's, or to both. `claude` stays the default.
+- `census self doctor` warns when a `config.json` from an older version is still there. The warning
+  names the new `config.toml` and `census self config set`, which writes the settings again.
+- `census self doctor` checks the price log, `prices.jsonl`, for its size and last entry.
+- `census hook` warns once per five-hour window, before 75 %, when the list-price burn of the last
+  15 minutes is at least twice the typical rate of this hour, with the time it fills at that rate,
+  such as `census: now Wed 10:00; 5h burn $4.8/h, 2x your typical rate; at this rate full around
+  Wed 10:34, reset Wed 13:00. Avoid large parallel agent batches; tell Luca.` The typical rate is
+  the expected cost of the hour of the week from the history; under $0.25 in the last 15 minutes
+  is too little to compare. `census limits --json` gains a `surge` object only while one applies.
+- `census usage --guard` shows a follow rate per rule: the share of its observed refusals, hints
+  and rewrites that the rule did not repeat in the same session within 10 minutes. A rule shows a
+  rate after 5 observed decisions, and `n/a` before that. The log keeps no hint text, so this is a
+  proxy; a switch to acus is invisible, because passes are not logged.
+- `census usage --guard --by-project` lists the decisions per project and rule, so a rule that
+  keeps firing in one repository shows.
+- `census usage --handbacks` adds a table per role: spawns, hand-backs, and the median minutes from
+  the worker spawn to the senior-worker spawn that followed it.
+- `census usage --guard` without `--days` or `--project` also writes the follow rates to the census
+  bulletin, `guard_follow`, current for 7 days, for `census` to read at session start.
+- `census self doctor --fix` makes the safe repairs before it reports: it updates an outdated
+  Claude Code skill, adds census's statusLine when it is missing, and adds the census hooks that
+  are missing or outdated, in an existing Claude Code setup. Each repair is listed under `fixed`,
+  and `--json` adds the same array. A missing skill, a statusLine that census does not own,
+  deletions, config values and the network are left alone.
+- `census statusline --line` adds two segments after the usage, read from the capsa bulletin:
+  `ds $8.66` for vicarius's DeepSeek gate (`ds open` without a balance, `ds off` when closed), and
+  `guard 3` for the session's guard blocks from acus, shown only above 0. A segment appears only
+  while its bulletin is current; a missing, stale or unreadable bulletin gives none. Benchmark:
+  release build, `hyperfine -N -w 5 -r 50` on a sample input with both bulletins current, mean
+  1.7 ms before and 1.7 ms after (σ 0.1 ms), memory 3.1 to 3.2 MiB. Only `--line` reads them.
+- `census self doctor` gets an `interop` group after the others, with an `ok` line for acus,
+  vicarius and pons. An installed sibling shows the feature it feeds, such as `guard log for
+  census usage --guard`, and for acus and vicarius the age of its bulletin; a sibling that is not
+  installed reads `not installed, off`. No line fails.
+- `census statusline --line` adds an `update` segment after the interop segments, such as
+  `update acus,pons`, naming the capsa tools (acus, census, pons, vicarius) whose `<tool>-release`
+  bulletin is current and shows a newer release. It is absent when none does, and only `--line`
+  reads the release bulletins, through `capsa_core::update::release_status`. Benchmark: release
+  build, `hyperfine -N -w 5 -r 50` on `census statusline --line` with the DeepSeek gate, the guard
+  blocks and the four release bulletins current; three paired runs, mean 1.79 to 1.99 ms before
+  and 1.85 to 1.99 ms after, p50 1.69 to 1.87 ms before and 1.74 to 1.91 ms after, σ 0.20 to 0.35
+  ms, peak memory 3.3 MiB before and after.
+- `census self uninstall` also removes census's bulletins, `census.json` and `census-release.json`
+  in the capsa bulletin directory, so the other tools stop reading them. The removal is the shared
+  uninstall of `capsa-core`.
+
+### Changed
+
+- `census hook` skips the full transcript sweep when the prompt's transcript is fresh: the last
+  complete sweep is under a minute old and the transcript is the running session. Only that
+  transcript is read. Benchmark: `census/benches/hook_sweep.sh`, release build, 1400 transcripts,
+  three runs of 50 calls; p50 13.4 to 13.9 ms before, 10.7 to 11.0 ms after.
+- `census hook` at `SessionStart` refreshes the bulletin's `guard_follow` rates when they are older
+  than six hours, so the census bulletin is current for 7 days. `census usage --guard` always
+  refreshes them. A failed refresh is logged as a warning to `hook.jsonl`, and the hook still
+  prints. The refresh costs the session start, not a prompt. Benchmark:
+  `EVENT=SessionStart census/benches/hook_sweep.sh`, release build, a guard log of 1000 lines,
+  p50 1.7 to 1.8 ms with no refresh (before this change), 1.9 ms with a fresh bulletin, and 10.4 to
+  10.6 ms when the bulletin is stale (`STALE=1`).
+- `census self doctor` counts only the error lines of `hook.jsonl` as hook errors; the warnings
+  that the bulletin refresh logs there are not errors.
+- `census usage --guard --json` gains `observed` and `follow` on each rule. The change is additive,
+  and the golden report is updated. `census usage --handbacks --json` is unchanged.
+
+- `census hook` says a limit forecast again only when its "full around" or "runs out around" time
+  moved by at least 30 minutes, or the 60-minute burn at least doubled, since it was last said. A
+  new 75 % or 90 % level is still said once. Before, a forecast was said once per window.
+- A prompt whose call also has a warning no longer adds the status line. The warning starts with
+  the same time and states the same facts, so each appears once per prompt.
+- The calibration of a limit window reads snapshots up to 90 days old, not 30, while the last 30
+  days give fewer than four points, the number the spread needs. With four or more recent points
+  the results are unchanged.
+- Every warning of `census hook` starts with the local time, such as
+  `census: now Thu 08:12; 5h limit 60% (estimated), full around Thu 09:07, reset Thu 12:10.`, so
+  the main agent can place a forecast in the day. The per-prompt status line starts the same way,
+  `census: status: now Thu 07:58; context 90k of 300k ...`. The usage hint at SessionStart and
+  prompts without a line are unchanged.
+- `census hook` on a prompt that appends rows to the ledger is faster: 23.9 ms p50 / 25.9 ms p95
+  before, 9.1 ms / 9.7 ms after. The digest was already extended with new rows, but each write of
+  `digest.json` and `index.json` synced the file and its directory, and the next read parsed the
+  digest again. Both are caches and are now written without the syncs (a torn file is built again,
+  a torn index means a rescan that deduplicates by message id), and the update hands its digest to
+  the limits. `rows.jsonl` is still synced. The digest records the rows file's length and a hash of its last 256 bytes, so a cut or
+  replaced file is rebuilt even at the same length; digests of the old layout are rebuilt once.
+  Benchmark: `census/benches/hook_append.sh`, `hyperfine -N -w 5 -r 50`, release build, 10 000 rows
+  in a 1.9 MB `rows.jsonl`, two new rows per call.
+- The settings are in `config.toml` in the census config directory, not `config.json`. This is a
+  hard break: census neither reads nor migrates `config.json`. Set the settings again with
+  `census self config set`; `census self doctor` reports the old file.
+- `census usage --guard` reads acus's `guard.jsonl` from acus's state directory. It no longer reads
+  `ACUS_CONFIG`.
+- `census usage --guard` with no decisions prints its report with a hint to run `acus self setup`,
+  where it printed a line to stderr. The exit code stays 1; `--json` prints the empty report.
+- `census usage` ends the `models`, `sessions` and `tools` lists, and the guard's escaped commands,
+  with a footer that names the command for the rest (`census usage --top N`).
+- The doctor's hook log checks come from the shared doctor kit, and the error check is named
+  `hook errors`. The messages of `census self update`, `uninstall` and the doctor's directory check
+  come from `capsa-core`; the uninstall note names the full settings path.
+
+### Fixed
+
+- `census self doctor` warns when it cannot read the hook log. It reported no errors before.
+
 ## [0.6.1]
 
 ### Changed

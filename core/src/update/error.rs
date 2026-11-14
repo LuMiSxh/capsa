@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 
 use super::REPO;
+use crate::bulletin::BulletinError;
 use crate::hint::Hint;
 
 /// Why an update or an uninstall failed.
@@ -47,6 +48,8 @@ pub enum UpdateError {
         #[source]
         source: std::io::Error,
     },
+    #[error("cannot remove the capsa bulletin")]
+    Bulletin(#[source] BulletinError),
 }
 
 impl UpdateError {

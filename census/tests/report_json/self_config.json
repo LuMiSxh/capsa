@@ -1,1 +1,1 @@
-{"mode":"plan","monthly_budget_usd":null,"daily_limit_usd":null,"daily_thresholds":[50,80,100],"prices_refresh_days":7,"billing":{"anthropic":"subscription"},"path":"<HOME>/config/census/config.json","today":null}
+{"mode":"plan","monthly_budget_usd":null,"daily_limit_usd":null,"daily_thresholds":[50,80,100],"prices_refresh_days":7,"billing":{"anthropic":"subscription"},"path":"<HOME>/config/census/config.toml","today":null}

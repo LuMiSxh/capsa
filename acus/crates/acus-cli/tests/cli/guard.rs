@@ -226,14 +226,15 @@ fn concurrent_guard_calls_count_exactly() {
     let state = dir.path().join("guard-hints");
     let text = std::fs::read_to_string(state.join("par")).unwrap();
     assert_eq!(text.lines().count(), 1, "{text}");
-    let last: usize = text.trim_end().rsplit(' ').next().unwrap().parse().unwrap();
+    let last: usize = text.split_whitespace().nth(1).unwrap().parse().unwrap();
     assert!((1..=20).contains(&last), "{text}");
     assert_eq!(
         shown.load(Ordering::SeqCst),
         last.div_ceil(10) + (20 - last),
         "{text}"
     );
-    assert!(!state.join("par.lock").exists());
+    let lock = capsa_core::lock::exclusive(&state.join("par.lock"), std::time::Duration::ZERO);
+    assert!(lock.unwrap().is_some(), "every call released the lock");
 }
 
 /// The SessionStart hook forgets a session's counts after a compaction or `/clear`, so the next
@@ -300,6 +301,65 @@ fn unusable_hint_state_still_shows_hints() {
         let out = run_hook(&config, &["hook"], bash_call("s1", "git status"));
         assert!(!out.is_empty());
     }
+}
+
+/// Census's follow rate moves the interval of a rule between `hint_every_min` and `hint_every_max`
+/// (here 5 and 40, from `hint_every` = 10); a stale, unreadable or missing bulletin keeps 10.
+#[test]
+fn census_follow_rate_adapts_the_hint_interval() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
+    let state = dir.path().join("state");
+    let bulletin = tool_state_dir(&state, "capsa").join("bulletin");
+    std::fs::create_dir_all(&bulletin).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let shown_with = |session: &str, bulletin_text: Option<String>| -> Vec<usize> {
+        let file = bulletin.join("census.json");
+        match bulletin_text {
+            Some(text) => std::fs::write(&file, text).unwrap(),
+            None => drop(std::fs::remove_file(&file)),
+        }
+        let state = state.to_str().unwrap();
+        let cfg = config.display().to_string();
+        let env = [
+            ("ACUS_CONFIG", cfg.as_str()),
+            ("XDG_STATE_HOME", state),
+            ("LOCALAPPDATA", state),
+        ];
+        let proj =
+            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
+        (1..=42)
+            .filter(|_| {
+                let input = bash_call(session, "git status").to_string();
+                let (code, out, err) = acus_in_env(proj, &["hook"], &input, &env);
+                assert_eq!(code, 0, "{err}");
+                !out.is_empty()
+            })
+            .collect()
+    };
+    let rate = |r: f32, at: u64| {
+        Some(format!(
+            r#"{{"guard_follow":{{"at":{at},"ttl":3600,"value":{{"git-status":{r}}}}},"later":1}}"#
+        ))
+    };
+    assert_eq!(shown_with("hi", rate(1.0, now)), [1, 41]);
+    assert_eq!(
+        shown_with("lo", rate(0.0, now)),
+        [1, 6, 11, 16, 21, 26, 31, 36, 41]
+    );
+    assert_eq!(
+        shown_with("stale", rate(0.0, now - 7200)),
+        [1, 11, 21, 31, 41]
+    );
+    assert_eq!(
+        shown_with("junk", Some("{not json".into())),
+        [1, 11, 21, 31, 41]
+    );
+    assert_eq!(shown_with("none", None), [1, 11, 21, 31, 41]);
 }
 
 /// A config that does not parse must not stop the guard: it answers with the defaults, names the
@@ -381,4 +441,77 @@ fn hook_gives_a_subagent_the_core_skill() {
         hook["additionalContext"].as_str().unwrap(),
         include_str!("../../../../skill/CORE.md")
     );
+}
+
+/// Claude Code and Codex parse the hook's bytes, so each reply shape is pinned as the exact line
+/// `acus hook` prints, field order included.
+#[cfg(any(feature = "guard-bash", feature = "guard-zsh"))]
+#[test]
+fn hook_replies_keep_their_wire_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
+    let reply = |input: serde_json::Value| run_hook(&config, &["hook"], input);
+    assert_eq!(
+        reply(serde_json::json!({
+            "session_id": "r1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "cd app && ls; cat settings.json; grep -n foo src/a.rs && echo ok"},
+        })),
+        format!(
+            "{}\n",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"cd app && ls; cat settings.json; acus find 'foo' 'src/a.rs' && echo ok"},"additionalContext":"acus guard: ran `acus find 'foo' 'src/a.rs'` instead of `grep -n foo src/a.rs`. The command was rewritten, not refused; use acus directly next time.","permissionDecision":"allow"}}"#
+        )
+    );
+    assert_eq!(
+        reply(serde_json::json!({
+            "tool_name": "Bash",
+            "permission_mode": "default",
+            "tool_input": {"command": "cargo test 2>&1 | tail -3", "timeout": 5000},
+        })),
+        format!(
+            "{}\n",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"acus ctx 'cargo test' --tail 3","timeout":5000},"additionalContext":"acus guard: ran `acus ctx 'cargo test' --tail 3` instead of `cargo test 2>&1 | tail -3`. The command was rewritten, not refused; use acus directly next time."}}"#
+        )
+    );
+    assert_eq!(
+        reply(serde_json::json!({
+            "turn_id": "t1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "grep -n foo src/a.rs"},
+        })),
+        format!(
+            "{}\n",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Use acus instead of grep: `acus find 'PAT' [PATH…]` (`--block` adds the enclosing code, `-l` lists files, `-w`, `-t TYPE`, `-g GLOB`, `-u --hidden` include ignored and hidden files). Only if acus cannot do this, rerun with a `command ` prefix."}}"#
+        )
+    );
+    assert_eq!(
+        reply(bash_call("h1", "git status")),
+        format!(
+            "{}\n",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"acus hint: `acus diff` lists uncommitted changes per file and function with line counts, untracked files included; `-p` adds the changed lines and `--staged` limits it to the index."}}"#
+        )
+    );
+    assert_eq!(
+        reply(serde_json::json!({"hook_event_name": "SubagentStart", "agent_type": "Explore"})),
+        format!(
+            "{}\n",
+            serde_json::json!({"hookSpecificOutput": {
+                "hookEventName": "SubagentStart",
+                "additionalContext": include_str!("../../../../skill/CORE.md"),
+            }})
+        )
+    );
+    let bad = dir.path().join("bad.toml");
+    std::fs::write(&bad, "[guard]\nhint_every = \"ten\"\n").unwrap();
+    let note = run_hook(&bad, &["hook"], bash_call("c1", "ls"));
+    let path = bad.display().to_string();
+    let want = serde_json::json!({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": format!(
+            "acus config error: invalid config {path}: line 2, column 14: \
+             invalid type: string \"ten\", expected usize; guard runs with defaults; fix {path}"
+        ),
+    }});
+    assert_eq!(note, format!("{want}\n"));
 }

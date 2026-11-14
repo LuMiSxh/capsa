@@ -69,12 +69,30 @@ pub fn rotated(path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Reads the lines of `rotated(path)` and then of `path`, skipping any that do not parse.
-pub fn read<T: DeserializeOwned>(path: &Path) -> Vec<Entry<T>> {
+/// Lists what can go wrong when reading a log.
+#[derive(Debug, thiserror::Error)]
+pub enum LogError {
+    #[error("cannot read {path}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+}
+
+/// Reads the lines of `rotated(path)` and then of `path`. A missing file has no lines. A line that
+/// does not parse is skipped, not reported, so a line torn by a rotation cannot hide the lines
+/// around it.
+///
+/// # Errors
+/// Fails when a file exists but cannot be read.
+pub fn read<T: DeserializeOwned>(path: &Path) -> Result<Vec<Entry<T>>, LogError> {
     let mut entries = Vec::new();
     for file in [rotated(path), path.to_owned()] {
-        let Ok(bytes) = std::fs::read(&file) else {
-            continue;
+        let bytes = match std::fs::read(&file) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => return Err(LogError::Read { path: file, source }),
         };
         entries.extend(
             bytes
@@ -82,7 +100,7 @@ pub fn read<T: DeserializeOwned>(path: &Path) -> Vec<Entry<T>> {
                 .filter_map(|line| serde_json::from_slice::<Entry<T>>(line).ok()),
         );
     }
-    entries
+    Ok(entries)
 }
 
 /// Keeps one log file open across writes, tracks its size instead of asking the file system per

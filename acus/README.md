@@ -109,7 +109,7 @@ Agents fall back to grep and cat when a skill is only listed by its description.
 - `SubagentStart` (`acus hook`, no matcher, so every subagent) adds the skill to a subagent's context. `acus self setup` installs it; an entry already scoped to agent types, e.g. `Explore|Plan`, is kept as it is.
 - `PreToolUse` runs the guard (`acus hook`) on Bash, PowerShell, Read, Grep and Glob. It rewrites a command into an exact acus call when it can, and otherwise refuses it and names the acus command. Literal `sed -i` edits of one file become `acus patch`, `acus … | head -N` becomes `--head N`, and `cat`, `tail` and `grep` of a background task's output file become `acus ctx --log FILE`. The rules are in [docs/guard.md](docs/guard.md).
 
-Escape hatches: a refused command runs anyway with a `command ` prefix (Bash) or a trailing `# acus-skip` comment (both shells). Every decision, escapes included, is logged to `guard.jsonl` next to the config file; `census usage --guard` counts them per rule. The hook command ends in `|| true`, so calls pass when acus is missing or when `hook` is listed under `[commands] disabled`.
+Escape hatches: a refused command runs anyway with a `command ` prefix (Bash) or a trailing `# acus-skip` comment (both shells). Every decision, escapes included, is logged to `guard.jsonl` in the state directory (`~/.local/state/acus`, or `%LOCALAPPDATA%\acus\state` on Windows); `census usage --guard` counts them per rule. The hook command ends in `|| true`, so calls pass when acus is missing or when `hook` is listed under `[commands] disabled`.
 
 Hooks apply to subagents too, but subagents do not see SessionStart output. Preload the skill in each custom agent's frontmatter, and give read-only agents `Bash` so they can run it. The built-in Explore agent cannot preload skills; a custom agent with the same role can.
 
@@ -142,6 +142,8 @@ fmt = true                                          # as if every patch had --fm
 
 [guard]
 hint_every = 10                                     # repeated guard hints: 1st, 11th, 21st… call per session and rule; 1 = every time
+hint_every_min = 5                                  # interval for a rule agents ignore (census follow rate 0); default hint_every / 2
+hint_every_max = 40                                 # interval for a rule agents follow (census follow rate 1); default hint_every * 4
 ```
 
 `acus ctx --drop REGEX` does the same for one run. `ACUS_DISABLE` (comma-separated, e.g. `ACUS_DISABLE=usage`) adds to `[commands] disabled`.
@@ -155,7 +157,7 @@ Languages are compiled in through the features `lang-rust`, `lang-swift`, `lang-
 | Command               | What it does                                                                                                                                                                                 |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `acus self setup`     | Installs the skill and registers `acus hook` for SessionStart and PreToolUse in Claude Code's settings; `--target claude\|codex\|all`, `--dry-run`                                       |
-| `acus self doctor`    | Checks the install, config, skill, hooks and guard files, one line per check with a hint for each failure; `--json`. Exit 1 when a check fails, 0 when only warnings remain                    |
+| `acus self doctor`    | Checks the install, config, skill, hooks and guard files, the update and the sibling tools, one line per check with a hint for each failure; `--json`. Exit 1 when a check fails, 0 when only warnings remain                    |
 | `acus self skill`     | Prints the bundled agent skill (`--full` prints the whole skill); `--install --target claude\|codex\|all` writes it                                                                          |
 | `acus self update`    | Replaces the binary with the latest GitHub release when newer, then reinstalls the skill; `--check` exits 0 when an update exists, 1 when current; `--force` reinstalls the latest release. Sends a token when one is available (`GITHUB_TOKEN`, else `gh auth token`). It only lifts GitHub's rate limit; none is required |
 | `acus self uninstall` | Removes the installed skill and the binary; `--dry-run` only lists them                                                                                                                      |

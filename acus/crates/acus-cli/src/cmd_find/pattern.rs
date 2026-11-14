@@ -3,6 +3,7 @@
 
 use super::Args;
 use anyhow::Result;
+use capsa_core::hint::hinted;
 
 /// The patterns: each `-e`, else the first positional; reads `\|` as alternation unless `-E`,
 /// `-P` or `-F` is given.
@@ -13,11 +14,10 @@ pub(super) fn take_patterns(a: &Args) -> Result<Vec<String>> {
         a.patterns.clone()
     };
     if patterns.is_empty() {
-        return Err(capsa_core::hint::Hinted::new(
+        return Err(hinted(
             "no pattern given",
             "acus find PATTERN [PATH...] or -e PAT -e PAT",
-        )
-        .into());
+        ));
     }
     if !a.fixed_strings && !a.perl && !a._extended {
         let mut noted = false;

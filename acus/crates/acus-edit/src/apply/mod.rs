@@ -131,34 +131,9 @@ pub struct ApplyOptions {
 }
 
 /// Validates and applies every op in memory, then writes all files atomically.
-/// With `check`, stops before writing. Relative paths resolve against `root`.
-pub fn apply(ops: &[Op], root: &Path, check: bool) -> Result<Applied> {
-    apply_with_options(
-        ops,
-        root,
-        &ApplyOptions {
-            check,
-            ..ApplyOptions::default()
-        },
-    )
-}
-
-/// `apply`, but with `allow_broken` a file whose syntax gets worse is written instead of
-/// failing.
-pub fn apply_with(ops: &[Op], root: &Path, check: bool, allow_broken: bool) -> Result<Applied> {
-    apply_with_options(
-        ops,
-        root,
-        &ApplyOptions {
-            check,
-            allow_broken,
-            ..ApplyOptions::default()
-        },
-    )
-}
-
-/// Applies every op with `options`; see [`apply`].
-pub fn apply_with_options(ops: &[Op], root: &Path, options: &ApplyOptions) -> Result<Applied> {
+/// With `options.check`, stops before writing. Relative paths resolve against `root`.
+/// With `options.allow_broken`, a file whose syntax gets worse is written instead of failing.
+pub fn apply(ops: &[Op], root: &Path, options: &ApplyOptions) -> Result<Applied> {
     let mut files = Files {
         root,
         map: BTreeMap::new(),

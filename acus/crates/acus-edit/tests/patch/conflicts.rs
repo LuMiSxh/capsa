@@ -168,7 +168,7 @@ fn search_replace_examples_are_not_conflict_markers() {
         &parse("*** Update File: a.md\n<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n")
             .unwrap(),
         d.path(),
-        false,
+        &ApplyOptions::default(),
     )
     .unwrap();
     assert!(applied.unchecked.is_empty(), "{:?}", applied.unchecked);
@@ -199,7 +199,7 @@ fn a_real_conflict_still_skips_the_syntax_check() {
     let applied = apply(
         &parse("*** Resolve Conflict: a.rs:2 --ours\n").unwrap(),
         d.path(),
-        false,
+        &ApplyOptions::default(),
     )
     .unwrap();
     assert_eq!(applied.unchecked, ["a.rs"]);

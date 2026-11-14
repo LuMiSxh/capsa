@@ -4,16 +4,19 @@
 use crate::now_secs;
 use crate::out::Out;
 use crate::usage_views::{
-    AgentsView, ByView, CompareOut, HandbacksView, ToolsView, cost_rows, k, money, provider_kind,
-    rate, sizes_text, table,
+    AgentsView, ByView, CompareOut, GuardView, HandbacksView, ToolsView, cost_rows, k, money,
+    provider_kind, rate, sizes_text, table,
 };
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::render::{Doc, Render, emit};
 use census::config::Config;
 use census::limits::{self, Kind};
-use census::usage::{Report, UsageOpts, WEIGHTS, compare, parse_date, refresh_prices, report};
-use serde::{Deserialize, Serialize};
+use census::usage::{
+    Report, UsageOpts, WEIGHTS, compare, guard_log_path, parse_date, read_log, refresh_prices,
+    report, write_guard_follow,
+};
+use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(clap::Args)]
@@ -43,9 +46,14 @@ pub struct Args {
     /// calls and result characters.
     #[arg(long, requires = "tools")]
     misses: bool,
-    /// Count `acus guard` decisions per rule and list the calls run through its escape.
+    /// Count `acus guard` decisions per rule, how often the agent followed each one, and list the
+    /// calls run through its escape.
     #[arg(long)]
     guard: bool,
+    /// With --guard: the decisions per project and rule, so a rule that keeps firing in one repo
+    /// shows.
+    #[arg(long, requires = "guard")]
+    by_project: bool,
     /// One row per role (main, worker, worker-lite, ...): spawns, models, requests, preamble size,
     /// cost, cache hit rate, and cache rewrites (expired-cache writes, unexpected busts and compactions).
     #[arg(long)]
@@ -122,7 +130,11 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         return emit(&ToolsView::new(&r, a.misses, a.top), out.format);
     }
     if a.handbacks {
-        return emit(&HandbacksView(&r.handbacks), out.format);
+        let view = HandbacksView {
+            weeks: &r.handbacks,
+            roles: &r.handback_roles,
+        };
+        return emit(&view, out.format);
     }
     if a.agents {
         return emit(&AgentsView(&r.agents), out.format);
@@ -221,6 +233,10 @@ fn models(doc: &mut Doc, r: &Report, top: usize, config: &Config) {
         "lllrrrr",
         rows,
     ));
+    let hidden = r.models.len().saturating_sub(top);
+    if hidden > 0 {
+        doc.more(hidden, "census usage --top N");
+    }
 }
 
 /// The top sessions, then a line counting the ones left out.
@@ -271,9 +287,7 @@ fn sessions(doc: &mut Doc, r: &Report, top: usize) {
     ));
     let hidden = r.sessions.len().saturating_sub(top);
     if hidden > 0 {
-        doc.line(format!(
-            "… {hidden} more sessions (raise --top or filter with --project/--days)"
-        ));
+        doc.more(hidden, "census usage --top N");
     }
 }
 
@@ -302,175 +316,29 @@ fn tools(doc: &mut Doc, r: &Report, top: usize) {
         })
         .collect();
     doc.table(table(&["tool", "calls", "input", "result"], "lrrr", rows));
-}
-
-/// One line of acus's `guard.jsonl`. Fields keep acus's order, so `--json` prints them as acus
-/// wrote them; unknown fields are ignored and old rule names still parse.
-#[derive(Default, Serialize, Deserialize)]
-#[serde(default)]
-struct GuardEntry {
-    ts: u64,
-    session: Option<String>,
-    cwd: Option<String>,
-    tool: Option<String>,
-    rule: String,
-    kind: String,
-    call: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cmd: Option<String>,
-}
-
-/// The time of one guard log line, read without deserializing the rest of it.
-#[derive(Deserialize)]
-struct Stamp {
-    #[serde(default)]
-    ts: u64,
-}
-
-/// The decision log acus writes: `guard.jsonl` next to its config file, which `ACUS_CONFIG` moves.
-fn guard_log_path() -> PathBuf {
-    std::env::var("ACUS_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| capsa_core::paths::config_dir("acus").join("config.toml"))
-        .with_file_name("guard.jsonl")
-}
-
-/// The lines of one log file, read on past a line that is not valid UTF-8. The file ends at its
-/// last line or at an I/O error.
-fn log_lines(file: std::fs::File) -> impl Iterator<Item = String> {
-    let mut reader = std::io::BufReader::new(file);
-    std::iter::from_fn(move || {
-        loop {
-            let mut buf = Vec::new();
-            match std::io::BufRead::read_until(&mut reader, b'\n', &mut buf) {
-                Ok(0) | Err(_) => return None,
-                Ok(_) => {}
-            }
-            if buf.last() == Some(&b'\n') {
-                buf.pop();
-            }
-            if let Ok(line) = String::from_utf8(buf) {
-                return Some(line);
-            }
-        }
-    })
-}
-
-/// One rule of `census usage --guard` with its decisions, as its JSON.
-#[derive(Serialize)]
-struct RuleCount<'a> {
-    rule: &'a str,
-    deny: u64,
-    hint: u64,
-    escape: u64,
-    rewrite: u64,
-}
-
-/// `census usage --guard`: per rule how often it refused, hinted, was escaped or rewrote, then the
-/// latest escaped calls, since they point at refusals acus could not replace.
-#[derive(Serialize)]
-struct GuardOut<'a> {
-    #[serde(skip)]
-    path: String,
-    #[serde(skip)]
-    decisions: usize,
-    rules: Vec<RuleCount<'a>>,
-    escaped: Vec<&'a GuardEntry>,
-}
-
-impl Render for GuardOut<'_> {
-    fn doc(&self, doc: &mut Doc) {
-        doc.title(format!(
-            "guard: {} decisions ({})",
-            self.decisions, self.path
-        ));
-        let rows = self
-            .rules
-            .iter()
-            .map(|r| {
-                vec![
-                    r.rule.to_owned(),
-                    r.deny.to_string(),
-                    r.hint.to_string(),
-                    r.escape.to_string(),
-                    r.rewrite.to_string(),
-                ]
-            })
-            .collect();
-        doc.table(table(
-            &["rule", "deny", "hint", "escape", "rewrite"],
-            "lrrrr",
-            rows,
-        ));
-        if !self.escaped.is_empty() {
-            doc.section("latest escaped calls");
-            let rows = self
-                .escaped
-                .iter()
-                .map(|e| vec![e.rule.clone(), e.call.replace('\n', "⏎")])
-                .collect();
-            doc.table(table(&["rule", "call"], "ll", rows));
-        }
+    let hidden = r.tools.len().saturating_sub(top);
+    if hidden > 0 {
+        doc.more(hidden, "census usage --top N");
     }
 }
 
+/// `census usage --guard`: the guard's decisions per rule, or per project with `--by-project`, then
+/// the latest escaped calls. Without `--days` or `--project` it also writes the follow rates to the
+/// census bulletin, which the SessionStart path reads.
 fn guard(a: &Args, out: &Out) -> Result<Outcome> {
-    let path = guard_log_path();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs();
+    let now = now_secs();
+    let path = guard_log_path().unwrap_or_default();
     let since = a.days.map_or(0, |d| now.saturating_sub(d * 86_400));
-    // Lines are streamed, and each is parsed in full only when its time is in range. A line that
-    // is not valid UTF-8 is skipped, and the file is read on past it.
-    let entries: Vec<GuardEntry> = [path.with_extension("jsonl.old"), path.clone()]
-        .iter()
-        .filter_map(|p| std::fs::File::open(p).ok())
-        .flat_map(log_lines)
-        .filter(|l| serde_json::from_str::<Stamp>(l).is_ok_and(|s| s.ts >= since))
-        .filter_map(|l| serde_json::from_str::<GuardEntry>(&l).ok())
-        .filter(|e| {
-            a.project
-                .as_ref()
-                .is_none_or(|p| e.cwd.as_deref().unwrap_or_default().contains(p.as_str()))
-        })
-        .collect();
-    if entries.is_empty() {
-        eprintln!(
-            "no guard decisions in {}\nhint: add the acus guard PreToolUse hook (acus self setup)",
-            path.display()
-        );
-        return Ok(Outcome::Empty);
+    let entries = read_log(since, a.project.as_deref());
+    if a.days.is_none() && a.project.is_none() {
+        // A failed write only leaves acus without follow rates; the report still prints.
+        write_guard_follow(&entries, now).ok();
     }
-    let mut counts: std::collections::BTreeMap<&str, [u64; 4]> = Default::default();
-    for e in &entries {
-        let slot = match e.kind.as_str() {
-            "deny" => 0,
-            "hint" => 1,
-            "rewrite" => 3,
-            _ => 2,
-        };
-        counts.entry(e.rule.as_str()).or_default()[slot] += 1;
-    }
-    let escaped: Vec<&GuardEntry> = entries
-        .iter()
-        .filter(|e| e.kind == "escape")
-        .rev()
-        .take(a.top)
-        .collect();
-    let body = GuardOut {
-        path: path.display().to_string(),
-        decisions: entries.len(),
-        rules: counts
-            .iter()
-            .map(|(r, n)| RuleCount {
-                rule: r,
-                deny: n[0],
-                hint: n[1],
-                escape: n[2],
-                rewrite: n[3],
-            })
-            .collect(),
-        escaped,
-    };
-    emit(&body, out.format)
+    let body = GuardView::new(path.display().to_string(), &entries, a.top, a.by_project);
+    let outcome = emit(&body, out.format)?;
+    Ok(if entries.is_empty() {
+        Outcome::Empty
+    } else {
+        outcome
+    })
 }

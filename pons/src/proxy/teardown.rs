@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Tears the agent down when the session ends: stdin, then the process group signals.
 
+use capsa_core::process::Signal;
+
 use super::*;
 
 /// Tears the agent down once the client is gone: it may end by itself (its stdin is
@@ -35,7 +37,7 @@ pub(super) async fn teardown(
             Dir::Pons,
             b"exiting: agent still running: SIGTERM to its process group",
         );
-        signal_term(pgid);
+        let _ = signal_group(pgid, Signal::Term);
     }
     if let Ok(Ok(status)) = timeout(TERM_GRACE, child.wait()).await {
         logger.log(
@@ -52,7 +54,7 @@ pub(super) async fn teardown(
         b"exiting: agent ignored SIGTERM: SIGKILL to its process group",
     );
     if let Some(pgid) = pgid {
-        signal_kill(pgid);
+        let _ = signal_group(pgid, Signal::Kill);
     }
     let _ = child.start_kill();
     let _ = timeout(Duration::from_secs(5), child.wait()).await;
@@ -67,27 +69,16 @@ pub(super) async fn sweep_group(pgid: u32, logger: &Logger) {
         Dir::Pons,
         b"exiting: processes of the agent's group are still running: SIGTERM",
     );
-    signal_term(pgid);
+    let _ = signal_group(pgid, Signal::Term);
     if !wait_group_gone(pgid, SWEEP_GRACE).await {
         logger.log(Dir::Pons, b"exiting: SIGKILL to the leftover processes");
-        signal_kill(pgid);
+        let _ = signal_group(pgid, Signal::Kill);
         wait_group_gone(pgid, SWEEP_GRACE).await;
     }
 }
 
-pub(super) async fn wait_group_gone(pgid: u32, limit: Duration) -> bool {
-    let deadline = Instant::now() + limit;
-    while group_alive(pgid) {
-        if Instant::now() >= deadline {
-            return false;
-        }
-        sleep(Duration::from_millis(25)).await;
-    }
-    true
-}
-
 pub(super) fn describe(status: ExitStatus) -> String {
-    match exit_code_of(status) {
+    match capsa_core::process::exit_code(status) {
         Some(code) => format!("code {code}"),
         None => "no code".to_owned(),
     }

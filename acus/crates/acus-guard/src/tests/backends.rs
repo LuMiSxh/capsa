@@ -109,7 +109,7 @@ fn powershell_segments_know_their_output_nesting_and_gates() {
     );
     // Cmdlets ignore case: the rules read `low`, a refusal quotes `orig`.
     assert_eq!(
-        (gc.low.as_str(), gc.orig.as_str()),
+        (gc.low.as_str(), gc.orig()),
         ("get-content a.rs", "Get-Content a.rs")
     );
 

@@ -13,29 +13,6 @@ use std::time::Instant;
 /// Bytes read between two looks at the deadline; the first chunk is always read.
 const CHUNK: u64 = 2 << 20;
 
-/// Lists the `*.jsonl` files below the roots, subagent transcripts included.
-pub(super) fn list_files(roots: &[PathBuf]) -> Vec<(PathBuf, Metadata)> {
-    let mut out = Vec::new();
-    let mut stack: Vec<PathBuf> = roots.to_vec();
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for e in entries.flatten() {
-            let Ok(ft) = e.file_type() else { continue };
-            if ft.is_dir() {
-                stack.push(e.path());
-            } else if ft.is_file()
-                && e.path().extension().is_some_and(|x| x == "jsonl")
-                && let Ok(meta) = e.metadata()
-            {
-                out.push((e.path(), meta));
-            }
-        }
-    }
-    out
-}
-
 #[cfg(unix)]
 fn file_id(meta: &Metadata) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt;
@@ -56,7 +33,19 @@ pub(super) fn pending(
     let present: HashSet<String> = files.iter().map(|(p, _)| key(p)).collect();
     let before = index.files.len();
     index.files.retain(|k, _| present.contains(k));
-    let mut changed = index.files.len() != before;
+    let removed = index.files.len() != before;
+    let (todo, changed) = stale(files, index);
+    (todo, changed || removed)
+}
+
+/// Returns the files of `files` whose bytes are not all read, and resets the state of those whose
+/// identity changed or that shrank. The entries of other files stay, so one transcript can be
+/// checked alone between full sweeps.
+pub(super) fn stale(
+    files: Vec<(PathBuf, Metadata)>,
+    index: &mut Index,
+) -> (Vec<(PathBuf, Metadata)>, bool) {
+    let mut changed = false;
     let mut todo = Vec::new();
     for (path, meta) in files {
         let id = file_id(&meta);

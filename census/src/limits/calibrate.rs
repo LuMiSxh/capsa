@@ -10,8 +10,10 @@ use serde::Serialize;
 
 /// Points behind the median: the most recent ones.
 const POINTS: usize = 20;
-/// Snapshots older than this give no point.
+/// Snapshots older than this give no point, unless the recent ones give too few points.
 const MAX_AGE_S: u64 = 30 * DAY_S;
+/// The window that replaces `MAX_AGE_S` while the recent snapshots give too few points.
+const WIDE_AGE_S: u64 = 90 * DAY_S;
 /// A window with less list-price cost than this gives no point: its ratio is noise.
 const MIN_COST_USD: f64 = 0.01;
 /// The spread needs this many points for its quartiles.
@@ -30,35 +32,19 @@ pub struct Calibration {
 
 /// Returns the calibration of `window` from its snapshots, or `None` when none gives a point.
 ///
-/// A point is a snapshot of the window, no older than 30 days, with a share above zero, a reset
-/// after its time, and a list-price cost of the window from its start to the snapshot of at least
-/// $0.01.
+/// A point is a snapshot of the window with a share above zero, a reset after its time, and a
+/// list-price cost of the window from its start to the snapshot of at least $0.01. The snapshots
+/// are no older than 30 days; while they give fewer than four points, 90 days.
 pub(super) fn calibrate(
     window: Window,
     snapshots: &[Snapshot],
     costs: &Costed,
     now: u64,
 ) -> Option<Calibration> {
-    let len = window::length(window);
-    let mut recent: Vec<&Snapshot> = snapshots
-        .iter()
-        .filter(|s| {
-            s.window == window
-                && now.saturating_sub(s.t) <= MAX_AGE_S
-                && s.resets_at > s.t
-                && s.used_percentage > 0.0
-        })
-        .collect();
-    recent.sort_by_key(|s| s.t);
-    let mut ks: Vec<f64> = recent
-        .iter()
-        .rev()
-        .filter_map(|s| {
-            let cost = costs.between(s.resets_at.saturating_sub(len), s.t);
-            (cost >= MIN_COST_USD).then(|| s.used_percentage / cost)
-        })
-        .take(POINTS)
-        .collect();
+    let mut ks = points(window, snapshots, costs, now, MAX_AGE_S);
+    if ks.len() < MIN_SPREAD_POINTS {
+        ks = points(window, snapshots, costs, now, WIDE_AGE_S);
+    }
     if ks.is_empty() {
         return None;
     }
@@ -68,6 +54,36 @@ pub(super) fn calibrate(
     let spread =
         (points >= MIN_SPREAD_POINTS).then(|| (quantile(&ks, 0.75) - quantile(&ks, 0.25)) / k);
     Some(Calibration { k, spread, points })
+}
+
+/// Returns the share per USD of the most recent snapshots of `window` no older than `max_age_s`.
+fn points(
+    window: Window,
+    snapshots: &[Snapshot],
+    costs: &Costed,
+    now: u64,
+    max_age_s: u64,
+) -> Vec<f64> {
+    let len = window::length(window);
+    let mut recent: Vec<&Snapshot> = snapshots
+        .iter()
+        .filter(|s| {
+            s.window == window
+                && now.saturating_sub(s.t) <= max_age_s
+                && s.resets_at > s.t
+                && s.used_percentage > 0.0
+        })
+        .collect();
+    recent.sort_by_key(|s| s.t);
+    recent
+        .iter()
+        .rev()
+        .filter_map(|s| {
+            let cost = costs.between(s.resets_at.saturating_sub(len), s.t);
+            (cost >= MIN_COST_USD).then(|| s.used_percentage / cost)
+        })
+        .take(POINTS)
+        .collect()
 }
 
 /// Returns the `p` quantile of sorted values, interpolated between the two nearest.

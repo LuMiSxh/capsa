@@ -78,16 +78,12 @@ pub fn path() -> PathBuf {
 /// Fails when the file cannot be read, is not a JSON object, or has a malformed `hooks` or `env`.
 pub fn read(path: &Path) -> Result<Settings, SettingsError> {
     let path = resolve(path)?;
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Settings {
-                path,
-                before: None,
-                value: json!({}),
-            });
-        }
-        Err(source) => return Err(SettingsError::Read { path, source }),
+    let Some(text) = read_text(&path)? else {
+        return Ok(Settings {
+            path,
+            before: None,
+            value: json!({}),
+        });
     };
     let value: Value = serde_json::from_str(&text).map_err(|source| SettingsError::Parse {
         path: path.clone(),
@@ -124,7 +120,7 @@ pub(crate) fn set_hook(
     let had = event_entries(v, event)
         .iter()
         .any(|g| items(g).any(|i| is_owned(i, &owns)));
-    let entries = event_entries_mut(v, event);
+    let mut entries = event_entries(v, event).to_vec();
     entries.retain_mut(|g| {
         let Some(items) = g.get_mut("hooks").and_then(Value::as_array_mut) else {
             return true;
@@ -135,6 +131,7 @@ pub(crate) fn set_hook(
         !items.is_empty() || before == 0
     });
     entries.push(group(matcher, &hook));
+    set_event_entries(v, event, entries);
     if had { Step::Replace } else { Step::Install }
 }
 
@@ -147,12 +144,7 @@ pub(crate) fn remove_hook(v: &mut Value, event: &str, owns: impl Fn(&str) -> boo
     {
         return false;
     }
-    let Some(hooks) = v.get_mut("hooks").and_then(Value::as_object_mut) else {
-        return false;
-    };
-    let Some(entries) = hooks.get_mut(event).and_then(Value::as_array_mut) else {
-        return false;
-    };
+    let mut entries = event_entries(v, event).to_vec();
     entries.retain_mut(|g| {
         let Some(items) = g.get_mut("hooks").and_then(Value::as_array_mut) else {
             return true;
@@ -162,10 +154,9 @@ pub(crate) fn remove_hook(v: &mut Value, event: &str, owns: impl Fn(&str) -> boo
         !items.is_empty() || before == 0
     });
     if entries.is_empty() {
-        hooks.remove(event);
-    }
-    if hooks.is_empty() {
-        object_mut(v).remove("hooks");
+        remove_event(v, event);
+    } else {
+        set_event_entries(v, event, entries);
     }
     true
 }
@@ -192,6 +183,9 @@ pub fn write(s: &Settings) -> Result<(), SettingsError> {
         let bak = suffixed(path, ".bak");
         std::fs::copy(path, &bak).map_err(|source| SettingsError::Write { path: bak, source })?;
     }
+    // Not `fs::write_atomic`: it would not keep the file's mode, and the file can hold secrets in
+    // `env`. The unchanged check runs after staging, so the time between it and the rename is one
+    // rename.
     let tmp = suffixed(path, &format!(".capsa-tmp-{}", std::process::id()));
     let staged = stage(&tmp, &text, old.map(|m| m.permissions()))
         .map_err(|source| SettingsError::Write {
@@ -256,18 +250,19 @@ fn resolve(path: &Path) -> Result<PathBuf, SettingsError> {
 
 /// Refuses `hooks` that is not an object, or an event that is not an array.
 fn check_hooks(value: &Value, path: &Path) -> Result<(), SettingsError> {
-    let shape = |key: String| SettingsError::Shape {
+    let shape = |key: String, expected: &'static str| SettingsError::Shape {
         path: path.to_owned(),
         key,
+        expected,
     };
     let Some(hooks) = value.get("hooks") else {
         return Ok(());
     };
     let Some(events) = hooks.as_object() else {
-        return Err(shape("hooks".to_owned()));
+        return Err(shape("hooks".to_owned(), "an object"));
     };
     match events.iter().find(|(_, groups)| !groups.is_array()) {
-        Some((event, _)) => Err(shape(format!("hooks.{event}"))),
+        Some((event, _)) => Err(shape(format!("hooks.{event}"), "an array")),
         None => Ok(()),
     }
 }
@@ -279,26 +274,43 @@ pub(crate) fn event_entries<'a>(v: &'a Value, event: &str) -> &'a [Value] {
         .map_or(&[][..], Vec::as_slice)
 }
 
-pub(crate) fn event_entries_mut<'a>(v: &'a mut Value, event: &str) -> &'a mut Vec<Value> {
-    let hooks = object_mut(v).entry("hooks").or_insert_with(|| json!({}));
-    let entries = object_mut(hooks).entry(event).or_insert_with(|| json!([]));
-    if !entries.is_array() {
-        *entries = json!([]);
-    }
-    match entries {
-        Value::Array(a) => a,
-        _ => unreachable!("replaced with an array just above"),
+/// Replaces the entries of `event` under `hooks` with `entries`, creating what is missing.
+pub(crate) fn set_event_entries(v: &mut Value, event: &str, entries: Vec<Value>) {
+    let mut hooks = take_object(v, "hooks");
+    hooks.insert(event.to_owned(), Value::Array(entries));
+    put_key(v, "hooks", Value::Object(hooks));
+}
+
+/// Drops `event` from `hooks`, and `hooks` when nothing is left in it.
+fn remove_event(v: &mut Value, event: &str) {
+    let mut hooks = take_object(v, "hooks");
+    hooks.remove(event);
+    if hooks.is_empty() {
+        if let Some(root) = v.as_object_mut() {
+            root.remove("hooks");
+        }
+    } else {
+        put_key(v, "hooks", Value::Object(hooks));
     }
 }
 
-fn object_mut(v: &mut Value) -> &mut Map<String, Value> {
-    if !v.is_object() {
-        *v = json!({});
+/// Sets `key` in the object `v`, replacing `v` when it is not an object.
+pub(crate) fn put_key(v: &mut Value, key: &str, value: Value) {
+    match v.as_object_mut() {
+        Some(root) => {
+            root.insert(key.to_owned(), value);
+        }
+        None => *v = json!({ key: value }),
     }
-    match v {
-        Value::Object(m) => m,
-        _ => unreachable!("replaced with an object just above"),
-    }
+}
+
+/// Takes the object under `key` out of `v`, leaving an empty one in place, so that it can be
+/// edited and given back with `put_key`. A value of another shape gives an empty object.
+fn take_object(v: &mut Value, key: &str) -> Map<String, Value> {
+    v.get_mut(key)
+        .and_then(Value::as_object_mut)
+        .map(std::mem::take)
+        .unwrap_or_default()
 }
 
 pub(crate) fn items(group: &Value) -> impl Iterator<Item = &Value> + '_ {
@@ -362,25 +374,44 @@ fn stage(tmp: &Path, text: &str, perms: Option<std::fs::Permissions>) -> std::io
     file.sync_all()
 }
 
+/// Reads the text of `path`, or `None` when the file does not exist.
+fn read_text(path: &Path) -> Result<Option<String>, SettingsError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(SettingsError::Read {
+            path: path.to_owned(),
+            source,
+        }),
+    }
+}
+
 /// Fails unless the file on disk still holds the text that `read` returned.
 fn confirm_unchanged(s: &Settings) -> Result<(), SettingsError> {
-    let now = match std::fs::read_to_string(&s.path) {
-        Ok(text) => Some(text),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(source) => {
-            return Err(SettingsError::Read {
-                path: s.path.clone(),
-                source,
-            });
-        }
-    };
+    let now = read_text(&s.path)?;
     if now == s.before {
-        Ok(())
-    } else {
-        Err(SettingsError::Changed {
-            path: s.path.clone(),
-        })
+        return Ok(());
     }
+    let change = match (&s.before, &now) {
+        (None, Some(_)) => Change::Created,
+        (Some(_), None) => Change::Removed,
+        _ => Change::Edited,
+    };
+    Err(SettingsError::Changed {
+        path: s.path.clone(),
+        change,
+    })
+}
+
+/// How the settings file differs from the text that `read` returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Change {
+    /// The file did not exist when it was read and exists now.
+    Created,
+    /// The file existed when it was read and is gone now.
+    Removed,
+    /// The file holds other text than when it was read.
+    Edited,
 }
 
 /// Why the settings file could not be read or written.
@@ -406,10 +437,14 @@ pub enum SettingsError {
     },
     #[error("{} is not a JSON object", path.display())]
     NotObject { path: PathBuf },
-    #[error("{key} in {} is not the expected type", path.display())]
-    Shape { path: PathBuf, key: String },
+    #[error("{key} in {} must be {expected}", path.display())]
+    Shape {
+        path: PathBuf,
+        key: String,
+        expected: &'static str,
+    },
     #[error("{} changed while writing", path.display())]
-    Changed { path: PathBuf },
+    Changed { path: PathBuf, change: Change },
     #[error("cannot write {}", path.display())]
     Write {
         path: PathBuf,

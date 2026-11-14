@@ -2,62 +2,64 @@
 //! `acus self doctor`: checks the install, config, skill, hooks and guard files. Exit 1 when a
 //! check fails; warnings do not change the exit code.
 
+#[cfg(feature = "cmd-update")]
+use crate::TOOL;
 use crate::cmd_hook;
 use crate::cmd_setup::HOOKS;
 use crate::cmd_skill::SKILL_DEF;
 use crate::config::{self, Config};
+use crate::guard_log;
 use anyhow::{Context, Result};
+#[cfg(feature = "cmd-update")]
+use capsa_core::doctor::update_check;
+use capsa_core::doctor::{
+    Sibling, check, dir_check, emit_report, interop_group, log_checks, path_check, repair_hooks,
+    repair_skill,
+};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::hint::ResultExt;
 use capsa_core::hooks::{Agent, HookFile, HookSpec, HookState};
-use capsa_core::render::{Check, Doctor, Group, Status, emit};
-use capsa_core::skill::{self, SkillState, Target};
-use serde_json::Value;
-use std::borrow::Cow;
+use capsa_core::render::{Check, Doctor, Group, Status};
+use capsa_core::skill::{self, SkillState, Target, installed_target};
+#[cfg(feature = "cmd-update")]
+use capsa_core::update;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Tools that must be matched by the PreToolUse guard hook.
 const GUARDED: [&str; 5] = ["Bash", "Read", "Grep", "Glob", "PowerShell"];
 
-/// The guard's log rotates at this size, so a larger file is not expected.
-const LOG_ROTATE_BYTES: u64 = 4 * 1024 * 1024;
+#[derive(clap::Args)]
+pub struct Args {
+    /// Repairs what is safe to repair first: updates an outdated skill and adds or updates hooks.
+    /// Deletions, config values, guard logs from older releases and network calls keep their hints.
+    #[arg(long)]
+    pub fix: bool,
+}
 
-pub fn run(format: Format) -> Result<Outcome> {
+pub fn run(format: Format, fix: bool) -> Result<Outcome> {
     let home = std::env::home_dir().context("no home directory")?;
     let (cfg, problem) = config::load_or_default();
     let settings = Agent::ClaudeCode.path();
+    let fixed = fix.then(|| repair(&home, &settings)).transpose()?;
     let groups = vec![
         install_group(),
         config_group(&cfg, problem.as_deref()),
         skill_group(&home, &settings),
         hooks_group(&settings),
         guard_group(&cfg),
+        interop_group(&[Sibling {
+            tool: "census",
+            feature: "adaptive guard hints from census follow rates; \
+                guard blocks in the census status line",
+            bulletin: Some("census"),
+        }]),
     ];
-    emit(
+    emit_report(
         &Doctor::new("acus", env!("CARGO_PKG_VERSION"), groups),
+        fixed,
         format,
     )
-}
-
-fn check(
-    name: &'static str,
-    status: Status,
-    detail: impl Into<String>,
-    hint: Option<&str>,
-) -> Check {
-    Check {
-        name: Cow::Borrowed(name),
-        status,
-        detail: detail.into(),
-        hint: hint.map(str::to_owned),
-    }
-}
-
-/// The same file, resolved through symlinks where it can be.
-fn same_file(a: &Path, b: &Path) -> bool {
-    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_owned());
-    canon(a) == canon(b)
 }
 
 fn install_group() -> Group {
@@ -77,26 +79,13 @@ fn install_group() -> Group {
             None,
         )),
     }
-    match (capsa_core::which::find("acus"), &exe) {
-        (Some(on_path), Some(exe)) if !same_file(&on_path, exe) => checks.push(check(
-            "PATH",
-            Status::Warn,
-            format!("acus on PATH is {}", on_path.display()),
-            Some("the hooks run the acus on PATH; remove the other copy or update it"),
-        )),
-        (Some(on_path), _) => checks.push(check(
-            "PATH",
-            Status::Ok,
-            on_path.display().to_string(),
-            None,
-        )),
-        (None, _) => checks.push(check(
-            "PATH",
-            Status::Warn,
-            "acus is not on PATH",
-            Some("the hooks run bare `acus`; add the directory of this binary to PATH"),
-        )),
-    }
+    checks.push(path_check(
+        "acus",
+        capsa_core::which::find("acus").as_deref(),
+        exe.as_deref(),
+    ));
+    #[cfg(feature = "cmd-update")]
+    checks.push(update_check(&TOOL, &update::check(&TOOL)));
     Group {
         name: "install",
         checks,
@@ -144,12 +133,7 @@ fn config_group(cfg: &Config, problem: Option<&str>) -> Group {
 /// an agent the user does not run is no warning.
 fn skill_check(home: &Path, target: Target, name: &'static str, agent_home: &Path) -> Check {
     let state = skill::state(home, &SKILL_DEF, target);
-    let dirs = target
-        .dirs(home, SKILL_DEF.tool)
-        .iter()
-        .map(|d| d.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let dirs = skill_dirs(home, target);
     let present = agent_home.is_dir();
     match state {
         SkillState::Current => check(name, Status::Ok, format!("current in {dirs}"), None),
@@ -185,8 +169,7 @@ fn skill_group(home: &Path, settings: &Path) -> Group {
             claude_home,
         ));
     }
-    let codex_home =
-        std::env::var_os("CODEX_HOME").map_or_else(|| home.join(".codex"), PathBuf::from);
+    let codex_home = codex_dir(home);
     if codex_home.is_dir() {
         checks.push(skill_check(home, Target::Codex, "codex skill", &codex_home));
     }
@@ -251,104 +234,101 @@ fn covers(matcher: &str, tool: &str) -> bool {
 }
 
 fn guard_group(cfg: &Config) -> Group {
+    const DIR_HINT: &str = "make the directory writable, or point ACUS_CONFIG at another directory";
     let guard = cmd_hook::guard_config(cfg);
     let log_dir = guard
         .log_path
         .parent()
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    let mut checks = vec![dir_check("guard log dir", &log_dir)];
-    checks.push(log_size_check(&guard.log_path));
-    checks.push(log_age_check(&guard.log_path));
-    checks.push(dir_check("guard hints dir", &guard.state_dir));
+    let mut checks = vec![dir_check("guard log dir", &log_dir, DIR_HINT)];
+    checks.extend(log_checks(
+        "guard",
+        &guard.log_path,
+        acus_guard::log::MAX_BYTES,
+    ));
+    checks.extend(leftover_check(&cfg.path));
+    checks.push(dir_check("guard hints dir", &guard.state_dir, DIR_HINT));
     Group {
         name: "guard",
         checks,
     }
 }
 
-/// Whether `dir` takes a file: an existing directory is probed, a missing one is created on
-/// first use and so is not an error.
-fn dir_check(name: &'static str, dir: &Path) -> Check {
-    if !dir.is_dir() {
-        return check(
-            name,
-            Status::Ok,
-            format!("{} not created yet", dir.display()),
-            None,
-        );
-    }
-    match writable(dir) {
-        Ok(()) => check(
-            name,
-            Status::Ok,
-            format!("{} writable", dir.display()),
-            None,
-        ),
-        Err(e) => check(
-            name,
-            Status::Fail,
-            format!("{} not writable: {e}", dir.display()),
-            Some("make the directory writable, or point ACUS_CONFIG at another directory"),
-        ),
-    }
+/// Warns about guard log files that older releases left beside the config file. `self setup`
+/// moves or merges them.
+fn leftover_check(config: &Path) -> Option<Check> {
+    let files = guard_log::leftovers(config);
+    (!files.is_empty()).then(|| {
+        let names: Vec<_> = files
+            .iter()
+            .map(|file| file.display().to_string())
+            .collect();
+        check(
+            "guard log location",
+            Status::Warn,
+            format!("{} left from before the move", names.join(", ")),
+            Some("run acus self setup"),
+        )
+    })
 }
 
-fn writable(dir: &Path) -> std::io::Result<()> {
-    let probe = dir.join(format!(".acus-doctor-{}", std::process::id()));
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)?;
-    std::fs::remove_file(&probe)
+/// The directories a skill of `target` is installed in, for the report.
+fn skill_dirs(home: &Path, target: Target) -> String {
+    target
+        .dirs(home, SKILL_DEF.tool)
+        .iter()
+        .map(|d| d.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-fn log_size_check(log: &Path) -> Check {
-    match std::fs::metadata(log) {
-        Ok(meta) => {
-            let status = if meta.len() > LOG_ROTATE_BYTES {
-                Status::Warn
-            } else {
-                Status::Ok
-            };
-            check(
-                "guard log size",
-                status,
-                format!("{} KiB", meta.len() / 1024),
-                (status == Status::Warn)
-                    .then_some("the log should rotate at 4 MiB; check the guard runs"),
-            )
-        }
-        Err(_) => check("guard log size", Status::Ok, "no log yet", None),
-    }
+/// Codex's home: `CODEX_HOME` when set, else `~/.codex`.
+fn codex_dir(home: &Path) -> PathBuf {
+    std::env::var_os("CODEX_HOME").map_or_else(|| home.join(".codex"), PathBuf::from)
 }
 
-fn log_age_check(log: &Path) -> Check {
-    let last = std::fs::read_to_string(log).ok().and_then(|text| {
-        let line = text.lines().rev().find(|l| !l.trim().is_empty())?;
-        let entry: Value = serde_json::from_str(line).ok()?;
-        entry["ts"].as_u64()
-    });
-    match last {
-        Some(ts) => {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs());
-            check(
-                "last guard entry",
-                Status::Ok,
-                format!("{} ago", ago(now.saturating_sub(ts))),
-                None,
-            )
-        }
-        None => check("last guard entry", Status::Ok, "no entries yet", None),
-    }
+/// Makes the repairs `--fix` names and returns one check per repair made. A check that needs a
+/// choice, a deletion or a changed config value keeps its hint.
+fn repair(home: &Path, settings: &Path) -> Result<Vec<Check>> {
+    let mut fixed = repair_skills(home)?;
+    fixed.extend(repair_settings(home, settings)?);
+    Ok(fixed)
 }
 
-/// A coarse age: minutes, hours or days.
-fn ago(secs: u64) -> String {
-    match secs {
-        0..3600 => format!("{} min", secs / 60),
-        3600..86_400 => format!("{} h", secs / 3600),
-        _ => format!("{} d", secs / 86_400),
+/// Updates an outdated skill for Claude Code and for Codex; a missing skill keeps its hint.
+fn repair_skills(home: &Path) -> Result<Vec<Check>> {
+    let mut fixed = Vec::new();
+    fixed.extend(repair_skill(
+        home,
+        &SKILL_DEF,
+        Target::Claude,
+        "claude skill",
+    )?);
+    fixed.extend(repair_skill(
+        home,
+        &SKILL_DEF,
+        Target::Codex,
+        "codex skill",
+    )?);
+    Ok(fixed)
+}
+
+/// Adds the missing acus hooks and replaces the outdated ones in an existing Claude Code setup.
+/// A settings file that does not parse is left to the hooks group to report.
+fn repair_settings(home: &Path, settings: &Path) -> Result<Vec<Check>> {
+    let set_up = matches!(
+        installed_target(home, SKILL_DEF.tool),
+        Some(Target::Claude | Target::All)
+    );
+    if !set_up || !settings.exists() {
+        return Ok(Vec::new());
     }
+    let Ok(mut file) = HookFile::open_at(Agent::ClaudeCode, settings) else {
+        return Ok(Vec::new());
+    };
+    let checks = repair_hooks(&mut file, &HOOKS);
+    if !checks.is_empty() {
+        file.write().hinted()?;
+    }
+    Ok(checks)
 }

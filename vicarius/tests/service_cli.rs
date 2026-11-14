@@ -9,12 +9,16 @@ use std::time::{Duration, Instant};
 
 /// Where vicarius reads its config under a scratch home: macOS ignores `XDG_CONFIG_HOME`.
 const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
-    "Library/Application Support/vicarius/config.json"
+    "Library/Application Support/vicarius/config.toml"
 } else {
-    "config/vicarius/config.json"
+    "config/vicarius/config.toml"
 };
 
-const SENIOR: &str = r#"[{"from":"senior-worker","model":"deepseek-flash"}]"#;
+/// Well above the hook's own deadline and the first process spawn of a test run (about 200 ms on
+/// macOS), well below the 2 s a silent service holds a connection.
+const HOOK_LIMIT: Duration = Duration::from_secs(1);
+
+const SENIOR: &str = r#"[{ from = "senior-worker", model = "deepseek-flash" }]"#;
 
 const OPEN: &str = r#"{"started_at":1,"gate":{"open":true,"reason":null,"reason_text":null,"balance":18.4,"currency":"USD","checked_at":1793723161},"counters":{"anthropic":{"requests":3,"refused":0,"input_tokens":10,"cache_creation_tokens":1,"cache_read_tokens":2,"output_tokens":4},"deepseek":{"requests":2,"refused":1,"input_tokens":100,"cache_creation_tokens":0,"cache_read_tokens":50,"output_tokens":20}},"agents":{"entries":[{"agent":"senior-worker","file":"senior-worker-ds.md","outcome":"written"}]},"refresh":{"last_ok_at":1793723161,"last_error":null,"next_at":1793723761}}"#;
 
@@ -32,7 +36,10 @@ fn base(home: &Path) -> Command {
         .env("XDG_CONFIG_HOME", home.join("config"))
         .env("APPDATA", home.join("config"))
         .env_remove("CLAUDE_CONFIG_DIR")
-        .env("VICARIUS_LAUNCHCTL", "/usr/bin/false");
+        .env("VICARIUS_LAUNCHCTL", "/usr/bin/false")
+        .env("XDG_STATE_HOME", home.join("state"))
+        .env("LOCALAPPDATA", home.join("state"))
+        .env("CAPSA_UPDATE_CHECK", "off");
     command
 }
 
@@ -77,7 +84,7 @@ fn text(bytes: &[u8]) -> String {
 fn write_config(home: &Path, port: u16, agents: &str) {
     let path = home.join(CONFIG_FILE);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, format!(r#"{{"port": {port}, "agents": {agents}}}"#)).unwrap();
+    std::fs::write(path, format!("port = {port}\nagents = {agents}\n")).unwrap();
 }
 
 /// Serves `routes` on 127.0.0.1 and returns the port. A route is `METHOD /path`, a status and a
@@ -122,6 +129,24 @@ fn serve(routes: Vec<(&'static str, u16, String)>) -> u16 {
     port
 }
 
+/// Listens on 127.0.0.1 and accepts connections but never answers; returns the port. The thread
+/// holds each connection for far longer than the hook's deadline and ends with the test process.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a socket that cannot be bound must fail the test"
+)]
+fn serve_silent() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            thread::sleep(Duration::from_secs(2));
+            drop(stream);
+        }
+    });
+    port
+}
+
 /// Returns a port that nothing listens on.
 #[expect(
     clippy::unwrap_used,
@@ -154,7 +179,7 @@ fn hook_lists_two_agents_comma_separated() {
         r#""entries":[{"agent":"senior-worker","file":"senior-worker-ds.md","outcome":"written"},{"agent":"consultant","file":"consultant-ds.md","outcome":"unchanged"}]"#,
     );
     let port = serve(status_route(&body));
-    let agents = r#"[{"from":"senior-worker","model":"deepseek-flash"},{"from":"consultant","model":"deepseek-v4-pro"}]"#;
+    let agents = r#"[{ from = "senior-worker", model = "deepseek-flash" }, { from = "consultant", model = "deepseek-v4-pro" }]"#;
     write_config(home.path(), port, agents);
     let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
@@ -182,7 +207,7 @@ fn hook_prints_nothing_when_the_gate_is_closed_or_no_agent_is_ready() {
 }
 
 #[test]
-fn hook_prints_nothing_and_exits_0_when_the_service_is_down() {
+fn hook_prints_nothing_and_exits_0_quickly_when_the_service_is_down() {
     let home = tempfile::tempdir().unwrap();
     write_config(home.path(), free_port(), SENIOR);
     let started = Instant::now();
@@ -190,25 +215,28 @@ fn hook_prints_nothing_and_exits_0_when_the_service_is_down() {
     let elapsed = started.elapsed();
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert!(out.stdout.is_empty());
-    assert!(
-        elapsed < Duration::from_millis(400),
-        "hook took {elapsed:?}"
-    );
+    assert!(elapsed < HOOK_LIMIT, "hook took {elapsed:?}");
 }
 
 #[test]
-fn hook_answers_within_400_ms_when_the_service_is_up() {
+fn hook_answers_when_the_service_is_up() {
     let home = tempfile::tempdir().unwrap();
     let port = serve(status_route(OPEN));
     write_config(home.path(), port, SENIOR);
+    let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
+    assert_eq!(text(&out.stdout), format!("{ONE_AGENT_LINE}\n"));
+}
+
+#[test]
+fn hook_gives_up_on_a_service_that_does_not_answer() {
+    let home = tempfile::tempdir().unwrap();
+    write_config(home.path(), serve_silent(), SENIOR);
     let started = Instant::now();
     let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
     let elapsed = started.elapsed();
-    assert_eq!(text(&out.stdout), format!("{ONE_AGENT_LINE}\n"));
-    assert!(
-        elapsed < Duration::from_millis(400),
-        "hook took {elapsed:?}"
-    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(out.stdout.is_empty());
+    assert!(elapsed < HOOK_LIMIT, "hook took {elapsed:?}");
 }
 
 #[test]
@@ -269,6 +297,39 @@ fn status_exits_2_with_a_hint_when_the_service_is_down() {
     assert!(
         stderr.contains("hint: start the service with `vicarius self start`"),
         "{stderr}"
+    );
+}
+
+#[test]
+#[cfg(feature = "cmd-update")]
+fn doctor_reports_a_newer_release_from_the_saved_latest() {
+    let home = tempfile::tempdir().unwrap();
+    let state = home.path().join("state");
+    let dir = if cfg!(windows) {
+        state.join("vicarius").join("state")
+    } else {
+        state.join("vicarius")
+    };
+    std::fs::create_dir_all(&dir).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let body = format!(r#"{{"checked_at":{now},"latest":"99.0.0"}}"#);
+    std::fs::write(dir.join("latest.json"), body).unwrap();
+    let mut command = base(home.path());
+    command
+        .env("CAPSA_UPDATE_CHECK", "on")
+        .args(["self", "doctor"]);
+    let out = command.output().unwrap();
+    let report = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{report}{}", text(&out.stderr));
+    assert!(
+        report.contains(&format!(
+            "99.0.0 available (running {})",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{report}"
     );
 }
 
@@ -340,6 +401,27 @@ fn doctor_flags_the_old_session_start_hook_as_outdated() {
 }
 
 #[test]
+fn doctor_fix_rewrites_the_old_session_start_hook_and_leaves_the_env_alone() {
+    let home = tempfile::tempdir().unwrap();
+    write_config(home.path(), free_port(), SENIOR);
+    let settings = home.path().join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let old = r#"{"hooks": {"SessionStart": [{"hooks": [
+        {"type": "command", "command": "vicarius hook session-start"}
+    ]}]}}"#;
+    std::fs::write(&settings, old).unwrap();
+    let out = vicarius(home.path(), &["self", "doctor", "--fix"]);
+    let report = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{report}{}", text(&out.stderr));
+    assert!(report.contains("fixed"), "{report}");
+    assert!(report.contains("SessionStart hook"), "{report}");
+    let written = std::fs::read_to_string(&settings).unwrap();
+    assert!(written.contains("\"vicarius hook\""), "{written}");
+    assert!(!written.contains("session-start"), "{written}");
+    assert!(!written.contains("\"env\""), "{written}");
+}
+
+#[test]
 fn doctor_fails_on_an_invalid_config_and_names_the_rule() {
     let home = tempfile::tempdir().unwrap();
     write_config(home.path(), 0, SENIOR);
@@ -347,4 +429,18 @@ fn doctor_fails_on_an_invalid_config_and_names_the_rule() {
     let report = text(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{report}");
     assert!(report.contains("port must not be 0"), "{report}");
+}
+
+#[test]
+fn doctor_warns_about_a_legacy_config_json() {
+    let home = tempfile::tempdir().unwrap();
+    write_config(home.path(), free_port(), SENIOR);
+    let legacy = home.path().join(CONFIG_FILE).with_file_name("config.json");
+    std::fs::write(&legacy, r#"{"port": 3337}"#).unwrap();
+    let out = vicarius(home.path(), &["self", "doctor"]);
+    let report = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{report}{}", text(&out.stderr));
+    assert!(report.contains("config.json"), "{report}");
+    assert!(report.contains("vicarius self config set"), "{report}");
+    assert!(report.contains("config.toml"), "{report}");
 }

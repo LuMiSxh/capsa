@@ -2,13 +2,15 @@
 //! Owns the hook's files: the levels shown per session and the error log.
 
 use super::levels::Shown;
+use capsa_core::fs;
+use capsa_core::lock::{self, Lock};
 use capsa_core::log::{self, Level};
-use capsa_core::paths::state_dir;
+use capsa_core::paths::{log_file, state_dir};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// The log is moved aside once it passes this size.
-const LOG_LIMIT: u64 = 256 * 1024;
+pub const LOG_LIMIT: u64 = 256 * 1024;
 const ID_LIMIT: usize = 128;
 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
 
@@ -36,29 +38,12 @@ pub(super) fn load(file: &std::path::Path) -> std::io::Result<Shown> {
 }
 
 /// Takes an exclusive lock on a sibling `.lock` file of `file`, retrying for about 10 ms. `None`
-/// means another hook call holds it. The lock lasts until the returned file is dropped.
-pub(super) fn lock(file: &std::path::Path) -> std::io::Result<Option<std::fs::File>> {
+/// means another hook call holds it. The lock lasts until the returned guard is dropped.
+pub(super) fn lock(file: &std::path::Path) -> std::io::Result<Option<Lock>> {
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let f = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(file.with_extension("lock"))?;
-    let start = std::time::Instant::now();
-    loop {
-        match f.try_lock() {
-            Ok(()) => return Ok(Some(f)),
-            Err(std::fs::TryLockError::WouldBlock) => {
-                if start.elapsed() >= LOCK_WAIT {
-                    return Ok(None);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            Err(std::fs::TryLockError::Error(e)) => return Err(e),
-        }
-    }
+    lock::exclusive(&file.with_extension("lock"), LOCK_WAIT)
 }
 
 /// Writes the levels through a temporary file and a rename, so a reader never sees half of them.
@@ -66,18 +51,15 @@ pub(super) fn store(file: &std::path::Path, shown: &Shown) -> std::io::Result<()
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = file.with_extension(format!("{}.tmp", std::process::id()));
     let mut text = shown.iter().cloned().collect::<Vec<_>>().join("\n");
     text.push('\n');
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, file).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
+    fs::write_atomic(file, text.as_bytes())
 }
 
-/// The file of the hook's errors: one `hook.error` line each, in the state directory.
-pub fn error_log() -> PathBuf {
-    dir().join("hook.jsonl")
+/// The file of the hook's errors: one `hook.error` line each, in the state directory. `None` when
+/// no state directory is known.
+pub fn error_log() -> Option<PathBuf> {
+    log_file("census", "hook.jsonl")
 }
 
 /// The fields of a `hook.error` line.
@@ -88,12 +70,23 @@ pub struct ErrorLine {
 
 /// Appends a `hook.error` line to `error_log`. Failures are ignored: the hook must stay silent.
 pub fn log_error(message: &str) {
-    let file = error_log();
+    append_line(Level::Error, "hook.error", message);
+}
+
+/// Appends a warning with `event` to `error_log`. Failures are ignored, as for `log_error`.
+pub fn log_warn(event: &str, message: &str) {
+    append_line(Level::Warn, event, message);
+}
+
+fn append_line(level: Level, event: &str, message: &str) {
+    let Some(file) = error_log() else {
+        return;
+    };
     if let Some(parent) = file.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     let fields = ErrorLine {
         message: message.replace('\n', " "),
     };
-    let _ = log::append(&file, LOG_LIMIT, Level::Error, "hook.error", &fields);
+    let _ = log::append(&file, LOG_LIMIT, level, event, &fields);
 }

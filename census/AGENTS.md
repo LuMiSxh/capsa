@@ -20,7 +20,8 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
   skill|setup|config|doctor|update|uninstall`; update and uninstall need feature `cmd-update`, on by
   default), `cmd_doctor.rs` (`self doctor`).
 - `src/cmd_config.rs`: `census self config`, which shows and sets the config.
-- `src/config.rs`: `config.json` in the census config directory: `mode` (`plan` or `budget`), the
+- `src/config.rs`: `config.toml` in the census config directory, read through `capsa_core::config`:
+  `mode` (`plan` or `budget`), the
   monthly budget, the daily limit, the daily thresholds, the days before the price list is
   fetched again and `billing`, how each provider is billed (`subscription` or `api`; `anthropic`
   is `subscription` by default).
@@ -35,13 +36,14 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
   five-hour summary, `clock.rs` the calendar and `when`, `month.rs` the budget month and today's
   spend, `daily.rs` the daily limit of the budget mode, `error.rs`, `tests.rs`.
 - `src/usage/`: transcript analytics. `mod.rs` builds the report, `claude.rs` and `codex.rs` parse
-  transcripts, `tools.rs` classifies tool calls, `prices/` holds the list prices (see Gotchas),
-  `merge.rs` folds
-  the files into the report, `handback.rs` counts hand-backs, `read.rs` reads files in parallel,
+  transcripts, `tools/` classifies tool calls (`classify.rs` rules, `codex.rs` arguments,
+  `pipelines.rs` parsing, `shape.rs` grouping), `prices/` holds the list prices (see Gotchas),
+  `merge/` folds the files into the report (`agents.rs` summarises the subagent spawns), `handback.rs`
+  counts hand-backs, `read.rs` reads files in parallel,
   `time.rs` does dates and ISO weeks, `walk.rs` lists the `*.jsonl` files.
-- `src/usage_views.rs`: the table views of `census usage` (`--by`, `--agents`, `--handbacks`,
-  `--compare`, `--tools`) and the formatting helpers the report commands share (`k`, `usd`, `money`,
-  `rate`).
+- `src/usage_views/`: the table views of `census usage` (`--by`, `--agents`, `--handbacks`,
+  `--compare`, `--tools`), one module each, and the formatting helpers the report commands share
+  (`k`, `usd`, `money`, `rate`) in `mod.rs`.
 - `src/out.rs`: `Out`, the output format and colour of a command, and `field`, the `label  value`
   line of `census self setup`.
 - `src/setup.rs`: `census self setup`, the skill and the hooks and statusLine in `settings.json`.
@@ -55,12 +57,15 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
 - `src/session.rs`: which transcript is the session, and the summary of a session with its
   subagents.
 - `src/statusline.rs`: the statusLine input, its limit snapshots and the status line text.
+- `src/interop.rs`: the capsa bulletins of vicarius and acus, and the release bulletins, read as
+  status line segments.
 - `data/prices.snapshot.json`: the price table built into the binary, trimmed from LiteLLM's file
   (see Commands to regenerate it).
 - `src/transcript.rs`: the transcript records that the session and context views read.
 - `tests/`: `report_json.rs` pins the `--json` output of the report commands against the files in
   `tests/report_json/`; `usage.rs` and `ledger.rs` over generated transcripts; `context.rs`,
-  `session.rs` and `statusline.rs` for the library; `cli.rs` for the binary in a scratch home;
+  `session.rs` and `statusline.rs` for the library; `cli/` for the binary in a scratch home, one
+  module per command group;
   `hook.rs` and `setup.rs` for the hook and `self setup`; `common/` for scratch directories.
 
 ## Commands
@@ -87,7 +92,8 @@ Shared rules: see root AGENTS.md.
 - `census statusline` exits 0 and prints nothing unless `--line` is given. It never updates the
   ledger, so it stays fast, and it appends a snapshot only when a window's reading differs from the
   last one.
-- `--guard` reads acus's `guard.jsonl` as acus writes it. `rule` is a free string: names from older
+- `--guard` reads acus's `guard.jsonl` from `capsa_core::paths::log_file("acus", ...)` as acus
+  writes it. `rule` is a free string: names from older
   acus versions (such as `git-log`) must still parse, so do not validate rule names.
 - `census hook` exits 0 on every path and prints nothing on any error or for a subagent (input with
   `agent_id`). Keep it free of `unwrap`, indexing and panics: `panic = "abort"` makes one a failed
@@ -101,8 +107,8 @@ Shared rules: see root AGENTS.md.
 
 - The walk does not read `.gitignore` files, which acus's walk did. Transcript directories are not
   expected to be ignored.
-- The config directory of acus comes from `capsa_core::paths::config_dir("acus")`.
-  `CLAUDE_CONFIG_DIR` moves the transcripts and the settings that the threshold reads.
+- The guard log is in acus's state directory, not its config directory. `CLAUDE_CONFIG_DIR` moves
+  the transcripts and the settings that the threshold reads.
 - `census prune` never removes raw ledger rows: the 8-day windows need them.
 - Budget mode: `daily_limit_usd` unset means `auto`, the daily share of what is left of the monthly
   budget. `daily_thresholds` (50, 80 and 100 % by default) are announced by the hook once per local

@@ -23,7 +23,7 @@ fn replacement(segs: &[Segment], i: usize) -> Option<(usize, String)> {
     if seg.nest != Nest::Top || seg.assigns > 0 {
         return None;
     }
-    let text = seg.orig.trim();
+    let text = seg.orig().trim();
     match seg.out {
         Out::Pipe => {
             let next = segs.get(i + 1)?;

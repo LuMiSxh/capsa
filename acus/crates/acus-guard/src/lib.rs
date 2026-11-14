@@ -11,10 +11,12 @@
 
 mod acus_pipe;
 mod ast;
+pub mod blocks;
 mod build;
 mod convert;
 mod file_write;
 mod files;
+mod follow;
 mod git;
 pub mod hints;
 pub mod log;
@@ -63,6 +65,10 @@ use std::sync::LazyLock;
 pub struct GuardConfig {
     /// A repeated hint shows on its first occurrence and then every this many occurrences.
     pub hint_every: usize,
+    /// The fewest calls between two shown hints of a rule that agents ignore.
+    pub hint_min: usize,
+    /// The most calls between two shown hints of a rule that agents follow.
+    pub hint_max: usize,
     /// Directory of the per-session hint counts.
     pub state_dir: PathBuf,
     /// The JSON-lines decision log.
@@ -118,6 +124,34 @@ pub enum Verdict {
     Rewrite(Rule),
 }
 
+/// Names what a decision does with a call; the string form is what `guard.jsonl` and replays hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Deny,
+    Hint,
+    Escape,
+    Rewrite,
+    Pass,
+}
+
+impl Kind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Kind::Deny => "deny",
+            Kind::Hint => "hint",
+            Kind::Escape => "escape",
+            Kind::Rewrite => "rewrite",
+            Kind::Pass => "pass",
+        }
+    }
+}
+
+impl std::fmt::Display for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 impl Verdict {
     fn rule(&self) -> Rule {
         match self {
@@ -128,12 +162,12 @@ impl Verdict {
         }
     }
 
-    fn kind(&self) -> &'static str {
+    fn kind(&self) -> Kind {
         match self {
-            Verdict::Deny(..) => "deny",
-            Verdict::Hint(..) => "hint",
-            Verdict::Escape(_) => "escape",
-            Verdict::Rewrite(_) => "rewrite",
+            Verdict::Deny(..) => Kind::Deny,
+            Verdict::Hint(..) => Kind::Hint,
+            Verdict::Escape(_) => Kind::Escape,
+            Verdict::Rewrite(_) => Kind::Rewrite,
         }
     }
 
@@ -157,7 +191,7 @@ const TREE_HINT: &str = "acus hint: `acus files [DIR] -g 'GLOB'` lists the files
 /// Checks PowerShell with the same rules (cmdlets ignore case, so the rules see a lowercased
 /// command), plus `-replace … | Set-Content` edits and .NET file reads.
 pub fn check_ps(cmd: &str, scope: Option<&Scope>) -> Option<Verdict> {
-    let c = cmd.to_lowercase();
+    let c = lowered(cmd);
     let words = |is_path: fn(&str) -> bool| {
         c.split(|ch: char| ch.is_whitespace() || "()'\",;".contains(ch))
             .filter(move |w| is_path(w))

@@ -14,11 +14,7 @@ pub struct Args {
 
 #[cfg(not(feature = "cmd-update"))]
 pub fn run(_: &Args, _format: Format) -> Result<Outcome> {
-    Err(capsa_core::hint::Hinted::new(
-        "acus was built without `uninstall`",
-        "remove the binary by hand, or rebuild with --features cmd-update",
-    )
-    .into())
+    Err(capsa_core::hint::uninstall_unavailable("acus"))
 }
 
 /// Removes the skill files first, so no skill outlives the binary it describes. The binary is
@@ -43,8 +39,12 @@ pub fn run(a: &Args, format: Format) -> Result<Outcome> {
     })?;
     if !a.dry_run && format != Format::Json {
         outln!(
-            "hooks in {} are left; remove the acus entries by hand",
-            capsa_core::claude_settings::path().display()
+            "{}",
+            capsa_core::update::leftover_note(
+                "acus",
+                &capsa_core::claude_settings::path(),
+                "hooks"
+            )
         );
     }
     Ok(outcome)

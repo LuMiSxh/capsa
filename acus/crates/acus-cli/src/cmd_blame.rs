@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus blame`: who last changed each run of lines, from `git blame --porcelain`.
 
-use crate::fmt::Out;
 use crate::git::git;
+use crate::out::Out;
 use crate::source::{Span, locate, read_text};
 use acus_syntax::Address;
 use anyhow::{Result, bail};
@@ -36,11 +36,7 @@ struct Commit {
 }
 
 /// `git blame` of the lines an address names: one line per run of lines from one commit.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "execute hands over the parsed arguments"
-)]
-pub fn run(a: Args, out: &Out) -> Result<Outcome> {
+pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     let addr = Address::parse(&a.addr);
     let path = addr.path.as_str();
     let src = read_text(path)?;

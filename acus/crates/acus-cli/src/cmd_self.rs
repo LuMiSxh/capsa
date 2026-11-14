@@ -19,7 +19,7 @@ enum Action {
     /// Install the skill and register the SessionStart and PreToolUse hooks in Claude Code's settings.
     Setup(cmd_setup::Args),
     /// Check the install, config, skill, hooks and guard files; exit 1 when a check fails.
-    Doctor,
+    Doctor(cmd_doctor::Args),
     /// Print the agent skill or install it with `--install`.
     Skill(cmd_skill::Args),
     /// Remove this binary and the installed agent skill; hooks in Claude Code's settings stay.
@@ -29,7 +29,7 @@ enum Action {
 impl Args {
     /// Whether this is `self doctor`, which must run even when the config file does not load.
     pub fn is_doctor(&self) -> bool {
-        matches!(self.action, Action::Doctor)
+        matches!(self.action, Action::Doctor(_))
     }
 
     /// The name `[commands] disabled` and `ACUS_DISABLE` use for this action.
@@ -37,7 +37,7 @@ impl Args {
         match self.action {
             Action::Update(_) => "update",
             Action::Setup(_) => "setup",
-            Action::Doctor => "doctor",
+            Action::Doctor(_) => "doctor",
             Action::Skill(_) => "skill",
             Action::Uninstall(_) => "uninstall",
         }
@@ -48,7 +48,7 @@ pub fn run(a: Args, format: Format) -> Result<Outcome> {
     match a.action {
         Action::Update(a) => cmd_update::run(a, format),
         Action::Setup(a) => cmd_setup::run(&a, format),
-        Action::Doctor => cmd_doctor::run(format),
+        Action::Doctor(a) => cmd_doctor::run(format, a.fix),
         Action::Skill(a) => cmd_skill::run(a),
         Action::Uninstall(a) => cmd_uninstall::run(&a, format),
     }

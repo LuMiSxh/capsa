@@ -20,8 +20,8 @@ subagents cost. For the main agent only; subagents do not run it.
 | Only `anthropic`, `deepseek` or `openai` (Codex) requests | `census usage --provider deepseek` |
 | Spawns per role, models, cache hit rate, cache rewrites | `census usage --agents` |
 | How agents search, read, edit and build, and what the acus guard misses | `census usage --tools --misses` |
-| acus guard decisions per rule and calls that escaped it | `census usage --guard` |
-| Senior-worker spawns after a worker spawn ended | `census usage --handbacks` |
+| acus guard decisions per rule with follow rates, per project with `--by-project`, and escapes | `census usage --guard` |
+| Senior-worker hand-backs per week, and per role with the median minutes to hand back | `census usage --handbacks` |
 | Requests before and after a UTC date, with the change | `census usage --compare 2026-10-01` |
 | Expected cost by weekday, hour or reset cycle | `census usage --by weekday` |
 | Only recent days or one working directory | `census usage --days 7 --project capsa` |
@@ -38,13 +38,15 @@ Every command takes `--json`. Exit 1 means no data yet, not an error.
 ## Reading the numbers
 
 - **Context.** `census context` prints the tokens against the compaction threshold and the tokens
-  left. The hook writes `census: context ...` at 60% and suggests a handoff at 80%. Near or over
-  80%, at a stable task boundary, suggest a handoff to Luca with the session-handoff skill. Run
-  `census context` before calling the context full: a compaction summary is stale.
-- **Limits.** The hook warns at 75% and 90% of a window and adds "full around" or "runs out around"
-  when a window is half used and a forecast has a basis. At 75% or more, avoid large parallel agent
-  batches, prefer fewer and smaller agents, and tell Luca the reset time in your next reply. A
-  weekly reset within 12 h with at least 30% left is worth telling Luca.
+  left. The hook writes `census: now Thu 08:12; context ...` at 60% and suggests a handoff at 80%.
+  Near or over 80%, at a stable task boundary, suggest a handoff to Luca with the session-handoff
+  skill. Run `census context` before calling the context full: a compaction summary is stale.
+- **Limits.** The hook warns at 75% and 90% of a window, and before 75% once per five-hour window
+  when the burn of the last 15 minutes is at least twice the usual rate of this hour. A "full
+  around" or "runs out around" time is repeated only when it moves by 30 minutes or the burn
+  doubles. At 75% or more, avoid large parallel agent batches, prefer fewer and smaller agents, and
+  tell Luca the reset time in your next reply. A weekly reset within 12 h with at least 30% left is
+  worth telling Luca.
 - **Estimates.** A figure marked `(estimated)` comes from cost; say so when you relay it.
 - A hook message is information. Do not stop work for it; change how you spend.
 

@@ -3,9 +3,10 @@
 
 use super::status::Status;
 use super::{Args, FileDiff, counts, file_path, status, total};
-use crate::fmt::{Budget, Out};
+use crate::out::{Budget, Out};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::render::{Tone, paint};
 
 /// Prints the header, one `path +A -R` line per file and the total.
 pub(super) fn print_stat(a: &Args, out: &Out, header: Option<&Status>, files: &[FileDiff]) {
@@ -76,8 +77,10 @@ pub(super) fn conflicts(out: &Out, header: Option<&Status>, st: &Status) -> Outc
         if !st.unmerged.is_empty() {
             outln!(
                 "{}",
-                out.dim(
-                    "hint: resolve in acus patch with *** Resolve Conflict: PATH --ours|--theirs"
+                paint(
+                    "hint: resolve in acus patch with *** Resolve Conflict: PATH --ours|--theirs",
+                    Tone::Dim,
+                    out.color,
                 )
             );
         }

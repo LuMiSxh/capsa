@@ -3,6 +3,7 @@
 
 mod blame;
 mod budget;
+mod bulletin;
 mod common;
 mod ctx;
 mod diff_log;

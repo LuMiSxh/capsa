@@ -147,17 +147,20 @@ pub(super) fn is_dir(scope: Option<&Scope>, path: &str) -> bool {
 /// Returns the home directory `~` stands for: a fixed scope has its own, so results do not
 /// depend on the machine that runs them.
 pub(super) fn home_dir(scope: Option<&Scope>) -> Option<String> {
-    match scope {
-        Some(s) if s.fixed => Some("/home/user".to_owned()),
-        // A Windows home has `\`, which an unquoted word cannot hold; output paths use `/`.
-        _ => std::env::var("HOME").ok().map(|h| {
-            if cfg!(windows) {
-                h.replace('\x5c', "/")
-            } else {
-                h
-            }
-        }),
+    if scope.is_some_and(|s| s.fixed) {
+        return Some("/home/user".to_owned());
     }
+    let home = capsa_core::paths::expand_home("~");
+    // `expand_home` returns `~` as written when no home directory is known.
+    (home.as_path() != Path::new("~")).then(|| {
+        let home = home.to_string_lossy();
+        // A Windows home has `\`, which an unquoted word cannot hold; output paths use `/`.
+        if cfg!(windows) {
+            home.replace('\\', "/")
+        } else {
+            home.into_owned()
+        }
+    })
 }
 
 /// Without a known session directory every path counts as inside.

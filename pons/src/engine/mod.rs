@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::census::Limits;
 use crate::failsafe::{FailSafe, catch_panic, panic_text};
-use crate::fold::{EntryOut, Finished, Folds, clip_head, one_line};
+use crate::fold::{EntryOut, Finished, Folds, UpdateView, clip_head, one_line};
 use crate::notification::{TaskNotifications, Verdict, Watch};
 use crate::permission::{AutoApprove, Decision, Known, Policy};
 use crate::roster::Roster;
@@ -26,8 +26,10 @@ mod response;
 mod route;
 mod steer;
 mod updates;
+mod view;
 mod wire;
 
+use view::{ResponseView, permission_tool_call_id};
 use wire::*;
 
 #[cfg(test)]

@@ -8,25 +8,34 @@
 use crate::cmd_self::SKILL;
 use crate::out::Out;
 use anyhow::{Context, Result};
-use capsa_core::claude_settings::{self, runs};
+use capsa_core::claude_settings::{Step, runs};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::ResultExt;
-use capsa_core::hooks::{Agent, HookFile, HookSpec};
+use capsa_core::hooks::{Agent, HookFile, HookSpec, StatusLineSpec, StatusLineState};
 use capsa_core::skill::{self, SkillState, Target};
 use serde::Serialize;
-use serde_json::{Value, json};
 
 /// The binary's name, as the commands in settings.json name it.
 pub const TOOL: &str = "census";
 /// The commands written into settings.json: bare names, which Claude Code resolves on PATH.
 const HOOK: &str = "census hook";
-const STATUS_LINE: &str = "census statusline --line";
 
 /// Claims every `census hook` command.
 fn owns_hook(command: &str) -> bool {
     runs(command, TOOL, "hook")
 }
+
+/// Claims every `census statusline` command, current and older.
+fn owns_status_line(command: &str) -> bool {
+    runs(command, TOOL, "statusline")
+}
+
+/// The statusLine that census registers.
+pub const STATUS_LINE: StatusLineSpec = StatusLineSpec {
+    command: "census statusline --line",
+    owns: owns_status_line,
+};
 
 const fn hook(event: &'static str) -> HookSpec {
     HookSpec {
@@ -55,51 +64,6 @@ pub struct Args {
     force: bool,
 }
 
-/// What setup does with an item.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Step {
-    /// The item is added.
-    Install,
-    /// census's own hook or statusLine runs in another form or with a stale command; it is replaced.
-    Replace,
-    /// A statusLine that census does not own is replaced, under `--force`.
-    ReplaceForeign,
-    /// The same entry is already there; nothing changes.
-    Set,
-    /// A statusLine that census does not own stays without `--force`.
-    Skip,
-}
-
-impl Step {
-    /// Whether this step writes the item.
-    fn writes(self) -> bool {
-        matches!(self, Self::Install | Self::Replace | Self::ReplaceForeign)
-    }
-
-    fn text(self, dry_run: bool) -> &'static str {
-        match (self, dry_run) {
-            (Self::Set, _) => "already set",
-            (Self::Install, false) => "installed",
-            (Self::Install, true) => "would install",
-            (Self::Replace, false) => "replaced",
-            (Self::Replace, true) => "would replace",
-            (Self::ReplaceForeign, false) => "installed (replaced foreign statusLine)",
-            (Self::ReplaceForeign, true) => "would install (replaces foreign statusLine)",
-            (Self::Skip, _) => "skipped (foreign statusLine; --force replaces it)",
-        }
-    }
-}
-
-impl From<claude_settings::Step> for Step {
-    fn from(step: claude_settings::Step) -> Self {
-        match step {
-            claude_settings::Step::Install => Self::Install,
-            claude_settings::Step::Replace => Self::Replace,
-            claude_settings::Step::Set => Self::Set,
-        }
-    }
-}
-
 /// One line of the report.
 #[derive(Serialize)]
 struct Item {
@@ -124,8 +88,8 @@ pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     } else {
         Step::Install
     };
-    let mut steps = vec![("skill".to_owned(), skill_step)];
-    steps.extend(wire(&mut file, a.force));
+    let mut steps = vec![("skill".to_owned(), skill_step.text(a.dry_run))];
+    steps.extend(wire(&mut file, a.force, a.dry_run));
     if !a.dry_run {
         if skill_step.writes() {
             skill::install(&home, &SKILL, Target::Claude).hinted()?;
@@ -139,46 +103,47 @@ pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
         settings: file.path().display().to_string(),
         items: steps
             .into_iter()
-            .map(|(name, step)| Item {
-                name,
-                status: step.text(a.dry_run),
-            })
+            .map(|(name, status)| Item { name, status })
             .collect(),
     };
     print_report(&report, out)?;
     Ok(Outcome::Found)
 }
 
-/// Sets census's statusLine and hook for each event, returning what each item did.
-fn wire(file: &mut HookFile, force: bool) -> Vec<(String, Step)> {
+/// Sets census's statusLine and hook for each event, returning the report text of each item.
+fn wire(file: &mut HookFile, force: bool, dry_run: bool) -> Vec<(String, &'static str)> {
     let mut steps = vec![(
         "statusLine".to_owned(),
-        wire_status_line(file.value_mut(), STATUS_LINE, force),
+        wire_status_line(file, force, dry_run),
     )];
     for spec in &HOOKS {
-        steps.push((format!("hook {}", spec.event), file.set(spec).into()));
+        let step = file.set(spec);
+        steps.push((format!("hook {}", spec.event), step.text(dry_run)));
     }
     steps
 }
 
-fn wire_status_line(settings: &mut Value, line: &str, force: bool) -> Step {
-    let step = match settings.get("statusLine") {
-        None => Step::Install,
-        Some(value) if command_of(value) == Some(line) => Step::Set,
-        Some(value) if command_of(value).is_some_and(|c| runs(c, TOOL, "statusline")) => {
-            Step::Replace
+/// Sets census's statusLine and returns its report text. A statusLine that census does not own
+/// stays unless `force` is set.
+fn wire_status_line(file: &mut HookFile, force: bool, dry_run: bool) -> &'static str {
+    let step = match file.status_line(&STATUS_LINE) {
+        StatusLineState::Installed => return Step::Set.text(dry_run),
+        StatusLineState::Missing => Step::Install,
+        StatusLineState::Outdated { .. } => Step::Replace,
+        StatusLineState::Foreign { .. } if force => {
+            file.set_status_line(&STATUS_LINE);
+            return if dry_run {
+                "would install (replaces foreign statusLine)"
+            } else {
+                "installed (replaced foreign statusLine)"
+            };
         }
-        Some(_) if force => Step::ReplaceForeign,
-        Some(_) => Step::Skip,
+        StatusLineState::Foreign { .. } => {
+            return "skipped (foreign statusLine; --force replaces it)";
+        }
     };
-    if step.writes() {
-        settings["statusLine"] = json!({"type": "command", "command": line});
-    }
-    step
-}
-
-fn command_of(entry: &Value) -> Option<&str> {
-    entry.get("command")?.as_str()
+    file.set_status_line(&STATUS_LINE);
+    step.text(dry_run)
 }
 
 /// Prints the report: one line per item, or the JSON document.

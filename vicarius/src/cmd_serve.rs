@@ -47,7 +47,7 @@ pub fn run(_: &Args, _: Format) -> Result<Outcome> {
         let _ = writeln!(std::io::stderr(), "vicarius: listening on http://{addr}");
         let (stop_tx, stop_rx) = watch::channel(false);
         tokio::spawn(async move {
-            shutdown_signal().await;
+            capsa_core::process::shutdown_signal().await;
             let _ = stop_tx.send(true);
         });
         let refreshing = tokio::spawn(refresher.run(stop_rx.clone()));
@@ -60,24 +60,4 @@ pub fn run(_: &Args, _: Format) -> Result<Outcome> {
 /// Completes once the stop flag turns true.
 async fn stopped(mut stop: watch::Receiver<bool>) {
     let _ = stop.wait_for(|stopped| *stopped).await;
-}
-
-/// Completes on SIGINT, and on SIGTERM where the platform has it.
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-        let Ok(mut term) = signal(SignalKind::terminate()) else {
-            let _ = tokio::signal::ctrl_c().await;
-            return;
-        };
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = term.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
-    }
 }

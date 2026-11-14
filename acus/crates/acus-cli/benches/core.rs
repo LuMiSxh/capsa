@@ -100,14 +100,19 @@ fn bench(c: &mut Criterion) {
         })
         .collect();
     let patch = format!("*** Begin Patch\n*** Update File: m0/f0.rs\n{patch}*** End Patch\n");
+    let check = acus_edit::ApplyOptions {
+        check: true,
+        ..acus_edit::ApplyOptions::default()
+    };
     c.bench_function("patch 40 blocks, check only", |b| {
-        b.iter(|| acus_edit::apply(&acus_edit::parse(&patch).unwrap(), root, true).unwrap());
+        b.iter(|| acus_edit::apply(&acus_edit::parse(&patch).unwrap(), root, &check).unwrap());
     });
     let original = std::fs::read_to_string(&file).unwrap();
+    let write = acus_edit::ApplyOptions::default();
     c.bench_function("patch 40 blocks, atomic write", |b| {
         b.iter(|| {
             std::fs::write(&file, &original).unwrap();
-            acus_edit::apply(&acus_edit::parse(&patch).unwrap(), root, false).unwrap()
+            acus_edit::apply(&acus_edit::parse(&patch).unwrap(), root, &write).unwrap()
         });
     });
 }
@@ -127,7 +132,7 @@ const GUARD_COMMANDS: [&str; 10] = [
     "FOO=1 cat a.md && cd X && cat b.md || echo no",
 ];
 
-/// Guard decision latency, through the hidden `guard --replay`: one process decides the ten
+/// Guard decision latency, through the hidden `hook --replay`: one process decides the ten
 /// commands once (start-up included) or `REPEAT` times each, so the difference between the two,
 /// over `REPEAT * 10 - 10`, is the cost of a decision.
 fn guard(c: &mut Criterion) {
@@ -141,7 +146,7 @@ fn guard(c: &mut Criterion) {
     std::fs::write(&file, lines.join("\n")).unwrap();
     let run = |repeat: usize| {
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_acus"))
-            .args(["guard", "--replay"])
+            .args(["hook", "--replay"])
             .arg(&file)
             .args(["--repeat", &repeat.to_string()])
             .output()

@@ -24,6 +24,10 @@ pub struct Cli {
     #[command(subcommand)]
     pub sub: Option<Sub>,
 
+    /// Output format of the commands that render a result: agent, human or json.
+    #[command(flatten)]
+    pub output: FormatArgs,
+
     /// Append every message with direction and timestamp to FILE.
     #[arg(long, value_name = "FILE", env = "PONS_LOG")]
     pub log: Option<PathBuf>,
@@ -41,8 +45,9 @@ pub struct Cli {
     pub no_census: bool,
 
     /// Directory for the default per-start log file (used when no --log is
-    /// given). Default: ~/Library/Logs/pons on macOS, $XDG_STATE_HOME/pons
-    /// (else ~/.local/state/pons) on Linux, %LOCALAPPDATA%\pons\logs on Windows.
+    /// given). Default: pons's state directory, $XDG_STATE_HOME/pons (else
+    /// ~/.local/state/pons) on macOS and Linux, %LOCALAPPDATA%\pons\state on
+    /// Windows.
     #[arg(long, value_name = "DIR")]
     pub log_dir: Option<PathBuf>,
 
@@ -222,10 +227,7 @@ impl App for Cli {
     const RESET_SIGPIPE: bool = false;
 
     fn format(&self) -> Format {
-        match &self.sub {
-            Some(Sub::SelfCmd { output, .. }) => output.resolve(),
-            None => capsa_core::format::resolve(false, false, false),
-        }
+        self.output.resolve()
     }
 }
 
@@ -237,9 +239,6 @@ pub enum Sub {
     SelfCmd {
         #[command(subcommand)]
         action: SelfAction,
-        /// Output format of the `self` commands: agent, human or json.
-        #[command(flatten)]
-        output: FormatArgs,
     },
 }
 
@@ -254,9 +253,13 @@ pub enum SelfAction {
         log: Option<PathBuf>,
 
         /// Directory whose newest pons-*.jsonl is summarized when --log is not
-        /// given (default: the default log directory).
+        /// given (default: pons's state directory).
         #[arg(long, value_name = "DIR")]
         log_dir: Option<PathBuf>,
+
+        /// Show every log note instead of the newest five.
+        #[arg(long)]
+        all: bool,
 
         /// Report on this agent command instead of auto-detecting; takes
         /// everything after it.
@@ -403,5 +406,13 @@ mod tests {
                 "{value}"
             );
         }
+    }
+
+    #[test]
+    fn format_flags_work_at_the_root_and_on_self() {
+        let root = Cli::try_parse_from(["pons", "--json"]).unwrap();
+        assert_eq!(root.format(), Format::Json);
+        let sub = Cli::try_parse_from(["pons", "self", "doctor", "--human"]).unwrap();
+        assert_eq!(sub.format(), Format::Human);
     }
 }

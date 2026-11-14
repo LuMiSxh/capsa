@@ -5,8 +5,7 @@
 use crate::context;
 use crate::limits::MonthStatus;
 use capsa_core::census_snapshot::{self, Snapshot, SnapshotError, Source, Window};
-use serde::Deserialize;
-use serde_json::Value;
+use serde::{Deserialize, de::IgnoredAny};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -17,10 +16,20 @@ const TAIL_BYTES: u64 = 8192;
 /// The fields of the statusLine JSON that census reads.
 #[derive(Deserialize)]
 pub struct Input {
-    /// A string in older Claude Code versions, an object with `id` in newer ones.
-    pub model: Option<Value>,
+    pub session_id: Option<String>,
+    pub model: Option<Model>,
     pub context_window: Option<ContextWindow>,
     pub rate_limits: Option<RateLimits>,
+}
+
+/// The `model` field: a name in older Claude Code versions, an object with `id` in newer ones.
+/// Any other shape names no model.
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub enum Model {
+    Name(String),
+    Object { id: Option<String> },
+    Other(IgnoredAny),
 }
 
 #[derive(Deserialize)]
@@ -43,8 +52,11 @@ pub struct Limit {
 impl Input {
     /// The model id, when the input names one.
     pub fn model_id(&self) -> Option<&str> {
-        let model = self.model.as_ref()?;
-        model.as_str().or_else(|| model.get("id")?.as_str())
+        match self.model.as_ref()? {
+            Model::Name(name) => Some(name.as_str()),
+            Model::Object { id } => id.as_deref(),
+            Model::Other(_) => None,
+        }
     }
 }
 
@@ -101,7 +113,7 @@ pub fn record(file: &Path, snapshots: &[Snapshot]) -> Result<usize, SnapshotErro
 /// Renders the status line, such as `ctx 44k/400k · 5h 6% · wk 1%`: the context against the
 /// compaction threshold, then each limit window of `snapshots`. Empty when there is nothing
 /// to show.
-pub fn line(input: &Input, snapshots: &[Snapshot]) -> String {
+pub fn line(input: &Input, snapshots: &[Snapshot], interop: Vec<String>) -> String {
     let mut parts: Vec<String> = context_part(input).into_iter().collect();
     for snapshot in snapshots {
         let label = match snapshot.window {
@@ -110,13 +122,15 @@ pub fn line(input: &Input, snapshots: &[Snapshot]) -> String {
         };
         parts.push(format!("{label} {:.0}%", snapshot.used_percentage));
     }
+    parts.extend(interop);
     parts.join(" · ")
 }
 
 /// Renders the status line of the budget mode, such as `ctx 44k/400k · $42/$200 21% →$310`: the
 /// context, then the spend of the month with its budget and the projection to the end of the
-/// month, which is marked `↑` instead of `→` when it exceeds the budget.
-pub fn budget_line(input: &Input, month: &MonthStatus) -> String {
+/// month, which is marked `↑` instead of `→` when it exceeds the budget. The `interop` segments
+/// come last.
+pub fn budget_line(input: &Input, month: &MonthStatus, interop: Vec<String>) -> String {
     let mut parts: Vec<String> = context_part(input).into_iter().collect();
     let arrow = if month.projected_over { '↑' } else { '→' };
     parts.push(match (month.budget_usd, month.percent) {
@@ -126,6 +140,7 @@ pub fn budget_line(input: &Input, month: &MonthStatus) -> String {
         ),
         _ => format!("${:.0} {arrow}${:.0}", month.spent_usd, month.projected_usd),
     });
+    parts.extend(interop);
     parts.join(" · ")
 }
 

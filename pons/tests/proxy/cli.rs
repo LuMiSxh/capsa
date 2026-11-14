@@ -22,6 +22,9 @@ async fn doctor_prints_a_report_and_exits_zero() {
             "my-agent",
             "-x",
         ])
+        .env("CAPSA_UPDATE_CHECK", "off")
+        .env("XDG_STATE_HOME", env!("CARGO_TARGET_TMPDIR"))
+        .env("LOCALAPPDATA", env!("CARGO_TARGET_TMPDIR"))
         .output()
         .await
         .unwrap();

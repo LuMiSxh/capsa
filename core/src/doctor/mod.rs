@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: MPL-2.0
+//! Owns the checks every `self doctor` shares: the check constructors, the probes for directories
+//! and files, the PATH check, the health of a JSON-lines log and the sibling-tool group.
+
+mod fix;
+mod interop;
+#[cfg(test)]
+mod interop_tests;
+mod log_health;
+mod on_path;
+mod probe;
+#[cfg(test)]
+mod tests;
+#[cfg(feature = "update")]
+mod update;
+#[cfg(all(test, feature = "update"))]
+mod update_tests;
+
+use std::borrow::Cow;
+
+use crate::render::{Check, Status};
+
+pub use fix::{Repaired, emit_report, repair_hooks, repair_skill};
+pub use interop::{Sibling, interop_group};
+pub use log_health::log_checks;
+pub use on_path::path_check;
+pub use probe::{dir_check, same_file, writable};
+#[cfg(feature = "update")]
+pub use update::update_check;
+
+/// Builds a check with its name, status, what it found and, when it failed, the fix.
+pub fn check(
+    name: impl Into<Cow<'static, str>>,
+    status: Status,
+    detail: impl Into<String>,
+    hint: Option<&str>,
+) -> Check {
+    Check {
+        name: name.into(),
+        status,
+        detail: detail.into(),
+        hint: hint.map(str::to_owned),
+    }
+}
+
+/// Builds an `Ok` check, which has no fix.
+pub fn ok(name: impl Into<Cow<'static, str>>, detail: impl Into<String>) -> Check {
+    check(name, Status::Ok, detail, None)
+}

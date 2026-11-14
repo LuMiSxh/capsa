@@ -7,17 +7,22 @@ mod archive;
 #[cfg(feature = "clap")]
 mod args;
 mod binary;
+mod cache;
+#[cfg(test)]
+mod cache_tests;
 mod error;
 mod release;
+mod steps;
 #[cfg(test)]
 mod tests;
 
 use std::fmt;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::bulletin::{self, BulletinError};
 use crate::exit::Outcome;
 use crate::format::Format;
 use crate::hint::ResultExt;
@@ -25,7 +30,9 @@ use crate::render::{Doc, Mark, Render, Status, emit};
 
 #[cfg(feature = "clap")]
 pub use args::{UninstallArgs, UpdateArgs};
+pub use cache::{Release, UpdateCheck, check, release_status};
 pub use error::UpdateError;
+pub use steps::{leftover_note, reinstall_skill};
 
 /// The repository that holds the releases of every capsa tool.
 pub const REPO: &str = "LuMiSxh/capsa";
@@ -148,8 +155,9 @@ pub fn update(tool: &Tool, mode: Mode) -> Result<Report, UpdateError> {
     let exe = binary::resolve()?;
     binary::forget_old(&exe);
     let token = release::token();
-    let newest = release::newest(tool, token.as_deref())?;
+    let newest = release::newest(tool, token.as_deref(), None)?;
     let latest = newest.version(tool).to_owned();
+    cache::remember(tool, tool.version, &latest);
     let newer = release::version(&latest) > release::version(tool.version);
     let install = match mode {
         Mode::Check => false,
@@ -164,6 +172,7 @@ pub fn update(tool: &Tool, mode: Mode) -> Result<Report, UpdateError> {
         let sum = newest.download(&format!("{name}.sha256"), token.as_deref())?;
         archive::verify(&data, &String::from_utf8_lossy(&sum))?;
         binary::replace(&exe, tool.name, &archive::extract(&data, ext, &bin)?)?;
+        cache::remember(tool, &latest, &latest);
     }
     let state = match (mode, install, newer) {
         (_, true, _) => State::Updated,
@@ -213,24 +222,34 @@ impl Render for Removal {
     }
 }
 
-/// Removes the running binary of `tool`; with `dry_run` it only names it.
+/// Removes the running binary and bulletins of `tool`; with `dry_run` it only names them.
 ///
 /// A symlink is resolved first, so the real file goes. A binary not named after the tool is
 /// refused, so a renamed copy cannot be mistaken for the install.
 ///
 /// # Errors
 ///
-/// Fails when the binary cannot be located, is not named `tool`, or cannot be removed.
+/// Fails when the binary cannot be located, is not named `tool`, or cannot be removed. Fails also
+/// when a bulletin exists and cannot be removed; the binary then stays installed.
 pub fn uninstall(tool: &Tool, dry_run: bool) -> Result<Removal, UpdateError> {
     let path = binary::resolve()?;
     binary::ensure_named(&path, tool.name)?;
     if !dry_run {
+        // The bulletins go first, so a failure leaves the tool installed and nothing half removed.
+        withdraw_bulletins(&bulletin::dir(), tool).map_err(UpdateError::Bulletin)?;
         binary::remove(&path)?;
     }
     Ok(Removal {
         path,
         removed: !dry_run,
     })
+}
+
+/// Removes the bulletin of `tool` and its release bulletin from `bulletins`; a missing one is not
+/// an error.
+fn withdraw_bulletins(bulletins: &Path, tool: &Tool) -> Result<(), BulletinError> {
+    bulletin::remove_in(bulletins, tool.name)?;
+    bulletin::remove_in(bulletins, &cache::release_bulletin(tool.name))
 }
 
 /// Runs `<tool> self update`: updates by `args`, prints the report in `format` and, unless it

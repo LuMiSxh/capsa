@@ -3,6 +3,61 @@
 //! outside quotes and guesses nesting from keywords, which is why Bash moved to a parser.
 
 use super::*;
+use std::borrow::Cow;
+
+/// Holds what differs between the splitters of the two shells.
+pub(super) trait Flavor {
+    /// The character that escapes the next one: a backslash in Bash, a backtick in PowerShell.
+    const ESCAPE: char;
+
+    /// Returns the command as the rules read it.
+    fn read(cmd: &str) -> Cow<'_, str>;
+
+    /// Returns how many compound commands the segment opens and closes.
+    fn keywords(seg: &str) -> (usize, usize);
+
+    /// Returns the text of one segment as the rules read it.
+    fn text(seg: &str) -> String;
+}
+
+/// Splits Bash.
+pub(super) struct Sh;
+
+impl Flavor for Sh {
+    const ESCAPE: char = '\\';
+
+    fn read(cmd: &str) -> Cow<'_, str> {
+        Cow::Borrowed(cmd)
+    }
+
+    fn keywords(seg: &str) -> (usize, usize) {
+        compound_keywords(seg)
+    }
+
+    fn text(seg: &str) -> String {
+        quote_escaped_spaces(seg)
+    }
+}
+
+/// Splits PowerShell, whose cmdlets ignore case: the rules see a lowercased command. Its blocks
+/// close with `}` alone, which is not tracked.
+pub(super) struct Ps;
+
+impl Flavor for Ps {
+    const ESCAPE: char = '`';
+
+    fn read(cmd: &str) -> Cow<'_, str> {
+        lowered(cmd)
+    }
+
+    fn keywords(_: &str) -> (usize, usize) {
+        (0, 0)
+    }
+
+    fn text(seg: &str) -> String {
+        seg.to_owned()
+    }
+}
 
 /// Holds a simple command of a line, as a byte range of it.
 pub(super) struct Span {
@@ -43,24 +98,18 @@ fn compound_keywords(seg: &str) -> (usize, usize) {
 
 /// Returns the byte ranges of the simple commands of `cmd` outside quotes, each with whether it
 /// reads a pipe. Ranges rather than strings, so a segment can be replaced in place.
-pub(super) fn spans(cmd: &str, ps: bool) -> Vec<Span> {
+pub(super) fn spans<F: Flavor>(cmd: &str) -> Vec<Span> {
     /// Ends the segment `start..end` and begins the next one at `next`. `opens` is what the
     /// segment opens, so it counts as captured, and `depth` the nesting when it began.
-    fn cut(
+    fn cut<F: Flavor>(
         out: &mut Vec<Span>,
         (start, end): (&mut usize, &mut usize),
         piped: bool,
         next: usize,
         (stack, depth): (&mut Vec<Open>, &mut usize),
         text: &str,
-        ps: bool,
     ) {
-        // PowerShell closes its blocks with `}` alone, which is not tracked.
-        let (opens, closes) = if ps {
-            (0, 0)
-        } else {
-            compound_keywords(&text[*start..*end])
-        };
+        let (opens, closes) = F::keywords(&text[*start..*end]);
         out.push(Span {
             start: *start,
             end: *end,
@@ -90,8 +139,7 @@ pub(super) fn spans(cmd: &str, ps: bool) -> Vec<Span> {
         let after = at + c.len_utf8();
         match (quote, c) {
             // Inside double quotes an escaped quote does not end the string.
-            (Some('"'), '\\') if !ps => end = escaped_end(&mut chars, after),
-            (Some('"'), '`') if ps => end = escaped_end(&mut chars, after),
+            (Some('"'), e) if e == F::ESCAPE => end = escaped_end(&mut chars, after),
             (Some(q), _) => {
                 if c == q {
                     quote = None;
@@ -103,8 +151,7 @@ pub(super) fn spans(cmd: &str, ps: bool) -> Vec<Span> {
                 end = after;
             }
             // Backslash is a path separator in PowerShell, whose escape is the backtick.
-            (None, '\\') if !ps => end = escaped_end(&mut chars, after),
-            (None, '`') if ps => end = escaped_end(&mut chars, after),
+            (None, e) if e == F::ESCAPE => end = escaped_end(&mut chars, after),
             (None, '&')
                 if cmd[start..end].ends_with('>') || chars.peek().map(|p| p.1) == Some('>') =>
             {
@@ -112,7 +159,7 @@ pub(super) fn spans(cmd: &str, ps: bool) -> Vec<Span> {
             }
             (None, '|') if chars.peek().map(|p| p.1) != Some('|') => {
                 let st = (&mut stack, &mut depth);
-                cut(&mut out, (&mut start, &mut end), piped, after, st, cmd, ps);
+                cut::<F>(&mut out, (&mut start, &mut end), piped, after, st, cmd);
                 piped = true;
             }
             (None, ';' | '\n' | '(' | ')' | '`' | '&' | '|') => {
@@ -122,7 +169,7 @@ pub(super) fn spans(cmd: &str, ps: bool) -> Vec<Span> {
                     after
                 };
                 let st = (&mut stack, &mut depth);
-                cut(&mut out, (&mut start, &mut end), piped, next, st, cmd, ps);
+                cut::<F>(&mut out, (&mut start, &mut end), piped, next, st, cmd);
                 piped = false;
                 // The nesting changes after the segment it cuts. A `)` that closes no `(` ends a
                 // `case` pattern.
@@ -131,10 +178,10 @@ pub(super) fn spans(cmd: &str, ps: bool) -> Vec<Span> {
                     ')' if stack.last() == Some(&Open::Paren) => {
                         stack.pop();
                     }
-                    '`' if !ps && stack.last() == Some(&Open::Backtick) => {
+                    '`' if stack.last() == Some(&Open::Backtick) => {
                         stack.pop();
                     }
-                    '`' if !ps => stack.push(Open::Backtick),
+                    '`' => stack.push(Open::Backtick),
                     _ => {}
                 }
                 depth = stack.len();
@@ -143,15 +190,7 @@ pub(super) fn spans(cmd: &str, ps: bool) -> Vec<Span> {
         }
     }
     let st = (&mut stack, &mut depth);
-    cut(
-        &mut out,
-        (&mut start, &mut end),
-        piped,
-        cmd.len(),
-        st,
-        cmd,
-        ps,
-    );
+    cut::<F>(&mut out, (&mut start, &mut end), piped, cmd.len(), st, cmd);
     out
 }
 
@@ -162,19 +201,15 @@ pub(super) fn gates_at(text: &str, end: usize) -> bool {
 }
 
 /// Returns the segments of `cmd`, and the heredocs it opens.
-pub(super) fn parse(cmd: &str, ps: bool) -> Parsed {
-    let low = if ps {
-        cmd.to_lowercase()
-    } else {
-        cmd.to_owned()
-    };
+pub(super) fn parse<F: Flavor>(cmd: &str) -> Parsed {
+    let low = F::read(cmd);
     let (rest, docs) = strip_heredocs(&low);
-    let shown = ps.then(|| strip_heredocs(cmd).0);
-    let segs = segments(&rest, shown.as_deref().unwrap_or(&rest), ps);
+    let shown = (*low != *cmd).then(|| strip_heredocs(cmd).0);
+    let segs = segments::<F>(&rest, shown.as_deref().unwrap_or(&rest));
     let docs = docs
         .into_iter()
         .map(|(opener, body)| Doc {
-            openers: segments(&opener, &opener, ps)
+            openers: segments::<F>(&opener, &opener)
                 .into_iter()
                 .map(|s| s.low)
                 .collect(),
@@ -187,10 +222,10 @@ pub(super) fn parse(cmd: &str, ps: bool) -> Parsed {
 /// Returns the segments of `low` (what the rules read), each paired with its text in `orig`, the
 /// same line in its original case. If `orig` splits into a different number of segments, `low`
 /// stands in for it.
-fn segments(low: &str, orig: &str, ps: bool) -> Vec<Segment> {
-    let lows = spans(low, ps);
+fn segments<F: Flavor>(low: &str, orig: &str) -> Vec<Segment> {
+    let lows = spans::<F>(low);
     let origs = (orig != low)
-        .then(|| spans(orig, ps))
+        .then(|| spans::<F>(orig))
         .filter(|o| o.len() == lows.len());
     lows.iter()
         .enumerate()
@@ -205,9 +240,11 @@ fn segments(low: &str, orig: &str, ps: bool) -> Vec<Segment> {
             } else {
                 Out::Agent
             };
-            let mut seg = Segment {
-                low: quote_escaped_spaces(text),
-                orig: text.to_owned(),
+            let low_text = F::text(text);
+            let shown = origs.as_ref().map_or(text, |o| &orig[o[i].start..o[i].end]);
+            Segment {
+                orig: distinct(&low_text, shown),
+                low: low_text,
                 range: 0..0,
                 lead: 0,
                 stdin: sp.piped,
@@ -216,15 +253,7 @@ fn segments(low: &str, orig: &str, ps: bool) -> Vec<Segment> {
                 gates: gates_at(low, b),
                 assigns: 0,
                 heredoc: false,
-            };
-            if ps {
-                seg.low = low[a..b].to_owned();
             }
-            seg.orig = origs
-                .as_ref()
-                .map_or(&low[a..b], |o| &orig[o[i].start..o[i].end])
-                .to_owned();
-            seg
         })
         .collect()
 }

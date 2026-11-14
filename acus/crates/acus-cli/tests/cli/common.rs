@@ -10,12 +10,40 @@ pub fn snapshot_settings() -> insta::Settings {
     settings
 }
 
-/// The binary with any user config hidden.
+/// The binary with any user config hidden and the guard log kept out of the user's state directory.
+/// Each call is its own Claude Code session, so `ctx` repeat counts never carry between tests.
 pub fn bin() -> Command {
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let session = format!(
+        "test-{}-{}",
+        std::process::id(),
+        CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let state = concat!(env!("CARGO_TARGET_TMPDIR"), "/state");
     let mut c = Command::new(env!("CARGO_BIN_EXE_acus"));
     c.env("ACUS_CONFIG", "/nonexistent/acus.toml")
+        .env("XDG_STATE_HOME", state)
+        .env("LOCALAPPDATA", state)
+        .env("CLAUDE_CODE_SESSION_ID", session)
         .env_remove("ACUS_DISABLE");
     c
+}
+
+/// Points `capsa_core::paths::state_dir` at `root`. It reads `XDG_STATE_HOME` on Unix and
+/// `LOCALAPPDATA` on Windows, so both are set and each platform reads its own.
+pub fn state_root_env(root: &str) -> [(&'static str, &str); 2] {
+    [("XDG_STATE_HOME", root), ("LOCALAPPDATA", root)]
+}
+
+/// Returns the directory of `tool`'s state under the state root `root`, laid out as
+/// `capsa_core::paths::state_dir` lays it out: `<root>/<tool>` on Unix, `<root>/<tool>/state` on
+/// Windows.
+pub fn tool_state_dir(root: &std::path::Path, tool: &str) -> std::path::PathBuf {
+    if cfg!(windows) {
+        root.join(tool).join("state")
+    } else {
+        root.join(tool)
+    }
 }
 
 pub fn acus(args: &[&str]) -> (i32, String, String) {

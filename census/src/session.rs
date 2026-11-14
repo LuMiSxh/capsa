@@ -54,6 +54,8 @@ impl Serialize for Picked {
 pub struct Resolved {
     pub id: String,
     pub transcript: PathBuf,
+    /// The directory the transcript recorded, read while the session was chosen.
+    pub cwd: Option<String>,
     pub picked: Picked,
 }
 
@@ -126,6 +128,7 @@ fn by_id(roots: &[PathBuf], id: &str, picked: Picked) -> Result<Resolved, Sessio
         .find(|p| p.file_stem().is_some_and(|stem| stem == id))
         .map(|transcript| Resolved {
             id: id.to_owned(),
+            cwd: transcript::cwd_of(&transcript),
             transcript,
             picked,
         })
@@ -141,12 +144,16 @@ fn recent(roots: &[PathBuf], cwd: &Path) -> Result<Resolved, SessionError> {
     files
         .into_iter()
         .map(|(_, transcript)| transcript)
-        .find(|p| transcript::cwd_of(p).is_some_and(|c| related(cwd, Path::new(&c))))
-        .and_then(|transcript| {
+        .find_map(|transcript| {
+            let recorded = transcript::cwd_of(&transcript)?;
+            related(cwd, Path::new(&recorded)).then_some((transcript, recorded))
+        })
+        .and_then(|(transcript, recorded)| {
             let id = transcript.file_stem()?.to_string_lossy().into_owned();
             Some(Resolved {
                 id,
                 transcript,
+                cwd: Some(recorded),
                 picked: Picked::Recent,
             })
         })
@@ -213,12 +220,27 @@ pub struct Summary {
 /// # Errors
 /// Fails when the main transcript cannot be read.
 pub fn summarize(main: &Path, config: &Config) -> std::io::Result<Summary> {
+    summarize_with_cwd(main, transcript::cwd_of(main), config)
+}
+
+/// Like `summarize`, for a caller that already read the directory `main` recorded.
+///
+/// # Errors
+/// Fails when the main transcript cannot be read.
+pub fn summarize_with_cwd(
+    main: &Path,
+    cwd: Option<String>,
+    config: &Config,
+) -> std::io::Result<Summary> {
     let main_scan = Scan::of(&std::fs::read_to_string(main)?);
     let subagents: Vec<(String, Scan)> = subagent_files(main)
         .into_iter()
         .filter_map(|p| {
             let scan = Scan::of(&std::fs::read_to_string(p).ok()?);
-            let role = scan.role.clone().unwrap_or_else(|| "unknown".to_owned());
+            let role = scan
+                .role
+                .clone()
+                .unwrap_or_else(|| crate::UNKNOWN.to_owned());
             Some((role, scan))
         })
         .collect();
@@ -248,7 +270,7 @@ pub fn summarize(main: &Path, config: &Config) -> std::io::Result<Summary> {
     }
     let last_request = main_scan.requests.last();
     Ok(Summary {
-        cwd: transcript::cwd_of(main),
+        cwd,
         model: last_request.map(|(model, _)| model.clone()),
         duration_s,
         requests,
@@ -310,12 +332,7 @@ impl Scan {
     }
 
     fn note_time(&mut self, record: &Record) {
-        let Some(ms) = record
-            .timestamp
-            .as_deref()
-            .map(parse_ts)
-            .filter(|ms| *ms > 0)
-        else {
+        let Some(ms) = record.timestamp.and_then(parse_ts).filter(|ms| *ms > 0) else {
             return;
         };
         self.first_ms = Some(self.first_ms.map_or(ms, |first| first.min(ms)));
@@ -324,6 +341,5 @@ impl Scan {
 }
 
 fn is_compaction(record: &Record) -> bool {
-    record.kind.as_deref() == Some("system")
-        && record.subtype.as_deref() == Some("compact_boundary")
+    record.kind == Some("system") && record.subtype == Some("compact_boundary")
 }

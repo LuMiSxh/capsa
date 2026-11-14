@@ -4,7 +4,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -128,13 +128,13 @@ pub struct Reply {
 /// Sends one request with `method` for `path` to the service on `port`, and reads the whole reply.
 ///
 /// # Errors
-/// Fails when the connection, a write or a read does not finish within `timeout`, or when the
-/// reply is not HTTP/1.x.
+/// Fails when the whole request, connection to final read included, does not finish within
+/// `timeout`, or when the reply is not HTTP/1.x.
 pub fn request(port: u16, method: &str, path: &str, timeout: Duration) -> io::Result<Reply> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let mut stream = TcpStream::connect_timeout(&addr, timeout)?;
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
+    let deadline = Instant::now() + timeout;
+    let mut stream = TcpStream::connect_timeout(&addr, remaining(deadline)?)?;
+    stream.set_write_timeout(Some(remaining(deadline)?))?;
     write!(
         stream,
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
@@ -145,12 +145,27 @@ pub fn request(port: u16, method: &str, path: &str, timeout: Duration) -> io::Re
         if let Some(reply) = parse(&raw, false)? {
             return Ok(reply);
         }
+        // Each read gets only what is left of the budget, so a reply that trickles in cannot
+        // stretch the call past the deadline.
+        stream.set_read_timeout(Some(remaining(deadline)?))?;
         let read = stream.read(&mut chunk)?;
         if read == 0 {
             return parse(&raw, true)?.ok_or_else(|| invalid("the reply ended early"));
         }
         raw.extend_from_slice(&chunk[..read]);
     }
+}
+
+/// Returns the time left until `deadline`, or a timeout error once it has passed.
+fn remaining(deadline: Instant) -> io::Result<Duration> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "the request timed out",
+        ));
+    }
+    Ok(left)
 }
 
 /// Parses the reply in `raw`. Returns `None` while the reply is incomplete, unless `eof` says the
@@ -223,5 +238,47 @@ pub fn relative(at: u64) -> String {
         format!("{span} ago")
     } else {
         format!("in {span}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use super::{STATUS, request};
+
+    #[test]
+    fn a_reply_that_dribbles_out_times_out_at_the_total_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut head = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => return,
+                        Ok(read) => head.extend_from_slice(&chunk[..read]),
+                    }
+                }
+                for byte in b"HTTP/1.1 200 reply\r\n\r\n" {
+                    if stream.write_all(&[*byte]).is_err() {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(20));
+                }
+            }
+        });
+        let started = Instant::now();
+        let reply = request(port, "GET", STATUS, Duration::from_millis(50));
+        let elapsed = started.elapsed();
+        assert!(reply.is_err(), "a dribbling reply must time out");
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "request took {elapsed:?}"
+        );
     }
 }

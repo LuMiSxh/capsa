@@ -6,29 +6,30 @@ use super::*;
 impl Folds {
     /// Handles the parent's own update. When it is terminal, the pending log
     /// is returned and must be sent before the forwarded update.
-    pub fn parent_update(
+    pub fn parent_update<'a>(
         &mut self,
         parent: &str,
-        update: &Value,
+        update: impl Into<UpdateView<'a>>,
         terminal: bool,
         now: Instant,
     ) -> Option<Value> {
+        let update = update.into();
         let entry = self.entries.get_mut(parent)?;
         entry.note_title(update);
         let flushed = if terminal { entry.take_emit(now) } else { None };
         if terminal && entry.is_running_background() {
             entry.done = Some(Done {
-                failed: str_field(update, "status") == Some("failed"),
+                failed: update.status == Some("failed"),
                 by: None,
             });
             entry.finished_at = Some(now);
         }
-        if let Some(base) = base_of(update) {
-            entry.base = base;
+        if let Some(base) = update.content_items() {
+            entry.base.clone_from(base);
             // The forwarded update replaces the card content; restore the log.
             entry.dirty = !entry.lines.is_empty();
         }
-        if entry.background && update.get("title").is_some() {
+        if entry.background && update.has_title_key() {
             // The forwarded update replaced the card title; restore ours.
             entry.dirty = true;
         }
@@ -54,22 +55,23 @@ impl Folds {
     /// the card's, unless the throttle holds it back until `tick`, and, when
     /// activity reopens a card whose entry was already sent, the entry's
     /// `resumed` update.
-    pub fn child_update(
+    pub fn child_update<'a>(
         &mut self,
         session: &str,
         root: &str,
-        update: &Value,
+        update: impl Into<UpdateView<'a>>,
         now: Instant,
     ) -> Vec<Value> {
-        if str_field(update, "toolCallId") == Some(root) {
+        let update = update.into();
+        if update.tool_call_id == Some(root) {
             // The adapter's own progress tick for the card, tagged with the
             // card as its parent. It is not a child: tracking it as a tool
             // call would leave the card "working" forever (nothing ever ends
             // it with a parent tag), so no notification could finish it.
             return Vec::new();
         }
-        if str_field(update, "sessionUpdate") == Some("tool_call")
-            && let Some(id) = str_field(update, "toolCallId")
+        if update.session_update == Some("tool_call")
+            && let Some(id) = update.tool_call_id
         {
             self.child_root.insert(id.to_owned(), root.to_owned());
         }

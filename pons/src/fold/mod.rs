@@ -21,6 +21,9 @@ mod render;
 mod retire;
 #[cfg(test)]
 mod tests;
+mod view;
+
+pub use view::UpdateView;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -324,8 +327,9 @@ impl Folds {
     }
 
     /// Remembers the parent's own `tool_call` so its content stays above the log.
-    pub fn register_parent(&mut self, session: &str, update: &Value) {
-        let Some(id) = str_field(update, "toolCallId") else {
+    pub fn register_parent<'a>(&mut self, session: &str, update: impl Into<UpdateView<'a>>) {
+        let update = update.into();
+        let Some(id) = update.tool_call_id else {
             return;
         };
         let entry = self
@@ -333,52 +337,17 @@ impl Folds {
             .entry(id.to_owned())
             .or_insert_with(|| FoldEntry::new(session, id));
         entry.note_title(update);
-        if let Some(base) = base_of(update) {
-            entry.base = base;
+        if let Some(base) = update.content_items() {
+            entry.base.clone_from(base);
         }
     }
 
     /// Keeps the parent's `rawInput` once it is known, for the roster label.
-    pub fn note_input(&mut self, parent: &str, update: &Value) {
+    pub fn note_input<'a>(&mut self, parent: &str, update: impl Into<UpdateView<'a>>) {
         if let Some(entry) = self.entries.get_mut(parent) {
-            entry.note_input(update);
+            entry.note_input(update.into());
         }
     }
-}
-
-fn base_of(update: &Value) -> Option<Vec<Value>> {
-    update.get("content")?.as_array().cloned()
-}
-
-fn str_field<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
-    v.get(key)?.as_str()
-}
-
-fn tool_name(update: &Value) -> Option<&str> {
-    update.pointer("/_meta/claudeCode/toolName")?.as_str()
-}
-
-/// Tells whether a tool call is `Monitor`, by its tool name, else by its name or title.
-fn is_monitor(update: &Value) -> bool {
-    tool_name(update)
-        .or_else(|| str_field(update, "name"))
-        .or_else(|| str_field(update, "title"))
-        == Some("Monitor")
-}
-
-/// Reads the timeout of a `Monitor` call from its `rawInput`, in milliseconds or seconds.
-// ponytail: the field names are not checked against a captured Monitor call; `timeout_ms`
-// is the one expected, and the others are accepted in case the input names it differently.
-// To confirm, run a Monitor call with `--log` and compare its `rawInput` in the wire log.
-fn monitor_timeout(update: &Value) -> Option<Duration> {
-    let input = update.get("rawInput")?;
-    let ms = |key: &str| input.get(key)?.as_u64().map(Duration::from_millis);
-    let secs = |key: &str| input.get(key)?.as_u64().map(Duration::from_secs);
-    ms("timeout_ms")
-        .or_else(|| ms("timeout"))
-        .or_else(|| secs("timeout_seconds"))
-        .or_else(|| secs("timeoutSeconds"))
-        .map(|t| t.min(MONITOR_MAX))
 }
 
 /// Formats elapsed seconds as `45s`, `3m 05s` or `1h 02m`.

@@ -41,7 +41,7 @@ enum Step {
 /// Rewrites every segment the guard would refuse, when each has an exact acus replacement;
 /// returns `None` (refuse as usual) if any segment has none. A rewritten build is `deferred`: the
 /// permission flow decides on it, as it does for a build the agent runs itself.
-#[cfg(test)]
+#[cfg(all(test, any(feature = "bash", feature = "zsh", feature = "powershell")))]
 pub(super) fn rewrite(cmd: &str, scope: Option<&Scope>) -> Option<Rewrite> {
     rewrite_parsed(cmd, &parse(cmd, Dialect::Bash)?, scope)
 }
@@ -62,7 +62,7 @@ pub(super) fn rewrite_parsed(cmd: &str, p: &Parsed, scope: Option<&Scope>) -> Op
     // The replacement stands for the whole line, so nothing may sit outside the segment (a
     // comment, `&`). It must parse and pass the guard like `fold_all` results, or fall through.
     if let Some(command) = sed_patch::fold(segs, 0, scope)
-        .filter(|_| cmd.trim() == segs[0].orig.trim())
+        .filter(|_| cmd.trim() == segs[0].orig().trim())
         .filter(|c| accepted(c, scope))
     {
         return Some(Rewrite {

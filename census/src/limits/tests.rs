@@ -98,6 +98,44 @@ fn k_is_the_median_of_the_points_and_spread_their_interquartile_range() {
     assert!((spread - 2.0 / 3.0).abs() < 1e-9);
 }
 
+/// A snapshot at `t` whose window is the two hours before it, with a request of $1 in that window.
+fn point(t: u64, used: f64) -> (Snapshot, Row) {
+    (
+        snap(Window::FiveHour, t, used, t + 3 * HOUR_S),
+        request(t - 60, 1.0),
+    )
+}
+
+#[test]
+fn calibration_widens_to_ninety_days_while_recent_points_are_few() {
+    let now = BASE + 100 * DAY_S;
+    let mut snaps = vec![];
+    let mut rows = vec![];
+    for (s, r) in [point(now - 600, 10.0)]
+        .into_iter()
+        .chain((0..3).map(|i| point(now - 60 * DAY_S + i * 3 * HOUR_S, 10.0)))
+    {
+        snaps.push(s);
+        rows.push(r);
+    }
+    let costs = Costed::new(&rows, &[]);
+    let cal = calibrate(Window::FiveHour, &snaps, &costs, now).expect("four points in 90 days");
+    assert_eq!(cal.points, 4);
+    assert!(cal.spread.is_some());
+}
+
+#[test]
+fn calibration_keeps_the_thirty_day_points_when_four_are_recent() {
+    let now = BASE + 100 * DAY_S;
+    let recent = (0..4).map(|i| point(now - (i + 1) * 3 * HOUR_S, 10.0 * (i + 1) as f64));
+    let old = (0..2).map(|i| point(now - 60 * DAY_S + i * 3 * HOUR_S, 1000.0));
+    let (snaps, rows): (Vec<Snapshot>, Vec<Row>) = recent.chain(old).unzip();
+    let costs = Costed::new(&rows, &[]);
+    let cal = calibrate(Window::FiveHour, &snaps, &costs, now).expect("four recent points");
+    assert_eq!(cal.points, 4);
+    assert!((cal.k - 25.0).abs() < 1e-9);
+}
+
 #[test]
 fn a_window_without_cost_or_share_has_no_calibration() {
     let priced = Costed::new(&[request(BASE + 1, 1.0)], &[]);

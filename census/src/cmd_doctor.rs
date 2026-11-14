@@ -5,54 +5,78 @@
 use crate::cmd_self::SKILL;
 use crate::out::Out;
 use anyhow::{Context, Result};
-use capsa_core::claude_settings::runs;
+use capsa_core::config::legacy_json;
+#[cfg(feature = "cmd-update")]
+use capsa_core::doctor::update_check;
+use capsa_core::doctor::{
+    Sibling, check, dir_check, emit_report, interop_group, log_checks, ok, path_check,
+    repair_hooks, repair_skill,
+};
 use capsa_core::exit::Outcome;
-use capsa_core::hooks::{Agent, HookFile};
-use capsa_core::log;
-use capsa_core::render::{Check, Doctor, Group, Status, emit};
-use capsa_core::skill::{self, SkillState, Target};
+use capsa_core::hint::ResultExt;
+use capsa_core::hooks::{Agent, HookFile, StatusLineState};
+use capsa_core::log::{self, Level};
+use capsa_core::render::{Check, Doctor, Group, Status};
+use capsa_core::skill::{self, SkillState, Target, installed_target};
+#[cfg(feature = "cmd-update")]
+use capsa_core::update;
 use census::config::Config;
 use census::hook::{self, ErrorLine};
-use serde_json::Value;
-use std::borrow::Cow;
+use census::usage::{PRICE_LOG, PRICE_LOG_LIMIT};
 use std::path::Path;
 
-use crate::setup::{HOOKS, TOOL};
+use crate::setup::{HOOKS, STATUS_LINE, TOOL};
 
-pub fn run(out: &Out) -> Result<Outcome> {
+#[derive(clap::Args)]
+pub struct Args {
+    /// Repairs what is safe to repair first: updates an outdated skill, and adds census's
+    /// statusLine and hooks where they are missing or outdated. Deletions, config values and a
+    /// statusLine that census does not own keep their hints.
+    #[arg(long)]
+    pub fix: bool,
+}
+
+pub fn run(out: &Out, fix: bool) -> Result<Outcome> {
     let home = std::env::home_dir().context("no home directory")?;
     let settings = Agent::ClaudeCode.path();
+    let fixed = fix.then(|| repair(&home, &settings)).transpose()?;
     let groups = vec![
         install_group(),
         config_group(),
         skill_group(&home, &settings),
         hooks_group(&settings),
         state_group(),
+        interop_group(&SIBLINGS),
     ];
-    emit(
+    emit_report(
         &Doctor::new(TOOL, env!("CARGO_PKG_VERSION"), groups),
+        fixed,
         out.format,
     )
 }
 
-fn check(
-    name: impl Into<Cow<'static, str>>,
-    status: Status,
-    detail: impl Into<String>,
-    hint: Option<&str>,
-) -> Check {
-    Check {
-        name: name.into(),
-        status,
-        detail: detail.into(),
-        hint: hint.map(str::to_owned),
-    }
-}
+const SIBLINGS: [Sibling<'static>; 3] = [
+    Sibling {
+        tool: "acus",
+        feature: "guard log for `census usage --guard`, guard blocks in the status line",
+        bulletin: Some("acus"),
+    },
+    Sibling {
+        tool: "vicarius",
+        feature: "DeepSeek segment in the status line",
+        bulletin: Some("vicarius"),
+    },
+    Sibling {
+        tool: "pons",
+        feature: "rate-limit snapshots for `census limits`",
+        bulletin: None,
+    },
+];
 
 fn install_group() -> Group {
     let exe = std::env::current_exe().ok();
     let binary = match &exe {
-        Some(exe) => check("binary", Status::Ok, exe.display().to_string(), None),
+        Some(exe) => ok("binary", exe.display().to_string()),
         None => check(
             "binary",
             Status::Warn,
@@ -60,52 +84,39 @@ fn install_group() -> Group {
             None,
         ),
     };
-    let on_path = match (capsa_core::which::find(TOOL), &exe) {
-        (Some(on_path), Some(exe)) if !same_file(&on_path, exe) => check(
-            "PATH",
-            Status::Warn,
-            format!("census on PATH is {}", on_path.display()),
-            Some("the hooks run the census on PATH; remove the other copy or update it"),
-        ),
-        (Some(on_path), _) => check("PATH", Status::Ok, on_path.display().to_string(), None),
-        (None, _) => check(
-            "PATH",
-            Status::Warn,
-            "census is not on PATH",
-            Some("the hooks run bare `census`; add the directory of this binary to PATH"),
-        ),
-    };
+    let on_path = path_check(
+        TOOL,
+        capsa_core::which::find(TOOL).as_deref(),
+        exe.as_deref(),
+    );
+    #[cfg_attr(
+        not(feature = "cmd-update"),
+        expect(unused_mut, reason = "the update check is pushed only with cmd-update")
+    )]
+    let mut checks = vec![
+        ok("version", format!("census {}", env!("CARGO_PKG_VERSION"))),
+        binary,
+        on_path,
+    ];
+    #[cfg(feature = "cmd-update")]
+    checks.push(update_check(
+        &crate::cmd_self::TOOL,
+        &update::check(&crate::cmd_self::TOOL),
+    ));
     Group {
         name: "install",
-        checks: vec![
-            check(
-                "version",
-                Status::Ok,
-                format!("census {}", env!("CARGO_PKG_VERSION")),
-                None,
-            ),
-            binary,
-            on_path,
-        ],
+        checks,
     }
 }
 
-fn same_file(a: &Path, b: &Path) -> bool {
-    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_owned());
-    canon(a) == canon(b)
-}
-
 fn config_group() -> Group {
-    let path = Config::path();
-    let file = match Config::load_from(&path) {
-        Ok(_) if path.exists() => {
-            check("config file", Status::Ok, path.display().to_string(), None)
-        }
-        Ok(_) => check(
+    let file = Config::file();
+    let path = file.path().display().to_string();
+    let mut checks = vec![match file.load::<Config>() {
+        Ok(_) if file.path().exists() => ok("config file", path.as_str()),
+        Ok(_) => ok(
             "config file",
-            Status::Ok,
-            format!("{} (not created; defaults apply)", path.display()),
-            None,
+            format!("{path} (not created; defaults apply)"),
         ),
         Err(e) => check(
             "config file",
@@ -113,10 +124,20 @@ fn config_group() -> Group {
             e.to_string(),
             Some("fix or delete the config file; the message names the file"),
         ),
-    };
+    }];
+    if let Some(legacy) = legacy_json(TOOL) {
+        let hint =
+            format!("set the settings again in {path} with `census self config set <key> <value>`");
+        checks.push(check(
+            "legacy config",
+            Status::Warn,
+            format!("{} is no longer read", legacy.display()),
+            Some(hint.as_str()),
+        ));
+    }
     Group {
         name: "config",
-        checks: vec![file],
+        checks,
     }
 }
 
@@ -184,13 +205,8 @@ fn hooks_group(settings: &Path) -> Group {
             };
         }
     };
-    let command = file
-        .value()
-        .get("statusLine")
-        .and_then(|line| line.get("command"))
-        .and_then(Value::as_str);
-    let mut checks = vec![match command {
-        Some(c) if runs(c, TOOL, "statusline") => {
+    let mut checks = vec![match file.status_line(&STATUS_LINE) {
+        StatusLineState::Installed | StatusLineState::Outdated { .. } => {
             check("statusLine", Status::Ok, "census statusline", None)
         }
         _ => check(
@@ -212,66 +228,90 @@ fn hooks_group(settings: &Path) -> Group {
 }
 
 fn state_group() -> Group {
+    let mut checks = vec![dir_check(
+        "state dir",
+        &capsa_core::paths::state_dir(TOOL),
+        "fix the permissions on the state directory",
+    )];
+    match hook::error_log() {
+        Some(file) => {
+            checks.extend(log_checks("hook", &file, hook::LOG_LIMIT));
+            checks.push(hook_error_check(&file));
+        }
+        None => checks.push(check(
+            "hook log",
+            Status::Warn,
+            "no state directory is known",
+            Some("set HOME or XDG_STATE_HOME"),
+        )),
+    }
+    if let Some(file) = capsa_core::paths::log_file(TOOL, PRICE_LOG) {
+        checks.extend(log_checks("prices", &file, PRICE_LOG_LIMIT));
+    }
     Group {
         name: "state",
-        checks: vec![
-            state_dir_check(&capsa_core::paths::state_dir(TOOL)),
-            hook_log_check(&hook::error_log()),
-        ],
+        checks,
     }
-}
-
-/// Whether `dir` takes a file: an existing directory is probed, a missing one is created on first
-/// use and so is not an error.
-fn state_dir_check(dir: &Path) -> Check {
-    if !dir.is_dir() {
-        return check(
-            "state dir",
-            Status::Ok,
-            format!("{} not created yet", dir.display()),
-            None,
-        );
-    }
-    match writable(dir) {
-        Ok(()) => check(
-            "state dir",
-            Status::Ok,
-            format!("{} writable", dir.display()),
-            None,
-        ),
-        Err(e) => check(
-            "state dir",
-            Status::Fail,
-            format!("{} is not writable: {e}", dir.display()),
-            Some("fix the permissions on the state directory"),
-        ),
-    }
-}
-
-fn writable(dir: &Path) -> std::io::Result<()> {
-    let probe = dir.join(format!(".census-doctor-{}", std::process::id()));
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)?;
-    std::fs::remove_file(&probe)
 }
 
 /// Reports the errors the hook has logged, the newest last. Past errors warn; they do not fail.
-fn hook_log_check(file: &Path) -> Check {
-    let entries = log::read::<ErrorLine>(file);
-    let Some(last) = entries.last() else {
-        return check("hook log", Status::Ok, "no errors", None);
+/// Warning lines in the same file are not errors. A line without a level predates the envelope's
+/// level and was always an error.
+fn hook_error_check(file: &Path) -> Check {
+    let entries = match log::read::<ErrorLine>(file) {
+        Ok(entries) => entries,
+        Err(e) => return check("hook errors", Status::Warn, e.to_string(), None),
+    };
+    let errors: Vec<_> = entries
+        .iter()
+        .filter(|e| e.level.is_none_or(|level| level == Level::Error))
+        .collect();
+    let Some(last) = errors.last() else {
+        return ok("hook errors", "no errors");
     };
     check(
-        "hook log",
+        "hook errors",
         Status::Warn,
         format!(
             "{} error(s); last at {}: {}",
-            entries.len(),
+            errors.len(),
             last.ts,
             last.fields.message
         ),
         Some("fix the cause; the hook logs its errors to hook.jsonl in the state directory"),
     )
+}
+
+/// Makes the repairs `--fix` names and returns one check per repair made.
+fn repair(home: &Path, settings: &Path) -> Result<Vec<Check>> {
+    let mut fixed = Vec::new();
+    fixed.extend(repair_skill(home, &SKILL, Target::Claude, "claude skill")?);
+    fixed.extend(repair_settings(home, settings)?);
+    Ok(fixed)
+}
+
+/// Adds census's statusLine when it is missing, and its hooks where they are missing or outdated,
+/// to an existing Claude Code setup. A statusLine that census does not own is left alone, and so
+/// is an outdated one, which the report already passes.
+fn repair_settings(home: &Path, settings: &Path) -> Result<Vec<Check>> {
+    let set_up = matches!(
+        installed_target(home, TOOL),
+        Some(Target::Claude | Target::All)
+    );
+    if !set_up || !settings.exists() {
+        return Ok(Vec::new());
+    }
+    let Ok(mut file) = HookFile::open_at(Agent::ClaudeCode, settings) else {
+        return Ok(Vec::new());
+    };
+    let mut checks = Vec::new();
+    if matches!(file.status_line(&STATUS_LINE), StatusLineState::Missing) {
+        file.set_status_line(&STATUS_LINE);
+        checks.push(ok("statusLine", "census statusline"));
+    }
+    checks.extend(repair_hooks(&mut file, &HOOKS));
+    if !checks.is_empty() {
+        file.write().hinted()?;
+    }
+    Ok(checks)
 }

@@ -2,6 +2,52 @@
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Added
+
+- `vicarius self doctor` gets an `update` line in its install group: ok with `<version> is the
+  latest`, a warning with `vicarius self update` as its fix when a newer release exists, or ok with
+  `could not check for updates` when GitHub does not answer within 3 seconds. The newest release is
+  saved in `latest.json` in vicarius's state directory and reused for a day; `vicarius self update`
+  saves it too. `CAPSA_UPDATE_CHECK=off` skips the lookup and reports the line as unchecked. Only
+  `self doctor` looks, so no hook, serve or proxy start reaches the network. The check and the
+  release lookup live in `capsa-core`.
+- `vicarius` publishes the DeepSeek route to the capsa bulletin as `vicarius.json`: `open` and the
+  last `balance_usd` (USD only), current for twice `balance_refresh_minutes`. It is written after
+  each balance refresh and when a 401 or 402 closes the route, on a blocking thread so no request
+  waits on the disk, which lets census read the route without a socket call. `vicarius self
+  uninstall` removes the file. A failed write is logged as `bulletin.write` in `proxy.jsonl` and
+  otherwise ignored.
+- `vicarius self doctor --fix` rewrites an outdated SessionStart hook, such as
+  `vicarius hook session-start`, to `vicarius hook`, and adds it when it is missing from an agent
+  that was set up. The launchd plist, the settings `env` keys and the service are left to
+  `self setup` and `self start`, each with its hint. A `fixed` section lists the repairs; JSON
+  gets a `fixed` array.
+- `vicarius self doctor` gets an `interop` group, printed last: the `census` line is ok with
+  `installed, active` when census is on `PATH`, since it reads the DeepSeek gate and balance from
+  the vicarius bulletin for its status line, and ok with `not installed, off` without it. The line
+  never fails, so a missing sibling does not change the exit code.
+
+### Changed
+
+- The settings moved from `config.json` to `config.toml` in the vicarius config directory, in
+  TOML through the shared core config module. Nothing is migrated: `vicarius self doctor` warns
+  when `config.json` still exists and names `vicarius self config set` and the new file.
+- `vicarius self doctor` checks `proxy.jsonl`: that it is writable, its size against the 8 MiB
+  rotation limit and the age of its last entry.
+- `vicarius hook` gives the whole status call at most 50 ms, down from 300 ms, so a service
+  that answers slowly in small chunks no longer stretches the wait. A healthy mock endpoint
+  answered in 4.3 ms median over 20 runs (debug build); a hanging one took 58 ms, against up
+  to 300 ms before.
+
+### Fixed
+
+- `config.toml` and the derived agent files are written through a temporary file with a name
+  unique to each write, so two concurrent writers no longer overwrite each other's temporary file.
+- A failing write to `proxy.jsonl` prints one `vicarius: cannot write <file>` line on stderr
+  instead of being dropped silently; proxying continues.
+
 ## [0.2.1]
 
 ### Changed

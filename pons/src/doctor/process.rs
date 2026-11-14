@@ -2,6 +2,7 @@
 //! Lists the running pons processes for `pons self doctor`.
 
 use super::*;
+use capsa_core::update::UpdateCheck;
 
 /// A running pons process.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +30,18 @@ pub trait Sys {
     }
     /// Returns where `manager` puts global binaries.
     fn global_bin_dir(&self, _: pkg::Manager) -> Option<PathBuf> {
+        None
+    }
+    /// Returns the npm registry's `latest` version of `package`, `None` when it does not answer.
+    fn latest_version(&self, _: &str) -> Option<String> {
+        None
+    }
+    /// Returns whether a newer pons release exists.
+    fn update_check(&self) -> UpdateCheck {
+        UpdateCheck::Unknown
+    }
+    /// Returns what `claude --version` prints for the binary at the given path.
+    fn claude_version(&self, _: &Path) -> Option<String> {
         None
     }
 }

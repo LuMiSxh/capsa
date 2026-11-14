@@ -7,6 +7,7 @@ use crate::out::Out;
 use anyhow::Result;
 use capsa_core::census_snapshot::Window;
 use capsa_core::exit::Outcome;
+use capsa_core::hint::ResultExt;
 use capsa_core::render::{Doc, Render, emit};
 use census::config::{Config, Mode};
 use census::limits::{
@@ -19,7 +20,7 @@ use serde::Serialize;
 /// Prints the limit state, or the month summary in budget mode. Exit 1 when the ledger and the
 /// snapshot file hold nothing.
 pub fn run(out: &Out) -> Result<Outcome> {
-    let config = Config::load_from(&Config::path())?;
+    let config = Config::file().load::<Config>().hinted()?;
     refresh_prices(now_secs(), config.prices_refresh_days);
     if config.mode == Mode::Budget {
         return run_budget(&config, out);
@@ -129,7 +130,7 @@ impl Render for BudgetOut<'_> {
 }
 
 fn run_budget(config: &Config, out: &Out) -> Result<Outcome> {
-    let month = limits::month(now_secs(), config.monthly_budget_usd, None)?;
+    let month = limits::month(now_secs(), config.monthly_budget_usd, None, None)?;
     let body = BudgetOut {
         mode: "budget",
         month: &month,

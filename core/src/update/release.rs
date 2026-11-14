@@ -2,6 +2,7 @@
 //! Finds a tool's newest GitHub release and downloads its assets.
 
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -33,7 +34,7 @@ impl Release {
             name: name.to_owned(),
         })?;
         // The API URL returns the bytes only when asked for `application/octet-stream`.
-        send(&url, token, "application/octet-stream")?
+        send(&url, token, "application/octet-stream", None)?
             .body_mut()
             .with_config()
             .limit(MAX_DOWNLOAD)
@@ -81,11 +82,17 @@ fn gh_token() -> Option<String> {
     (out.status.success() && !token.is_empty()).then(|| token.to_owned())
 }
 
-/// Returns the newest release of `tool` that is neither a draft nor a prerelease.
-pub(super) fn newest(tool: &Tool, token: Option<&str>) -> Result<Release, UpdateError> {
+/// Returns the newest release of `tool` that is neither a draft nor a prerelease. With `limit`,
+/// the whole listing must finish within it.
+pub(super) fn newest(
+    tool: &Tool,
+    token: Option<&str>,
+    limit: Option<Duration>,
+) -> Result<Release, UpdateError> {
+    let deadline = limit.map(|limit| Instant::now() + limit);
     for page in 1..=MAX_PAGES {
         let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=100&page={page}");
-        let releases: Vec<Value> = send(&url, token, "application/vnd.github+json")
+        let releases: Vec<Value> = send(&url, token, "application/vnd.github+json", deadline)
             .map_err(|err| listing_error(err, tool))?
             .body_mut()
             .read_json()
@@ -149,14 +156,17 @@ pub(super) fn asset_url(release: &Value, name: &str) -> Option<String> {
     asset["url"].as_str().map(String::from)
 }
 
-/// Sends a GET, with the token as `Authorization` when there is one.
+/// Sends a GET, with the token as `Authorization` when there is one. With `deadline`, the request
+/// gives up at that instant.
 fn send(
     url: &str,
     token: Option<&str>,
     accept: &str,
+    deadline: Option<Instant>,
 ) -> Result<ureq::http::Response<ureq::Body>, UpdateError> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .user_agent(format!("capsa/{}", env!("CARGO_PKG_VERSION")))
+        .timeout_global(deadline.map(|d| d.saturating_duration_since(Instant::now())))
         .build()
         .into();
     let mut request = agent.get(url).header("Accept", accept);

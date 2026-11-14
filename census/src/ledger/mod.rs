@@ -45,6 +45,9 @@ pub struct Opts {
     /// When set, the update stops reading at this time, keeps what it read and reports
     /// [`UpdateReport::partial`]. The next update continues from there.
     pub deadline: Option<Instant>,
+    /// The transcript of the running session. While the last complete sweep is less than a minute
+    /// old, an update reads only this file; without it every update sweeps all transcripts.
+    pub current: Option<PathBuf>,
 }
 
 impl Opts {
@@ -55,6 +58,7 @@ impl Opts {
             now,
             retention_s: RETENTION_DAYS * 86_400,
             deadline: None,
+            current: None,
         }
     }
 
@@ -90,6 +94,8 @@ pub struct UpdateReport {
 pub struct Ledger {
     layout: Layout,
     report: UpdateReport,
+    /// The digest the update just wrote, so the first `priced` call does not read it back.
+    digest: Option<digest::Digest>,
     rows: OnceCell<Vec<Row>>,
     hourly: OnceCell<Vec<Hourly>>,
 }
@@ -103,13 +109,14 @@ impl Ledger {
     pub fn open_and_update(opts: &Opts) -> Result<Ledger, LedgerError> {
         let layout = Layout::new(&opts.state_dir);
         std::fs::create_dir_all(&layout.dir).map_err(state::io_at(&layout.dir))?;
-        let report = match state::try_lock(&layout.lock, LOCK_WAIT)? {
+        let (report, digest) = match state::try_lock(&layout.lock, LOCK_WAIT)? {
             Some(_lock) => update::run(&layout, opts)?,
-            None => UpdateReport::default(),
+            None => (UpdateReport::default(), None),
         };
         Ok(Ledger {
             layout,
             report,
+            digest,
             rows: OnceCell::new(),
             hourly: OnceCell::new(),
         })
@@ -121,6 +128,7 @@ impl Ledger {
         Ledger {
             layout: Layout::new(state_dir),
             report: UpdateReport::default(),
+            digest: None,
             rows: OnceCell::new(),
             hourly: OnceCell::new(),
         }
@@ -169,17 +177,20 @@ impl Ledger {
     /// # Errors
     /// Fails when a ledger file cannot be read.
     pub fn priced(&self) -> Result<Priced, LedgerError> {
+        if let Some(digest) = &self.digest {
+            return Ok(digest.to_priced());
+        }
         if let Some(digest) = digest::read(&self.layout) {
-            return Ok(digest.into_priced());
+            return Ok(digest.to_priced());
         }
         if let Some(_lock) = state::try_lock(&self.layout.lock, LOCK_WAIT)? {
             let digest = digest::build(&self.layout, digest::unix_now())?;
             // A failed save leaves the digest stale, and the next read builds it again.
             let _ = digest::write(&self.layout, &digest);
-            return Ok(digest.into_priced());
+            return Ok(digest.to_priced());
         }
         let _guard = state::lock_shared(&self.layout.lock, LOCK_WAIT);
-        Ok(digest::build(&self.layout, digest::unix_now())?.into_priced())
+        Ok(digest::build(&self.layout, digest::unix_now())?.to_priced())
     }
 
     /// Counts, and unless `dry_run` removes, hourly aggregates and snapshots older than `before`.
@@ -198,6 +209,7 @@ impl Ledger {
             let _ = std::fs::remove_file(&self.layout.digest);
         }
         self.hourly.take();
+        self.digest = None;
         Ok(report)
     }
 }

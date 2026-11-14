@@ -4,7 +4,9 @@ use std::io;
 
 use anyhow::Context;
 
-use super::{Hint, Hinted, ResultExt, find_hint};
+use super::{
+    Hint, Hinted, ResultExt, find_hint, hinted, uninstall_unavailable, update_unavailable,
+};
 
 #[derive(Debug, thiserror::Error)]
 enum LibError {
@@ -68,4 +70,31 @@ fn error_without_hint_yields_none() {
 fn hinted_new_is_found_directly() {
     let err = anyhow::Error::new(Hinted::new("bad", "try again"));
     assert_eq!(find_hint(&err), Some("try again"));
+}
+
+#[test]
+fn hinted_builds_an_error_that_find_hint_reads() {
+    let err = hinted("bad", "try again");
+    assert_eq!(err.to_string(), "bad");
+    assert_eq!(find_hint(&err), Some("try again"));
+}
+
+#[test]
+fn update_unavailable_gives_the_install_command_for_the_package() {
+    let err = update_unavailable("census", "census");
+    assert_eq!(err.to_string(), "census was built without `cmd-update`");
+    assert_eq!(
+        find_hint(&err),
+        Some("cargo install --path census --features cmd-update, or rerun the installer")
+    );
+}
+
+#[test]
+fn uninstall_unavailable_asks_for_manual_removal() {
+    let err = uninstall_unavailable("vicarius");
+    assert_eq!(err.to_string(), "vicarius was built without `cmd-update`");
+    assert_eq!(
+        find_hint(&err),
+        Some("remove the binary by hand, or rebuild with --features cmd-update")
+    );
 }

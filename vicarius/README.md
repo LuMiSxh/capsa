@@ -54,7 +54,7 @@ Output is agent text by default. `--human` adds colour on a terminal, `--json` p
 
 ## Settings
 
-`vicarius self config` reads `config.json` in the vicarius config directory. `vicarius self config set <key> <value>` changes one setting:
+`vicarius self config` reads `config.toml` in the vicarius config directory. `vicarius self config set <key> <value>` changes one setting:
 
 | Key               | Default  | What it does                                                                                                   |
 | ----------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
@@ -63,7 +63,7 @@ Output is agent text by default. `--human` adds colour on a terminal, `--json` p
 | `balance-refresh` | `10`     | Minutes between two balance checks                                                                             |
 | `max-context`     | `400000` | Context window in tokens that Claude Code assumes for the DeepSeek models, as `CLAUDE_CODE_MAX_CONTEXT_TOKENS` |
 
-`vicarius self config agent add <from> --model <id> [--effort keep|low|high|max]` adds a `<from>-ds` variant of `~/.claude/agents/<from>.md`. Effort defaults to `keep`, preserving the source agent's setting; an explicit value overrides it. `agent remove <from>` removes the entry. `agent suspend <from>` (or `--all`) keeps the entry but withdraws its `-ds` file; `agent activate` restores it. An agent change saves `config.json` and syncs the derived files at once; when the service is not running, the output says the files are written when it starts. `add` warns, but does not refuse, a model id outside `deepseek-flash` and `deepseek-v4-pro`. The default is one agent, `senior-worker` on `deepseek-flash`, which gives `senior-worker-ds`.
+`vicarius self config agent add <from> --model <id> [--effort keep|low|high|max]` adds a `<from>-ds` variant of `~/.claude/agents/<from>.md`. Effort defaults to `keep`, preserving the source agent's setting; an explicit value overrides it. `agent remove <from>` removes the entry. `agent suspend <from>` (or `--all`) keeps the entry but withdraws its `-ds` file; `agent activate` restores it. An agent change saves `config.toml` and syncs the derived files at once; when the service is not running, the output says the files are written when it starts. `add` warns, but does not refuse, a model id outside `deepseek-flash` and `deepseek-v4-pro`. The default is one agent, `senior-worker` on `deepseek-flash`, which gives `senior-worker-ds`.
 
 ## Subagents
 

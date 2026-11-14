@@ -7,6 +7,7 @@ mod bench;
 mod cancel;
 mod cancel_hold;
 mod capability;
+mod capability_bytes;
 mod cards;
 mod entry_order;
 mod failsafe;

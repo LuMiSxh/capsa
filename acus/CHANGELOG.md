@@ -2,6 +2,97 @@
 
 ## [Unreleased]
 
+## [0.23.0]
+
+### Added
+
+- `acus self doctor` gets an `update` line: ok with `<version> is the latest`, a warning with
+  `acus self update` as its fix when a newer release exists, or ok with `could not check for
+  updates` when GitHub does not answer within 3 seconds. The newest release is saved in
+  `latest.json` in acus's state directory and reused for a day; `acus self update` saves it too.
+  `CAPSA_UPDATE_CHECK=off` skips the lookup and reports the line as unchecked. Only `self doctor`
+  looks, so no hook, guard or proxy start reaches the network. The check and the release lookup
+  live in `capsa-core`.
+- `acus` publishes the guard blocks of each session in the capsa bulletin, `acus.json` with
+  `guard_blocks`: the count per session id for the 16 latest sessions, current for a day. A block
+  adds one to its session's count and rewrites the bulletin after the reply is printed. A
+  SessionStart registers its session with its count, or 0; a compaction or `/clear` keeps the
+  count. An allowed call writes nothing. The per-session state is the `blocks` line of the hint
+  state file, `guard-hints/SESSION`. Benchmark (`hyperfine -N -w 5 -r 50`, release, p50 / p95): a
+  block decision 2.16 / 2.42 ms before and 2.34 / 2.75 ms after (a second run 2.29 / 2.54 ms); an
+  allowed call 2.06 / 2.27 ms before and 1.97 / 2.14 ms after, unchanged. The bulletin is written
+  without fsync: `capsa_core::bulletin` in `core` now writes through `fs::write_cache`, since a
+  lost write only reads as unknown. With the fsyncs of `write_atomic` a block decision took 10.80 /
+  12.07 ms. The bulletin lock costs nothing measurable (2.35 / 2.92 ms p50 / p95 without it).
+- `acus ctx` leads its output with `3rd identical failure of this command in this session, same
+  key line: …` when the same command fails in the same directory with the same error lines three
+  times in a row. A session is identified by `CLAUDE_CODE_SESSION_ID`, which Claude Code sets for
+  the commands it runs; without it, runs share one state file. A run more than 30 minutes after
+  the previous one starts a new count, and a success clears it. The state is
+  `acus/ctx/<session>.json` in the state directory. `--json` adds a `repeat` object (`count`,
+  `key`) from the third identical failure on; other output is unchanged. The lead line stays
+  outside the `--head` budget, so the command output is cut exactly as without it.
+- `acus self doctor` reports `guard log file`. A guard log that exists but cannot be opened for
+  appending, such as one created by `sudo`, fails with a hint, instead of every decision being
+  dropped unseen.
+- `acus self doctor` gets an `interop` group, after `guard`, with one line for `census`: `not
+  installed, off`, or census's bulletin age and the features that use it, adaptive guard hints
+  and guard blocks in the census status line. The lines are informational and never fail the
+  check. `acus self uninstall` removes acus's bulletins too, `acus.json` and `acus-release.json`,
+  with the binary.
+- `acus self setup` moves a guard log that older releases left beside the config file, with its
+  `.old` copy, into the state directory. If the state directory already has a guard log, setup
+  merges the old lines in front of it instead, oldest first, and leaves the state `.old` copy as
+  it is. `--dry-run` only reports the move. `acus self doctor` warns about such a leftover, even
+  when the state log exists, and names `acus self setup` as the fix.
+- `acus self doctor --fix` makes the safe repairs before it reports: it updates an outdated skill
+  for Claude Code and Codex and adds missing or outdated hooks in an existing Claude Code setup.
+  Each repair is listed under `fixed`, and `--json` adds the same array. A missing skill, a guard
+  log an older release left beside the config file, deletions, config values and the network keep
+  their hints, and a PreToolUse matcher you chose stays as it is.
+
+### Changed
+
+- Repeated guard hints adapt to how well the agent follows them. When census publishes a current
+  follow rate for a rule, the interval between shown hints moves from `[guard] hint_every` (rate
+  0.5) up to `hint_every_max` (rate 1.0, default 4 times `hint_every`) or down to
+  `hint_every_min` (rate 0.0, default half of `hint_every`, at least 1). A missing, stale or
+  unreadable bulletin keeps `hint_every`. The census bulletin is read only when a hint is due
+  within the bounds, so most calls never open it. The hint counts in `guard-hints/SESSION` gain a
+  third field, the call that last showed; older files still read. Benchmark: `hyperfine -N -w 5
+  -r 50 acus hook` (release, `hint_every` = 10, temp state dir) for `git status` (hint) and `ls`
+  (pass), p50/p95: hint 2.29/2.54 ms before, 2.27/2.95 ms after; pass 1.90/2.02 ms before,
+  1.97/2.10 ms after. A second before run read 2.30/2.39 and 2.13/2.25 ms, so the difference is
+  inside the run-to-run noise.
+- The guard's hint throttle locks a session with an OS file lock (`capsa_core::lock`) instead of a
+  `create_new` lock file with a nonce and stale-lock breaking. The kernel drops the lock when a
+  process dies, so a crashed guard no longer leaves a lock that hints wait out. Pruning also
+  removes the `.lock` files of idle sessions and leftover `.brk` files of older versions.
+  Benchmark: 1000 `hints::show` calls with `hint_every = 2` (`cargo test --release`, best of 7)
+  take 248 ms before and 148 ms after.
+- The guard log lives in the state directory: `$XDG_STATE_HOME/acus/guard.jsonl`, by default
+  `~/.local/state/acus/guard.jsonl`, or `%LOCALAPPDATA%\acus\state\guard.jsonl` on Windows. It was
+  next to the config file. The guard hints stay next to the config file.
+- The config file is read through `capsa_core::config`. A config that does not parse reports the
+  line and column that `capsa-core` names, and the guard's config note carries that text instead of
+  the TOML snippet. The hint is unchanged. Benchmark: `acus hook` on a PreToolUse Bash call, release
+  build, `hyperfine -N -w 5 -r 50`: p50 2.07 ms before and 2.06 ms after, p95 2.74 ms and 2.49 ms,
+  median 23.38 M instructions both.
+- `acus self doctor` shows the age of the last guard entry in the units `acus log` uses, such as
+  `5m ago`, `2h ago` or `3d ago`. It showed `5 min`, `2 h` and `3 d`.
+- `acus self update` fails when adding the hooks of the new release fails, as it already did when
+  the skill reinstall failed. Before, the update reported success with the hooks missing.
+- In a build without the `cmd-update` feature, `acus self update` and `acus self uninstall` both
+  report that acus was built without `cmd-update`.
+
+### Fixed
+
+- `acus ctx --timeout` kills the whole command tree on Windows, with `taskkill`, as it already did
+  on Unix. Before, only the shell was killed and its children kept running.
+- The guard's hint throttle no longer underflows when the stored last-shown call is ahead of the
+  count, and a count file from before the third field now sends the next hint where the old
+  `n % every == 1` rule showed it, instead of one interval after the last call.
+
 ## [0.22.1]
 
 ### Added

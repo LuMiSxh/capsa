@@ -10,14 +10,22 @@ use std::time::Duration;
 
 use anyhow::Result;
 use capsa_core::claude_settings::{self, Settings, SettingsError};
+#[cfg(feature = "cmd-update")]
+use capsa_core::doctor::update_check;
+use capsa_core::doctor::{
+    Sibling, check, dir_check, emit_report, interop_group, log_checks, ok, same_file,
+};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::Hint;
-use capsa_core::hooks::{Agent, HookFile};
-use capsa_core::render::{Check, Doctor, Group, Status, emit};
+use capsa_core::hooks::{Agent, HookFile, HookState};
+use capsa_core::render::{Check, Doctor, Group, Status};
+#[cfg(feature = "cmd-update")]
+use capsa_core::update;
 use capsa_core::which;
 use serde_json::Value;
 use vicarius::config::Config;
+use vicarius::proxy::LOG_LIMIT;
 
 use crate::service::{self, Install, Launchctl, System};
 use crate::status_client::{self, AgentStatus, Fetched};
@@ -27,8 +35,18 @@ const TOOL: &str = "vicarius";
 /// The probe timeout of the status endpoint.
 const PROBE: Duration = Duration::from_secs(1);
 
-pub fn run(format: Format) -> Result<Outcome> {
+#[derive(clap::Args)]
+pub struct Args {
+    /// Repairs the SessionStart hook when it is outdated, or missing from an installed agent. The
+    /// property list, the env keys and the service keep their hints, since the list starts the
+    /// service at login and `self setup` and `self start` own those.
+    #[arg(long)]
+    pub fix: bool,
+}
+
+pub fn run(format: Format, fix: bool) -> Result<Outcome> {
     let install = Install::current()?;
+    let fixed = fix.then(|| repair(&install)).transpose()?;
     let config = Config::load_from(&Config::path());
     let port = config.as_ref().map_or(Config::default().port, |c| c.port);
     let fetched = status_client::fetch(port, PROBE);
@@ -53,6 +71,7 @@ pub fn run(format: Format) -> Result<Outcome> {
     service_checks.extend(refresh_check(fetched.as_ref()));
     let groups = vec![
         install_group(&install, path),
+        log_group(),
         Group {
             name: "service",
             checks: service_checks,
@@ -60,37 +79,49 @@ pub fn run(format: Format) -> Result<Outcome> {
         settings_group(&settings, &expected),
         agents_group(fetched.as_ref()),
         config_group(&config),
+        interop(),
     ];
-    emit(
+    emit_report(
         &Doctor::new(TOOL, env!("CARGO_PKG_VERSION"), groups),
+        fixed,
         format,
     )
 }
 
-fn check(
-    name: impl Into<Cow<'static, str>>,
-    status: Status,
-    detail: impl Into<String>,
-    hint: Option<&str>,
-) -> Check {
-    Check {
-        name: name.into(),
-        status,
-        detail: detail.into(),
-        hint: hint.map(str::to_owned),
+fn install_group(install: &Install, path: Check) -> Group {
+    let binary = ok("binary", install.exe.display().to_string());
+    #[cfg_attr(
+        not(feature = "cmd-update"),
+        expect(unused_mut, reason = "the update check is pushed only with cmd-update")
+    )]
+    let mut checks = vec![binary, path];
+    #[cfg(feature = "cmd-update")]
+    checks.push(update_check(
+        &crate::cmd_self::TOOL,
+        &update::check(&crate::cmd_self::TOOL),
+    ));
+    Group {
+        name: "install",
+        checks,
     }
 }
 
-fn install_group(install: &Install, path: Check) -> Group {
-    let binary = check(
-        "binary",
-        Status::Ok,
-        install.exe.display().to_string(),
-        None,
-    );
+/// Checks the proxy log: that its directory takes files, that it takes lines, its size against
+/// the rotation limit and the age of its last entry.
+fn log_group() -> Group {
+    let path = vicarius::proxy_log_file();
+    let mut checks = Vec::new();
+    if let Some(dir) = path.parent() {
+        checks.push(dir_check(
+            "log directory",
+            dir,
+            "make the log directory writable, or remove it so vicarius recreates it",
+        ));
+    }
+    checks.extend(log_checks("proxy", &path, LOG_LIMIT));
     Group {
-        name: "install",
-        checks: vec![binary, path],
+        name: "log",
+        checks,
     }
 }
 
@@ -101,12 +132,7 @@ fn plist_check(install: &Install) -> (Check, Option<PathBuf>) {
             let program = service::program_path(&text);
             let current = text == install.plist_text();
             let found = if current {
-                check(
-                    "plist",
-                    Status::Ok,
-                    install.plist.display().to_string(),
-                    None,
-                )
+                ok("plist", install.plist.display().to_string())
             } else {
                 check(
                     "plist",
@@ -141,9 +167,7 @@ fn plist_check(install: &Install) -> (Check, Option<PathBuf>) {
 fn path_check(install: &Install, program: Option<PathBuf>) -> Check {
     let expected = program.unwrap_or_else(|| install.exe.clone());
     match which::find(TOOL) {
-        Some(found) if same_file(&found, &expected) => {
-            check("PATH", Status::Ok, found.display().to_string(), None)
-        }
+        Some(found) if same_file(&found, &expected) => ok("PATH", found.display().to_string()),
         Some(found) => check(
             "PATH",
             Status::Warn,
@@ -163,15 +187,10 @@ fn path_check(install: &Install, program: Option<PathBuf>) -> Check {
     }
 }
 
-fn same_file(a: &Path, b: &Path) -> bool {
-    let canon = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_owned());
-    canon(a) == canon(b)
-}
-
 fn loaded_check(install: &Install, lctl: &dyn Launchctl) -> Check {
     match install.launchd() {
         Some((_, target)) if service::is_loaded(lctl, install) => {
-            check("launchd", Status::Ok, format!("loaded as {target}"), None)
+            ok("launchd", format!("loaded as {target}"))
         }
         _ => check(
             "launchd",
@@ -185,7 +204,7 @@ fn loaded_check(install: &Install, lctl: &dyn Launchctl) -> Check {
 fn endpoint_check(port: u16, answering: bool, points_here: bool, install: &Install) -> Check {
     let addr = format!("127.0.0.1:{port}");
     if answering {
-        check("status", Status::Ok, format!("answers on {addr}"), None)
+        ok("status", format!("answers on {addr}"))
     } else if points_here {
         let hint = format!(
             "read {} and run `vicarius self start`",
@@ -227,7 +246,7 @@ fn gate_check(fetched: Option<&Fetched>) -> Check {
                 )
             },
         );
-        return check("gate", Status::Ok, detail, None);
+        return ok("gate", detail);
     }
     let reason = gate.reason_text.as_deref().unwrap_or("closed");
     let hint = match gate.reason.as_deref() {
@@ -254,7 +273,7 @@ fn refresh_check(fetched: Option<&Fetched>) -> Option<Check> {
                 || "no refresh yet".to_owned(),
                 |at| format!("last ok {}", status_client::relative(at)),
             );
-            check("refresh", Status::Ok, detail, None)
+            ok("refresh", detail)
         }
     })
 }
@@ -287,7 +306,7 @@ fn settings_group(
 
 fn env_check(key: &'static str, settings: &Value, expected: &str) -> Check {
     match claude_settings::env_value(settings, key) {
-        Some(value) if value == expected => check(key, Status::Ok, value.to_owned(), None),
+        Some(value) if value == expected => ok(key, value.to_owned()),
         Some(value) => check(
             key,
             Status::Warn,
@@ -312,6 +331,25 @@ fn hook_check(settings: &Path) -> Check {
     }
 }
 
+/// Rewrites the SessionStart hook when it is outdated, or when it is missing from an agent that
+/// was set up. Returns the check for the hook, or nothing when the hook was left alone.
+fn repair(install: &Install) -> Result<Vec<Check>> {
+    let Ok(file) = HookFile::open_at(Agent::ClaudeCode, &install.settings) else {
+        return Ok(Vec::new());
+    };
+    let wanted = match file.state(&service::SESSION_HOOK) {
+        HookState::Outdated { .. } => true,
+        HookState::Missing => install.plist.exists(),
+        HookState::Installed | HookState::CustomMatcher { .. } => false,
+    };
+    if !wanted {
+        return Ok(Vec::new());
+    }
+    let step = service::set_session_hook(&install.settings, false)?;
+    let detail = format!("{} in {}", step.text(false), install.settings.display());
+    Ok(vec![ok("SessionStart hook", detail)])
+}
+
 fn agents_group(fetched: Option<&Fetched>) -> Group {
     let checks = match fetched {
         None => vec![check(
@@ -328,14 +366,14 @@ fn agents_group(fetched: Option<&Fetched>) -> Group {
                 None,
             )],
             Some(agents) if agents.entries.is_empty() => {
-                vec![check("agents", Status::Ok, "none configured", None)]
+                vec![ok("agents", "none configured")]
             }
             Some(agents) => {
                 let problems: Vec<Check> =
                     agents.entries.iter().filter_map(agent_problem).collect();
                 if problems.is_empty() {
                     let detail = format!("{} agent files ok", agents.entries.len());
-                    vec![check("agents", Status::Ok, detail, None)]
+                    vec![ok("agents", detail)]
                 } else {
                     problems
                 }
@@ -384,20 +422,43 @@ fn agent_problem(entry: &AgentStatus) -> Option<Check> {
 }
 
 fn config_group(config: &Result<Config, vicarius::config::ConfigError>) -> Group {
-    let found = match config {
-        Ok(_) => check(
-            "config",
-            Status::Ok,
-            Config::path().display().to_string(),
-            None,
-        ),
+    let mut checks = Vec::new();
+    match config {
+        Ok(_) => checks.push(ok("config", Config::path().display().to_string())),
         Err(e) => {
             let hint = e.hint().map(Cow::into_owned);
-            check("config", Status::Fail, e.to_string(), hint.as_deref())
+            checks.push(check(
+                "config",
+                Status::Fail,
+                e.to_string(),
+                hint.as_deref(),
+            ));
         }
-    };
+    }
+    if let Some(old) = capsa_core::config::legacy_json("vicarius") {
+        let hint = format!(
+            "move its settings with `vicarius self config set`; the config is now {}",
+            Config::path().display()
+        );
+        checks.push(check(
+            "config.json",
+            Status::Warn,
+            format!("{} is no longer read", old.display()),
+            Some(hint.as_str()),
+        ));
+    }
     Group {
         name: "config",
-        checks: vec![found],
+        checks,
     }
+}
+
+/// Reports whether census is installed, since it reads the DeepSeek gate and balance from the
+/// vicarius bulletin for its status line.
+fn interop() -> Group {
+    interop_group(&[Sibling {
+        tool: "census",
+        feature: "DeepSeek gate and balance in the census status line",
+        bulletin: None,
+    }])
 }

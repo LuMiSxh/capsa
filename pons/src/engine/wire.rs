@@ -35,19 +35,12 @@ pub(super) fn inject_transcript(msg: &mut Value) -> bool {
     true
 }
 
-pub(super) fn parent_tool_use_id<'a>(msg: &'a Value, update: &'a Value) -> Option<&'a str> {
-    update
-        .pointer("/_meta/claudeCode/parentToolUseId")
-        .or_else(|| msg.pointer("/params/_meta/claudeCode/parentToolUseId"))?
-        .as_str()
-}
-
 /// Tells whether `update` is the usage update the adapter sends after a turn it started
 /// on its own for a finished background task. It does not say which task ended.
-pub(super) fn is_task_notification(update: &Value) -> bool {
-    update.get("sessionUpdate").and_then(Value::as_str) == Some("usage_update")
+pub(super) fn is_task_notification(update: UpdateView<'_>) -> bool {
+    update.session_update == Some("usage_update")
         && update
-            .pointer("/_meta")
+            .meta
             .and_then(|m| m.get("_claude/origin"))
             .and_then(|o| o.get("kind"))
             .and_then(Value::as_str)
@@ -56,22 +49,21 @@ pub(super) fn is_task_notification(update: &Value) -> bool {
 
 /// Tells whether `update` is the adapter's result of an `Agent` call that went to the
 /// background.
-pub(super) fn is_async_launch(update: &Value) -> bool {
+pub(super) fn is_async_launch(update: UpdateView<'_>) -> bool {
     const MARKER: &str = "Async agent launched";
     let starts = |v: &Value| {
         v.get("text")
             .and_then(Value::as_str)
             .is_some_and(|t| t.starts_with(MARKER))
     };
-    let raw = update.get("rawOutput");
+    let raw = update.raw().get("rawOutput");
     raw.and_then(Value::as_str)
         .is_some_and(|t| t.starts_with(MARKER))
         || raw
             .and_then(Value::as_array)
             .is_some_and(|a| a.iter().any(starts))
         || update
-            .get("content")
-            .and_then(Value::as_array)
+            .content_items()
             .is_some_and(|a| a.iter().any(|c| c.get("content").is_some_and(starts)))
 }
 
@@ -79,12 +71,11 @@ pub(super) fn is_async_launch(update: &Value) -> bool {
 /// `_meta.claudeCode.toolName` and a top-level `name` of `Agent` with title
 /// `Task` and kind `think`. A tool call these miss is still treated as a
 /// parent once a child names it in `parentToolUseId`.
-pub(super) fn is_subagent_tool(update: &Value) -> bool {
-    let named = |v: Option<&Value>| matches!(v.and_then(Value::as_str), Some("Task" | "Agent"));
-    named(update.pointer("/_meta/claudeCode/toolName"))
-        || named(update.get("name"))
-        || (named(update.get("title"))
-            && update.get("kind").and_then(Value::as_str) == Some("think"))
+pub(super) fn is_subagent_tool(update: UpdateView<'_>) -> bool {
+    let named = |v: Option<&str>| matches!(v, Some("Task" | "Agent"));
+    named(update.tool_name)
+        || named(update.name)
+        || (named(update.title) && update.kind == Some("think"))
 }
 
 pub(super) fn session_id(msg: &Value) -> Option<&str> {
@@ -124,21 +115,21 @@ pub(super) fn synthesized(msg: &Value) -> Action {
     }
 }
 
-pub(super) fn track_tool(session: &mut Session, id: &str, kind: Option<&str>, update: &Value) {
-    let status = update.get("status").and_then(Value::as_str);
-    if matches!(status, Some("completed" | "failed")) {
+pub(super) fn track_tool(
+    session: &mut Session,
+    id: &str,
+    kind: Option<&str>,
+    update: UpdateView<'_>,
+) {
+    let status = update.status;
+    if update.is_terminal() {
         session.open_tools.remove(id);
         return;
     }
-    let text = |key: &str| update.get(key).and_then(Value::as_str).map(str::to_owned);
+    let text = |v: Option<&str>| v.map(str::to_owned);
     match kind {
         Some("tool_call") => {
-            let has_input = match update.get("rawInput") {
-                Some(Value::Object(o)) => !o.is_empty(),
-                Some(Value::String(s)) => !s.is_empty(),
-                Some(Value::Null) | None => false,
-                Some(_) => true,
-            };
+            let has_input = update.has_input();
             let prompt = session
                 .prompt_id
                 .as_ref()
@@ -149,16 +140,9 @@ pub(super) fn track_tool(session: &mut Session, id: &str, kind: Option<&str>, up
                 OpenTool {
                     prompt,
                     streaming: status.is_none_or(|s| s == "pending") && !has_input,
-                    title: text("title").unwrap_or_default(),
-                    kind: text("kind").unwrap_or_default(),
-                    name: text("name")
-                        .or_else(|| {
-                            update
-                                .pointer("/_meta/claudeCode/toolName")
-                                .and_then(Value::as_str)
-                                .map(str::to_owned)
-                        })
-                        .unwrap_or_default(),
+                    title: text(update.title).unwrap_or_default(),
+                    kind: text(update.kind).unwrap_or_default(),
+                    name: text(update.name.or(update.tool_name)).unwrap_or_default(),
                 },
             );
         }
@@ -166,13 +150,13 @@ pub(super) fn track_tool(session: &mut Session, id: &str, kind: Option<&str>, up
             if let Some(tool) = session.open_tools.get_mut(id) {
                 // A status change, or the refinement that carries the content
                 // built from the complete input, ends the streaming phase.
-                if status.is_some_and(|s| s != "pending") || update.get("content").is_some() {
+                if status.is_some_and(|s| s != "pending") || update.content.is_some() {
                     tool.streaming = false;
                 }
-                if let Some(title) = text("title") {
+                if let Some(title) = text(update.title) {
                     tool.title = title;
                 }
-                if let Some(kind) = text("kind") {
+                if let Some(kind) = text(update.kind) {
                     tool.kind = kind;
                 }
             }
@@ -183,15 +167,14 @@ pub(super) fn track_tool(session: &mut Session, id: &str, kind: Option<&str>, up
 
 /// Describes a child tool call as it starts, so a stalled subagent can be found
 /// in the wire log.
-pub(super) fn child_start_note(card: &str, update: &Value) -> String {
-    let text = |key: &str| update.get(key).and_then(Value::as_str).unwrap_or_default();
-    let title = clip_head(&one_line(text("title")), 80);
-    let kind = match text("kind") {
+pub(super) fn child_start_note(card: &str, update: UpdateView<'_>) -> String {
+    let title = clip_head(&one_line(update.title.unwrap_or_default()), 80);
+    let kind = match update.kind.unwrap_or_default() {
         "" => String::new(),
         kind => format!(" (kind {kind})"),
     };
     format!(
         "subagent card {card}: child tool call {} started: {title}{kind}",
-        text("toolCallId")
+        update.tool_call_id.unwrap_or_default()
     )
 }

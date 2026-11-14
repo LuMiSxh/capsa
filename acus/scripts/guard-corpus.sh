@@ -3,8 +3,8 @@
 # (macOS, the default) or corpus-windows.jsonl (--windows).
 #
 # Usage: scripts/guard-corpus.sh [--windows] [GUARD_JSONL]
-#   GUARD_JSONL defaults to "$HOME/Library/Application Support/acus/guard.jsonl", or with
-#   --windows to "$APPDATA/acus/guard.jsonl".
+#   GUARD_JSONL defaults to "$HOME/.local/state/acus/guard.jsonl", or with
+#   --windows to "$LOCALAPPDATA/acus/state/guard.jsonl".
 #   GUARD_CORPUS_EXCLUDE names a file of private project names, one per line, kept outside the
 #   repository (default "$HOME/.config/acus/guard-corpus-exclude.txt"). The script refuses to run
 #   without it, so those names never reach this public repository.
@@ -25,10 +25,10 @@ if [ "${1:-}" = "--windows" ]; then
   shift
 fi
 if [ "$windows" = 1 ]; then
-  log=${1:-"${APPDATA:?APPDATA is not set}/acus/guard.jsonl"}
+  log=${1:-"${LOCALAPPDATA:?LOCALAPPDATA is not set}/acus/state/guard.jsonl"}
   out_name=corpus-windows.jsonl
 else
-  log=${1:-"$HOME/Library/Application Support/acus/guard.jsonl"}
+  log=${1:-"${XDG_STATE_HOME:-$HOME/.local/state}/acus/guard.jsonl"}
   out_name=corpus.jsonl
 fi
 exclude=${GUARD_CORPUS_EXCLUDE:-"$HOME/.config/acus/guard-corpus-exclude.txt"}

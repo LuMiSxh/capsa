@@ -3,9 +3,10 @@
 //! syncing them at once.
 
 use anyhow::Result;
+use capsa_core::config::ConfigFile;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-use capsa_core::hint::{Hinted, ResultExt};
+use capsa_core::hint::{ResultExt, hinted};
 use capsa_core::render::{Doc, Render, emit};
 use serde::Serialize;
 use std::str::FromStr;
@@ -60,6 +61,16 @@ enum Key {
 }
 
 impl Key {
+    /// The TOML key of this setting.
+    const fn field(self) -> &'static str {
+        match self {
+            Key::Port => "port",
+            Key::MinBalance => "min_balance_usd",
+            Key::BalanceRefresh => "balance_refresh_minutes",
+            Key::MaxContext => "max_context_tokens",
+        }
+    }
+
     /// Describes the values the key takes, for the error of a value it cannot read.
     fn expected(self) -> &'static str {
         match self {
@@ -162,8 +173,14 @@ impl Render for ConfigOut<'_> {
 }
 
 pub fn run(a: Args, format: Format) -> Result<Outcome> {
-    let path = Config::path();
-    let mut config = Config::load_from(&path).hinted()?;
+    let file = Config::file();
+    let mut config = Config::load_from(file.path()).hinted()?;
+    if a.action.is_none() {
+        return emit(
+            &file.show("vicarius self config", &config).hinted()?,
+            format,
+        );
+    }
     let mut steps = Vec::new();
     let mut note = None;
     if let Some(action) = a.action {
@@ -175,18 +192,21 @@ pub fn run(a: Args, format: Format) -> Result<Outcome> {
             }) => Some(model.clone()),
             _ => None,
         };
-        let key = match &action {
-            Action::Set(set) => Some(set.key),
+        let set = match &action {
+            Action::Set(set) => Some((set.key, set.value.clone())),
             Action::Agent(_) => None,
         };
         change(&mut config, action).hinted()?;
-        match key.filter(|_| cfg!(target_os = "macos")) {
-            Some(key) => {
+        match set {
+            Some((key, value)) if cfg!(target_os = "macos") => {
                 let install = Install::current()?;
-                steps = apply_steps(&install, &System, key, &old, &config, WAIT)?;
+                steps = apply_steps(&install, &System, key, &value, &old, &config, WAIT)?;
+            }
+            Some((key, value)) => {
+                file.set::<Config>(key.field(), &value).hinted()?;
             }
             None => {
-                config.save_to(&path).hinted()?;
+                config.save_to(file.path()).hinted()?;
                 if agent_action {
                     (steps, note) = sync_agents(&config);
                 }
@@ -207,7 +227,7 @@ pub fn run(a: Args, format: Format) -> Result<Outcome> {
         .any(|item| item.status == Replacement::Replaced.text());
     let body = ConfigOut {
         config: &config,
-        path: path.display().to_string(),
+        path: file.path().display().to_string(),
         steps,
         note: note.or_else(|| changed.then_some(RESTART_NOTE)),
     };
@@ -313,14 +333,17 @@ fn apply_steps(
     install: &Install,
     lctl: &dyn Launchctl,
     key: Key,
+    value: &str,
     old: &Config,
     new: &Config,
     wait: Duration,
 ) -> Result<Vec<Item>> {
     if matches!(key, Key::Port) && old.port != new.port {
-        return port_steps(install, lctl, old, new, wait);
+        return port_steps(install, lctl, value, old, new, wait);
     }
-    new.save_to(&install.config).hinted()?;
+    ConfigFile::at(install.config.clone())
+        .set::<Config>(key.field(), value)
+        .hinted()?;
     let (name, old_value, new_value) = match key {
         Key::Port => (
             service::BASE_URL,
@@ -338,16 +361,19 @@ fn apply_steps(
     Ok(vec![Item::new(name, replacement.text())])
 }
 
-/// Saves the new port before the restart, because the agent reads `config.json` at boot. A failure
+/// Saves the new port before the restart, because the agent reads `config.toml` at boot. A failure
 /// after the save rolls the port back.
 fn port_steps(
     install: &Install,
     lctl: &dyn Launchctl,
+    value: &str,
     old: &Config,
     new: &Config,
     wait: Duration,
 ) -> Result<Vec<Item>> {
-    new.save_to(&install.config).hinted()?;
+    ConfigFile::at(install.config.clone())
+        .set::<Config>("port", value)
+        .hinted()?;
     repoint(install, lctl, old, new, wait)
         .map_err(|cause| roll_back_port(install, lctl, old, new, wait, cause))
 }
@@ -374,7 +400,7 @@ fn repoint(
     Ok(items)
 }
 
-/// Puts the old port back after `cause`: restores `config.json`, then restarts the agent on the old
+/// Puts the old port back after `cause`: restores `config.toml`, then restarts the agent on the old
 /// port. The error says what the rollback left; its hint comes from `cause`, unless the config
 /// could not be restored.
 fn roll_back_port(
@@ -386,7 +412,7 @@ fn roll_back_port(
     cause: anyhow::Error,
 ) -> anyhow::Error {
     if let Err(e) = old.save_to(&install.config) {
-        return Hinted::new(
+        return hinted(
             format!(
                 "{cause:#}; the port change to {} was not rolled back: {e}",
                 new.port
@@ -396,17 +422,16 @@ fn roll_back_port(
                 install.config.display(),
                 old.port
             ),
-        )
-        .into();
+        );
     }
     match cmd_service::restart(install, lctl, old, wait) {
         Ok(_) => cause.context(format!(
-            "the port change to {} was rolled back: config.json is back on port {}, and the agent \
+            "the port change to {} was rolled back: config.toml is back on port {}, and the agent \
              runs there",
             new.port, old.port
         )),
         Err(e) => e.context(format!(
-            "the port change to {} was rolled back in config.json, but the agent did not restart \
+            "the port change to {} was rolled back in config.toml, but the agent did not restart \
              on port {}; the change failed with: {cause:#}",
             new.port, old.port
         )),

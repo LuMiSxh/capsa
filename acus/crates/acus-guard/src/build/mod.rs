@@ -28,8 +28,8 @@ pub(super) fn filtered_build(
     // must cover all of them, or name none. `open` is set when the chain goes on past `rest` into
     // a stage that no ctx flag does: the refusal stands, and names no command.
     let chained = !rest.is_empty();
-    let stages: Vec<&str> = std::iter::once(next.orig.as_str())
-        .chain(rest.iter().map(|s| s.orig.as_str()))
+    let stages: Vec<&str> = std::iter::once(next.orig())
+        .chain(rest.iter().map(Segment::orig))
         .collect();
     let filter = fold_filter(seg, next, &stages)?;
     let low = seg.low_unescaped().1;
@@ -67,7 +67,7 @@ pub(super) fn filtered_build(
             chain_build_reason(cmd, &stages, call.build, filter, open),
         ));
     }
-    let flag = head(&next.orig)
+    let flag = head(next.orig())
         .and_then(|(f, fargs)| ctx_flag(&f.to_lowercase(), &fargs.collect::<Vec<_>>()));
     if call.is_ctx {
         return Some(Verdict::Deny(
@@ -201,7 +201,7 @@ fn ctx_pipe_reason(
     flag: Option<(String, String)>,
 ) -> String {
     // A head that keeps every line the ctx `--tail` keeps does nothing: the command runs as it is.
-    let tail_noop = noop_heads_dropped(ctx_tail(cmd), &[next.orig.as_str()]).is_empty();
+    let tail_noop = noop_heads_dropped(ctx_tail(cmd), &[next.orig()]).is_empty();
     match ctx_command(cmd).filter(|inner| unquoted_pipe(inner).is_some()) {
         Some(inner) => inner_pipe_reason(inner, filter),
         None if tail_noop => format!(
@@ -214,7 +214,7 @@ fn ctx_pipe_reason(
             // Suggested only where ctx accepts the flag: not when the command has it, or `--`.
             let send = flag
                 .as_ref()
-                .and_then(|_| ctx_with_flags(cmd, &[next.orig.as_str()]));
+                .and_then(|_| ctx_with_flags(cmd, &[next.orig()]));
             let own = format!(
                 "Use acus ctx's own flags instead of piping it into {filter}: `acus ctx '…' --tail N` keeps the last N lines plus every failure with the code it points at, `--grep RE` keeps the lines matching RE plus the code they point at, `--max-output N` keeps the first and last N/2 lines. {ESCAPE}"
             );

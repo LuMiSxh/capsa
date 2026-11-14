@@ -82,29 +82,11 @@ pub(super) async fn pump(s: &mut Session) -> Result<Exit> {
             }
             () = &mut s.drain, if s.status.is_some() => return Ok(Exit::Agent),
             () = &mut s.kill_at, if s.kill_armed && s.status.is_none() => {
-                s.kill_armed = false;
-                s.logger.log(
-                    Dir::Pons,
-                    b"agent did not exit after the forwarded signal: SIGKILL to its process group",
-                );
-                if let Some(pgid) = s.pgid {
-                    signal_kill(pgid);
-                }
+                signals::escalate(s);
                 continue;
             }
             sig = s.signals.recv() => {
-                // Only while the child is unreaped, so its pid is still ours.
-                if s.status.is_none()
-                    && let Some(pgid) = s.child.id().or(s.pgid)
-                {
-                    s.logger.log(
-                        Dir::Pons,
-                        format!("forwarding {} to the agent's process group", sig.name()).as_bytes(),
-                    );
-                    signal_forward(pgid, sig);
-                    s.kill_at.as_mut().reset(Instant::now() + SIGNAL_GRACE);
-                    s.kill_armed = true;
-                }
+                signals::forward(s, sig);
                 continue;
             }
         };
@@ -218,7 +200,7 @@ pub(super) async fn finish(exit: Exit, mut s: Session, grace: Duration) -> Resul
                     b"exiting: output was still queued after 2s, dropped",
                 );
             }
-            Ok(exit_code(status))
+            Ok(capsa_core::process::exit_code(status).unwrap_or(1))
         }
     }
 }

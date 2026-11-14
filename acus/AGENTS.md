@@ -23,7 +23,7 @@ Paths are relative to `acus/`. Dependencies point down: `acus-cli` uses every ot
 - `cargo test -p acus-cli`: CLI tests and snapshots. `cargo test -p acus-guard`: guard tests.
 - `cargo bench -p acus-cli`: Criterion benchmarks in `crates/acus-cli/benches/core.rs`. Local only.
 - `cargo insta review`: accept or reject changed snapshots (needs `cargo-insta`).
-- `scripts/guard-corpus.sh` rebuilds `corpus.jsonl` from the macOS guard log; `scripts/guard-corpus.sh --windows` rebuilds `corpus-windows.jsonl` from `%APPDATA%\acus\guard.jsonl`. Review the golden snapshots after either; a rebuilt Windows corpus must go through the falsification pass before committing.
+- `scripts/guard-corpus.sh` rebuilds `corpus.jsonl` from the macOS guard log; `scripts/guard-corpus.sh --windows` rebuilds `corpus-windows.jsonl` from `%LOCALAPPDATA%\acus\state\guard.jsonl`. Review the golden snapshots after either; a rebuilt Windows corpus must go through the falsification pass before committing.
 - `acus self doctor`: checks the install, config, skill, hooks and guard files; exits 1 when a check fails.
 
 ## Rules

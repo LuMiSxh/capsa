@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 
 use crate::claude_settings::{
-    Step, event_entries, event_entries_mut, group, items, matcher_of, remove_hook,
+    Step, event_entries, group, items, matcher_of, remove_hook, set_event_entries,
 };
 
 /// One hook a tool registers: its event, matcher and command, and the claims that tell its entries
@@ -88,7 +88,9 @@ pub(super) fn add(v: &mut Value, spec: &HookSpec) -> Step {
         return if replaced { Step::Replace } else { Step::Set };
     }
     let hook = json!({"type": "command", "command": spec.command});
-    event_entries_mut(v, spec.event).push(group(spec.matcher, &hook));
+    let mut entries = event_entries(v, spec.event).to_vec();
+    entries.push(group(spec.matcher, &hook));
+    set_event_entries(v, spec.event, entries);
     if replaced {
         Step::Replace
     } else {

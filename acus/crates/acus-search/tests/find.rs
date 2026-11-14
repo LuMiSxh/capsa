@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 #![expect(clippy::unwrap_used, reason = "test code")]
 
-use acus_search::{FileHits, FindOpts, Row, attach_outlines, find, find_range, find_stdin};
+use acus_search::{FileHits, FindOpts, Row, attach_outlines, find, find_ranges, find_stdin};
 use acus_walk::WalkOpts;
-use std::fs;
+use std::{fs, path::Path};
 
 fn project() -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
@@ -35,13 +35,17 @@ fn opts(d: &tempfile::TempDir, pats: &[&str]) -> FindOpts {
     }
 }
 
+fn range_hits(o: &FindOpts, path: &Path, lines: (usize, usize)) -> Option<FileHits> {
+    find_ranges(o, [(path, lines)]).unwrap().pop()
+}
+
 #[test]
-fn find_range_keeps_file_absolute_lines_and_counts_only_its_range() {
+fn range_keeps_file_absolute_lines_and_counts_only_its_range() {
     let d = tempfile::tempdir().unwrap();
     fs::write(d.path().join("f.txt"), "hit 1\nhit 2\nmiss\nhit 4\nhit 5\n").unwrap();
     let path = d.path().join("f.txt");
     let o = opts(&d, &["hit"]);
-    let f = find_range(&o, &path, (2, 4)).unwrap().unwrap();
+    let f = range_hits(&o, &path, (2, 4)).unwrap();
     assert_eq!(
         f.hits.iter().map(|h| h.line).collect::<Vec<_>>(),
         vec![2, 4]
@@ -50,18 +54,16 @@ fn find_range_keeps_file_absolute_lines_and_counts_only_its_range() {
     // -m applies to the hits inside the range, not to the first matches of the file.
     let mut capped = opts(&d, &["hit"]);
     capped.max_per_file = Some(1);
-    let f = find_range(&capped, &path, (4, 5)).unwrap().unwrap();
+    let f = range_hits(&capped, &path, (4, 5)).unwrap();
     assert_eq!(f.hits.iter().map(|h| h.line).collect::<Vec<_>>(), vec![4]);
-    assert!(find_range(&o, &path, (3, 3)).unwrap().is_none());
+    assert!(range_hits(&o, &path, (3, 3)).is_none());
 }
 
 #[test]
-fn find_range_context_stays_inside_the_range() {
+fn range_context_stays_inside_the_range() {
     let d = tempfile::tempdir().unwrap();
     fs::write(d.path().join("f.txt"), "hit 1\nhit 2\nmiss\nhit 4\nhit 5\n").unwrap();
-    let f = find_range(&opts(&d, &["hit"]), &d.path().join("f.txt"), (2, 3))
-        .unwrap()
-        .unwrap();
+    let f = range_hits(&opts(&d, &["hit"]), &d.path().join("f.txt"), (2, 3)).unwrap();
     let rows = f.context_rows(f.hits.len(), 1, 1);
     assert_eq!(rows.len(), 2, "{rows:?}");
     assert!(matches!(rows[0], Row::Hit(h) if h.line == 2));

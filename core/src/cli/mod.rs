@@ -75,7 +75,10 @@ pub fn plain_parse_error(e: &clap::Error) -> anyhow::Error {
 
 /// Clap value parser for paths: `~` and `~/…` become the home directory, as a shell expands them.
 pub fn home<T: From<String>>(arg: &str) -> Result<T, Infallible> {
-    Ok(T::from(crate::paths::expand_home(arg)))
+    let expanded = crate::paths::expand_home(arg)
+        .to_string_lossy()
+        .into_owned();
+    Ok(T::from(expanded))
 }
 
 /// A tool's command line: how it is parsed, and how its output and errors are rendered.

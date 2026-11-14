@@ -34,7 +34,7 @@ fn is_task_output(path: &str) -> bool {
 pub(crate) fn fold(segs: &[Segment], i: usize) -> Option<(usize, String)> {
     let seg = &segs[i];
     // PowerShell lowercases `low`, which would change the path.
-    if seg.low != seg.orig || seg.stdin || seg.opaque() {
+    if seg.orig() != seg.low || seg.stdin || seg.opaque() {
         return None;
     }
     let (escaped, plain) = seg.low_unescaped();

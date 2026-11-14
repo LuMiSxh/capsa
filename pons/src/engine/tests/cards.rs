@@ -12,10 +12,10 @@ fn real_parent_shapes_are_detected_by_name_hint() {
     let by_title = json!({"title": "Task", "kind": "think"});
     let neither =
         json!({"title": "Task", "kind": "other", "_meta": {"claudeCode": {"toolName": "Bash"}}});
-    assert!(is_subagent_tool(&by_meta));
-    assert!(is_subagent_tool(&by_name));
-    assert!(is_subagent_tool(&by_title));
-    assert!(!is_subagent_tool(&neither));
+    assert!(is_subagent_tool(UpdateView::new(&by_meta)));
+    assert!(is_subagent_tool(UpdateView::new(&by_name)));
+    assert!(is_subagent_tool(UpdateView::new(&by_title)));
+    assert!(!is_subagent_tool(UpdateView::new(&neither)));
 }
 
 #[test]

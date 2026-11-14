@@ -4,7 +4,6 @@
 mod files;
 mod render;
 
-use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -193,7 +192,7 @@ fn classify(dir: Dir, text: &str) -> (Level, &'static str) {
 
 #[cfg(test)]
 mod tests {
-    use super::files::{default_dir, prune};
+    use super::files::prune;
 
     use super::*;
 
@@ -355,41 +354,6 @@ mod tests {
         assert_eq!(
             render(LogLevel::Meta, Dir::AgentToClient, "nope"),
             "unparsable"
-        );
-    }
-
-    fn vars<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
-        move |k| {
-            pairs
-                .iter()
-                .find(|(name, _)| *name == k)
-                .map(|(_, v)| OsString::from(*v))
-        }
-    }
-
-    #[test]
-    fn default_dir_per_platform() {
-        let mac = [("HOME", "/Users/me")];
-        assert_eq!(
-            default_dir("macos", vars(&mac)),
-            PathBuf::from("/Users/me/Library/Logs/pons")
-        );
-        let xdg = [("HOME", "/home/me"), ("XDG_STATE_HOME", "/state")];
-        assert_eq!(
-            default_dir("linux", vars(&xdg)),
-            PathBuf::from("/state/pons")
-        );
-        let relative = [("HOME", "/home/me"), ("XDG_STATE_HOME", "rel")];
-        assert_eq!(
-            default_dir("linux", vars(&relative)),
-            PathBuf::from("/home/me/.local/state/pons")
-        );
-        let win = [("LOCALAPPDATA", r"C:\Users\me\AppData\Local")];
-        assert_eq!(
-            default_dir("windows", vars(&win)),
-            PathBuf::from(r"C:\Users\me\AppData\Local")
-                .join("pons")
-                .join("logs")
         );
     }
 

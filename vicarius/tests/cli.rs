@@ -4,12 +4,13 @@
 use serde_json::Value;
 use std::path::Path;
 use std::process::{Command, Output};
+use vicarius::config::{Config, Effort};
 
 /// Where vicarius reads its config under a scratch home: macOS ignores `XDG_CONFIG_HOME`.
 const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
-    "Library/Application Support/vicarius/config.json"
+    "Library/Application Support/vicarius/config.toml"
 } else {
-    "config/vicarius/config.json"
+    "config/vicarius/config.toml"
 };
 
 /// Runs vicarius with `home` as the user profile, so that its config goes under `home`.
@@ -34,9 +35,8 @@ fn vicarius(home: &Path, args: &[&str]) -> Output {
     clippy::expect_used,
     reason = "a config that was not written must fail the test"
 )]
-fn saved(home: &Path) -> Value {
-    let text = std::fs::read_to_string(home.join(CONFIG_FILE)).expect("config file");
-    serde_json::from_str(&text).expect("config json")
+fn saved(home: &Path) -> Config {
+    Config::load_from(&home.join(CONFIG_FILE)).expect("config file")
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -50,10 +50,7 @@ fn show_prints_the_defaults_and_writes_nothing() {
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let stdout = text(&out.stdout);
     assert!(stdout.contains("3337"), "{stdout}");
-    assert!(
-        stdout.contains("senior-worker-ds on deepseek-flash"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("senior-worker"), "{stdout}");
     assert!(!home.path().join(CONFIG_FILE).exists());
 }
 
@@ -107,10 +104,10 @@ fn set_saves_each_scalar_and_prints_the_settings() {
         assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     }
     let config = saved(home.path());
-    assert_eq!(config["port"], 4000);
-    assert_eq!(config["min_balance_usd"], 2.5);
-    assert_eq!(config["balance_refresh_minutes"], 5);
-    assert_eq!(config["max_context_tokens"], 500_000);
+    assert_eq!(config.port, 4000);
+    assert_eq!(config.min_balance_usd, 2.5);
+    assert_eq!(config.balance_refresh_minutes, 5);
+    assert_eq!(config.max_context_tokens, 500_000);
 }
 
 #[test]
@@ -151,10 +148,7 @@ fn agent_add_and_remove_change_the_list_and_refuse_bad_ones() {
         ],
     );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    assert_eq!(
-        saved(home.path())["agents"].as_array().map(Vec::len),
-        Some(2)
-    );
+    assert_eq!(saved(home.path()).agents.len(), 2);
 
     let taken = vicarius(
         home.path(),
@@ -222,8 +216,8 @@ fn agent_add_and_remove_change_the_list_and_refuse_bad_ones() {
     );
     assert_eq!(removed.status.code(), Some(0), "{}", text(&removed.stderr));
     let config = saved(home.path());
-    assert_eq!(config["agents"].as_array().map(Vec::len), Some(1));
-    assert_eq!(config["agents"][0]["from"], "consultant");
+    assert_eq!(config.agents.len(), 1);
+    assert_eq!(config.agents[0].from, "consultant");
 }
 
 #[test]
@@ -242,7 +236,7 @@ fn agent_add_saves_custom_effort_and_defaults_to_keep() {
         ],
     );
     assert_eq!(default.status.code(), Some(0), "{}", text(&default.stderr));
-    assert_eq!(saved(home.path())["agents"][1]["effort"], "keep");
+    assert_eq!(saved(home.path()).agents[1].effort, Effort::Keep);
 
     let custom = vicarius(
         home.path(),
@@ -259,7 +253,7 @@ fn agent_add_saves_custom_effort_and_defaults_to_keep() {
         ],
     );
     assert_eq!(custom.status.code(), Some(0), "{}", text(&custom.stderr));
-    assert_eq!(saved(home.path())["agents"][2]["effort"], "high");
+    assert_eq!(saved(home.path()).agents[2].effort, Effort::High);
 
     let maximum = vicarius(
         home.path(),
@@ -276,7 +270,7 @@ fn agent_add_saves_custom_effort_and_defaults_to_keep() {
         ],
     );
     assert_eq!(maximum.status.code(), Some(0), "{}", text(&maximum.stderr));
-    assert_eq!(saved(home.path())["agents"][3]["effort"], "max");
+    assert_eq!(saved(home.path()).agents[3].effort, Effort::Max);
 
     for unsupported in ["medium", "xhigh", "extreme"] {
         let invalid = vicarius(
@@ -316,7 +310,7 @@ fn an_unknown_model_is_saved_with_a_warning() {
     let stdout = text(&out.stdout);
     assert!(stdout.contains("unknown model id"), "{stdout}");
     assert!(stdout.contains("deepseek-flash"), "{stdout}");
-    assert_eq!(saved(home.path())["agents"][1]["model"], "deepseek-next");
+    assert_eq!(saved(home.path()).agents[1].model, "deepseek-next");
 }
 
 #[test]
@@ -332,7 +326,7 @@ fn agent_suspend_and_activate_change_the_flag_and_refuse_unknown_names() {
         "{}",
         text(&suspended.stderr)
     );
-    assert_eq!(saved(home.path())["agents"][0]["suspended"], true);
+    assert!(saved(home.path()).agents[0].suspended);
     assert!(
         text(&suspended.stdout).contains("suspended"),
         "{}",
@@ -360,7 +354,7 @@ fn agent_suspend_and_activate_change_the_flag_and_refuse_unknown_names() {
         "{}",
         text(&activated.stderr)
     );
-    assert!(saved(home.path())["agents"][0].get("suspended").is_none());
+    assert!(!saved(home.path()).agents[0].suspended);
 }
 
 #[test]

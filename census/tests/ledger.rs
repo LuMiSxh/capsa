@@ -426,6 +426,22 @@ fn rows_appended_before_a_lost_index_are_not_counted_twice() {
 }
 
 #[test]
+fn a_torn_index_is_a_missing_index() {
+    let e = env();
+    append(
+        &e.file("a.jsonl"),
+        &(rec("m1", BASE, None) + &rec("m2", BASE + 1, None)),
+    );
+    e.update(BASE + 10);
+    std::fs::write(e.state.join("index.json"), b"{\"version\":1,\"files\":{\"").unwrap();
+    append(&e.file("a.jsonl"), &rec("m3", BASE + 2, None));
+    let l = e.update(BASE + 20);
+    assert_eq!(l.rows().unwrap().len(), 3);
+    assert_eq!(l.report().rows_added, 1);
+    assert_eq!(l.priced().unwrap().raw.len(), 3);
+}
+
+#[test]
 fn torn_last_line_in_rows_is_cut_before_the_next_append() {
     let e = env();
     let f = e.file("a.jsonl");

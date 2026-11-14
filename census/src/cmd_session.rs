@@ -37,9 +37,9 @@ impl Render for SessionOut<'_> {
         doc.row("session")
             .text(format!("{} ({})", self.session, self.picked.label()));
         doc.row("cwd")
-            .text(s.cwd.as_deref().unwrap_or("unknown").to_owned());
+            .text(s.cwd.as_deref().unwrap_or(census::UNKNOWN).to_owned());
         doc.row("model")
-            .text(s.model.as_deref().unwrap_or("unknown").to_owned());
+            .text(s.model.as_deref().unwrap_or(census::UNKNOWN).to_owned());
         doc.row("duration").text(duration(s.duration_s));
         doc.row("requests")
             .text(format!("{} ({} subagents)", s.requests, s.subagents));
@@ -75,7 +75,7 @@ pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     let config = Config::load();
     refresh_prices(now_secs(), config.prices_refresh_days);
     let resolved = session::resolve_here(a.session.as_deref()).hinted()?;
-    let summary = session::summarize(&resolved.transcript, &config)
+    let summary = session::summarize_with_cwd(&resolved.transcript, resolved.cwd, &config)
         .with_context(|| format!("cannot read {}", resolved.transcript.display()))?;
     let body = SessionOut {
         session: &resolved.id,

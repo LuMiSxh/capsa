@@ -87,7 +87,7 @@ fn search_ignores_trailing_whitespace_only_when_exact_text_is_missing() {
         &parse("*** Update File: a.rs\n<<<<<<< SEARCH\n    a();\n}\n=======\n    b();\n}\n>>>>>>> REPLACE\n")
             .unwrap(),
         d.path(),
-        false,
+        &ApplyOptions::default(),
     )
     .unwrap();
     assert_eq!(read(d.path(), "a.rs"), "fn f() {\n    b();\n}\n");
@@ -204,7 +204,7 @@ fn search_falls_back_to_line_number_prefixes() {
     let a = apply(
         &parse("*** Update File: a.rs\n<<<<<<< SEARCH\n2\t    x();\n=======\n2\t    y();\n>>>>>>> REPLACE\n").unwrap(),
         d.path(),
-        false,
+        &ApplyOptions::default(),
     )
     .unwrap();
     assert_eq!(read(d.path(), "a.rs"), "fn a() {\n    y();\n}\n");
@@ -230,7 +230,7 @@ fn search_must_not_be_empty_or_equal_to_replace() {
 fn identical_block_is_skipped_with_a_note() {
     let d = dir(&[("a.rs", "let x = 1;\nlet y = 2;\n")]);
     let patch = "*** Update File: a.rs\n<<<<<<< SEARCH\nlet x = 1;\n=======\nlet x = 1;\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nlet y = 2;\n=======\nlet y = 3;\n>>>>>>> REPLACE\n";
-    let applied = apply(&parse(patch).unwrap(), d.path(), false).unwrap();
+    let applied = apply(&parse(patch).unwrap(), d.path(), &ApplyOptions::default()).unwrap();
     assert_eq!(applied.skipped, vec![2]);
     assert_eq!(read(d.path(), "a.rs"), "let x = 1;\nlet y = 3;\n");
 }
@@ -239,7 +239,7 @@ fn identical_block_is_skipped_with_a_note() {
 fn identical_block_must_still_match_once() {
     let d = dir(&[("a.rs", "let x = 1;\n")]);
     let patch = "*** Update File: a.rs\n<<<<<<< SEARCH\nlet z = 1;\n=======\nlet z = 1;\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nlet x = 1;\n=======\nlet x = 2;\n>>>>>>> REPLACE\n";
-    let m = apply(&parse(patch).unwrap(), d.path(), false)
+    let m = apply(&parse(patch).unwrap(), d.path(), &ApplyOptions::default())
         .err()
         .unwrap()
         .to_string();
@@ -316,7 +316,7 @@ fn search_ignoring_indentation_writes_replace_in_the_file_indent() {
     let a = apply(
         &parse("*** Update File: a.go\n<<<<<<< SEARCH\n    if x {\n        return 1\n    }\n=======\n    if x {\n        return 2\n    }\n>>>>>>> REPLACE\n").unwrap(),
         d.path(),
-        false,
+        &ApplyOptions::default(),
     )
     .unwrap();
     assert_eq!(
@@ -333,7 +333,7 @@ fn search_ignoring_indentation_keeps_the_file_indent_unit() {
     let a = apply(
         &parse("*** Update File: a.py\n<<<<<<< SEARCH\n    def f(self):\n        return 1\n=======\n    def f(self):\n        return 2\n        pass\n>>>>>>> REPLACE\n").unwrap(),
         d.path(),
-        false,
+        &ApplyOptions::default(),
     )
     .unwrap();
     assert_eq!(
@@ -381,7 +381,7 @@ fn exact_search_wins_over_an_indentation_match() {
         )
         .unwrap(),
         d.path(),
-        false,
+        &ApplyOptions::default(),
     )
     .unwrap();
     assert_eq!(read(d.path(), "a.go"), "\tx();\n    y();\n");
@@ -394,7 +394,7 @@ fn fuzzy_search_ignores_tabs_and_space_runs_only_with_the_option() {
     let patch = "*** Update File: a.rs\n<<<<<<< SEARCH\nfn f() {\n    let x = 1;\n}\n=======\nfn f() {\n    let x = 2;\n}\n>>>>>>> REPLACE\n";
     let e = run(d.path(), patch).unwrap_err().shown();
     assert!(e.contains("SEARCH not found"), "{e}");
-    let a = apply_with_options(
+    let a = apply(
         &parse(patch).unwrap(),
         d.path(),
         &ApplyOptions {
@@ -411,7 +411,7 @@ fn fuzzy_search_ignores_tabs_and_space_runs_only_with_the_option() {
 fn fuzzy_search_skips_blank_lines_and_reports_the_window() {
     let d = dir(&[("a.rs", "fn f() {\n    a();\n\n    b();\n}\n")]);
     let patch = "*** Update File: a.rs\n<<<<<<< SEARCH\nfn f() {\n    a();\n    b();\n}\n=======\nfn f() {\n    c();\n}\n>>>>>>> REPLACE\n";
-    let a = apply_with_options(
+    let a = apply(
         &parse(patch).unwrap(),
         d.path(),
         &ApplyOptions {
@@ -431,7 +431,7 @@ fn fuzzy_search_must_match_once() {
         "fn a() {\n\tlet  x = 1;\n}\n\nfn b() {\n\tlet  x = 1;\n}\n",
     )]);
     let patch = "*** Update File: a.rs\n<<<<<<< SEARCH\n    let x = 1;\n=======\n    let x = 2;\n>>>>>>> REPLACE\n";
-    let e = apply_with_options(
+    let e = apply(
         &parse(patch).unwrap(),
         d.path(),
         &ApplyOptions {
@@ -455,7 +455,7 @@ fn search_matches_across_crlf_lines_and_keeps_crlf() {
         &parse("*** Update File: w.txt\n<<<<<<< SEARCH\na\nb\n=======\nA\nB\n>>>>>>> REPLACE\n")
             .unwrap(),
         d.path(),
-        false,
+        &ApplyOptions::default(),
     )
     .unwrap();
     assert_eq!(read(d.path(), "w.txt"), "A\r\nB\r\nc\r\n");
@@ -464,7 +464,7 @@ fn search_matches_across_crlf_lines_and_keeps_crlf() {
     let a = apply(
         &parse("*** Update File: w.txt\n<<<<<<< SEARCH\nc\n=======\nC\n>>>>>>> REPLACE\n").unwrap(),
         d.path(),
-        false,
+        &ApplyOptions::default(),
     )
     .unwrap();
     assert_eq!(read(d.path(), "w.txt"), "A\r\nB\r\nC\r\n");
@@ -538,7 +538,7 @@ fn crlf_patch_text_matches_an_lf_file() {
     let a = apply(
         &parse("*** Update File: w.txt\r\n<<<<<<< SEARCH\r\na\r\nb\r\n=======\r\nA\r\nB\r\n>>>>>>> REPLACE\r\n").unwrap(),
         d.path(),
-        false,
+        &ApplyOptions::default(),
     )
     .unwrap();
     assert_eq!(read(d.path(), "w.txt"), "A\nB\nc\n");

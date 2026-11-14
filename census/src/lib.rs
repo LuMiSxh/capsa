@@ -4,9 +4,13 @@
 pub mod config;
 pub mod context;
 pub mod hook;
+pub mod interop;
 pub mod ledger;
 pub mod limits;
 pub mod session;
 pub mod statusline;
 mod transcript;
 pub mod usage;
+
+/// The label for a value that a transcript or the price table does not name.
+pub const UNKNOWN: &str = "unknown";

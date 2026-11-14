@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus log`: a compact git log, with the changed lines of each commit.
 
-use crate::fmt::{Budget, Out, clip};
 use crate::git::git;
+use crate::out::{Budget, Out, clip};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-use capsa_core::render::{Align, Doc, Table};
+use capsa_core::render::{Align, Doc, Table, Tone, paint};
 use std::io;
 use std::path::Path;
 
@@ -41,11 +41,7 @@ struct Commit {
 }
 
 /// Compact `git log`: one line per commit with date, author and changed lines.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "execute hands over the parsed arguments"
-)]
-pub fn run(a: Args, out: &Out) -> Result<Outcome> {
+pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     // Like git: the first argument is a revision unless it names an existing path.
     let (rev, paths) = match a.args.split_first() {
         Some((r, rest)) if !Path::new(r).exists() => (Some(r.as_str()), rest),
@@ -97,7 +93,7 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
                 "{} {} {}",
                 out.header(&c.hash),
                 c.subject,
-                out.dim(&format!("({})", age(now, c.at)))
+                paint(&format!("({})", age(now, c.at)), Tone::Dim, out.color)
             );
             let line = cut.map_or_else(|| line.clone(), |n| clip(&line, 0, n));
             budget.emit(&line);
@@ -123,16 +119,7 @@ fn now() -> i64 {
 
 /// A compact age for a commit timestamp: `3d ago`, `2h ago`, `just now`.
 fn age(now: i64, at: i64) -> String {
-    let secs = now.saturating_sub(at).max(0) as u64;
-    let (n, unit) = match secs {
-        0..=59 => return "just now".to_owned(),
-        60..=3599 => (secs / 60, "m"),
-        3600..=86_399 => (secs / 3600, "h"),
-        86_400..=2_591_999 => (secs / 86_400, "d"),
-        2_592_000..=31_535_999 => (secs / 2_592_000, "mo"),
-        _ => (secs / 31_536_000, "y"),
-    };
-    format!("{n}{unit} ago")
+    capsa_core::format::ago(now.saturating_sub(at).max(0) as u64)
 }
 
 /// The human view: a titled table of commits with aligned columns, then the follow-up commands.

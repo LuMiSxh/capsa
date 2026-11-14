@@ -9,12 +9,14 @@ use serde_json::Value;
 
 use crate::claude_settings::{self, Settings, SettingsError, Step, remove_hook, set_hook};
 
-mod check;
 mod spec;
+mod state;
+mod status_line;
 #[cfg(test)]
 mod tests;
 
 pub use spec::{HookSpec, HookState};
+pub use status_line::{StatusLineSpec, StatusLineState};
 
 /// A coding agent that runs hooks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +118,25 @@ impl HookFile {
     /// Returns whether an entry was removed.
     pub fn remove(&mut self, spec: &HookSpec) -> bool {
         remove_hook(self.value_mut(), spec.event, spec.owns)
+    }
+
+    /// Returns the state of the statusLine that `spec` describes.
+    pub fn status_line(&self, spec: &StatusLineSpec) -> StatusLineState {
+        status_line::state(self.value(), spec)
+    }
+
+    /// Makes the statusLine run `spec.command`, replacing whatever statusLine the document holds.
+    ///
+    /// An identical command gives `Step::Set`. Check `status_line` first to keep a statusLine that
+    /// the tool does not own.
+    pub fn set_status_line(&mut self, spec: &StatusLineSpec) -> Step {
+        status_line::set(self.value_mut(), spec)
+    }
+
+    /// Removes the statusLine when it runs the tool's command, current or older. Returns whether a
+    /// statusLine was removed.
+    pub fn remove_status_line(&mut self, spec: &StatusLineSpec) -> bool {
+        status_line::remove(self.value_mut(), spec)
     }
 
     /// Writes the document over its file, after copying the old file to `<file>.bak`.

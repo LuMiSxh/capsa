@@ -1,20 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The `acus` binary: parses the command line and dispatches to the `cmd_*` modules.
 
-/// Prints one line through `fmt::out`, so `run` can capture a line's output.
-macro_rules! outln {
-   () => { $crate::fmt::out("\n") };
-   ($($arg:tt)*) => {{
-       $crate::fmt::out(&format!("{}\n", format_args!($($arg)*)));
-   }};
-}
-
-/// Prints without a newline through `fmt::out`, as `print!` does.
-macro_rules! outprint {
-   ($($arg:tt)*) => {{
-       $crate::fmt::out(&format!($($arg)*));
-   }};
-}
+#[macro_use]
+mod out;
 
 mod cmd_blame;
 mod cmd_ctx;
@@ -38,15 +26,17 @@ mod cmd_uninstall;
 mod cmd_update;
 mod config;
 
-mod fmt;
+mod follow;
 mod git;
 mod globs;
+mod guard_log;
 mod source;
 
 use anyhow::{Result, bail};
 use capsa_core::cli::{App, FormatArgs};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use capsa_core::hint::hinted;
 use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 
@@ -164,31 +154,30 @@ pub fn execute(cli: Cli, format: Format, nested: bool) -> Result<Outcome> {
     let name = cli.cmd.name();
     let null_on = cli.cmd.json_null_on();
     if cfg.commands.disabled.iter().any(|d| d == name) {
-        return Err(capsa_core::hint::Hinted::new(
+        return Err(hinted(
             format!("acus {name} is disabled by configuration"),
             format!(
                 "remove it from [commands] disabled in {} or from ACUS_DISABLE",
                 cfg.path.display()
             ),
-        )
-        .into());
+        ));
     }
-    let out = fmt::Out::new(format);
+    let out = out::Out::new(format);
     let result = match cli.cmd {
         Cmd::Find(a) => cmd_find::run(&a, &out),
         Cmd::Outline(a) => cmd_outline::run(a, &out),
         Cmd::Map(a) => cmd_map::run(a),
         Cmd::Files(a) => cmd_files::run(a, &out),
         Cmd::Show(a) => cmd_show::run(a, &out),
-        Cmd::Blame(a) => cmd_blame::run(a, &out),
-        Cmd::Follow(a) => cmd_follow::run(a, &out),
-        Cmd::Patch(a) => cmd_patch::run(a, &out, nested, &cfg),
+        Cmd::Blame(a) => cmd_blame::run(&a, &out),
+        Cmd::Follow(a) => cmd_follow::run(&a, &out),
+        Cmd::Patch(a) => cmd_patch::run(&a, &out, nested, &cfg),
         Cmd::Run(_) if nested => bail!("`run` cannot be nested"),
-        Cmd::Run(a) => cmd_run::run(a, &out),
-        Cmd::Ctx(a) => cmd_ctx::run(a, &out, &cfg),
-        Cmd::Diff(a) => cmd_diff::run(a, &out),
-        Cmd::Log(a) => cmd_log::run(a, &out),
-        Cmd::Hook(a) => cmd_hook::run(a, &cfg, config_problem.as_deref()),
+        Cmd::Run(a) => cmd_run::run(&a, &out),
+        Cmd::Ctx(a) => cmd_ctx::run(&a, &out, &cfg),
+        Cmd::Diff(a) => cmd_diff::run(&a, &out),
+        Cmd::Log(a) => cmd_log::run(&a, &out),
+        Cmd::Hook(a) => cmd_hook::run(&a, &cfg, config_problem.as_deref()),
         Cmd::Itself(a) => cmd_self::run(a, format),
     }?;
     if !nested && out.format == Format::Json && null_on.is_some_and(|o| o == result) {
@@ -236,10 +225,7 @@ pub fn parse_error(e: &clap::Error, args: &[String]) -> anyhow::Error {
         Some(clap::error::ContextValue::String(f)) => f.as_str(),
         _ => "",
     };
-    anyhow::Error::new(capsa_core::hint::Hinted::new(
-        format!("unexpected argument '{flag}' found"),
-        hint,
-    ))
+    hinted(format!("unexpected argument '{flag}' found"), hint)
 }
 
 /// Runs acus: the shared skeleton parses the command line, then `execute` runs it.

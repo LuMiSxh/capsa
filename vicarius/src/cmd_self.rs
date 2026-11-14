@@ -4,14 +4,12 @@
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
-#[cfg(not(feature = "cmd-update"))]
-use capsa_core::hint::Hinted;
 #[cfg(feature = "cmd-update")]
 use capsa_core::update::{UninstallArgs, UpdateArgs};
 
 /// This binary as the self-update and uninstall code sees it.
 #[cfg(feature = "cmd-update")]
-const TOOL: capsa_core::update::Tool = capsa_core::update::Tool {
+pub(crate) const TOOL: capsa_core::update::Tool = capsa_core::update::Tool {
     name: "vicarius",
     version: env!("CARGO_PKG_VERSION"),
 };
@@ -36,7 +34,7 @@ enum Action {
     /// Stop the service and remove the settings keys that it set.
     Stop,
     /// Check the agent, the service, the settings, the agent files and the config.
-    Doctor,
+    Doctor(crate::cmd_doctor::Args),
     /// Show the settings, or change them with `set`, `agent add` and `agent remove`.
     Config(crate::cmd_config::Args),
 }
@@ -61,17 +59,13 @@ pub fn run(a: Args, format: Format) -> Result<Outcome> {
         Action::Setup(a) => crate::cmd_service::setup(&a, format),
         Action::Start => crate::cmd_service::start(format),
         Action::Stop => crate::cmd_service::stop(format),
-        Action::Doctor => crate::cmd_doctor::run(format),
+        Action::Doctor(a) => crate::cmd_doctor::run(format, a.fix),
     }
 }
 
 #[cfg(not(feature = "cmd-update"))]
 fn update(_: UpdateArgs, _: Format) -> Result<Outcome> {
-    Err(Hinted::new(
-        "vicarius was built without `cmd-update`",
-        "cargo install --path vicarius --features cmd-update, or rerun the installer",
-    )
-    .into())
+    Err(capsa_core::hint::update_unavailable("vicarius", "vicarius"))
 }
 
 #[cfg(feature = "cmd-update")]
@@ -81,11 +75,7 @@ fn update(a: UpdateArgs, format: Format) -> Result<Outcome> {
 
 #[cfg(not(feature = "cmd-update"))]
 fn uninstall(_: &UninstallArgs, _: Format) -> Result<Outcome> {
-    Err(Hinted::new(
-        "vicarius was built without `cmd-update`",
-        "remove the binary by hand, or rebuild with --features cmd-update",
-    )
-    .into())
+    Err(capsa_core::hint::uninstall_unavailable("vicarius"))
 }
 
 #[cfg(feature = "cmd-update")]
