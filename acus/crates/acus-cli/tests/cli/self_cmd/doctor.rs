@@ -24,7 +24,10 @@ fn doctor_json_is_healthy_after_setup_and_fails_on_a_broken_config() {
         .iter()
         .map(|g| g["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["install", "config", "skill", "hooks", "guard"]);
+    assert_eq!(
+        names,
+        ["install", "config", "skill", "hooks", "guard", "interop"]
+    );
     let status = |name: &str| {
         v["groups"]
             .as_array()
@@ -38,6 +41,7 @@ fn doctor_json_is_healthy_after_setup_and_fails_on_a_broken_config() {
     assert_eq!(status("SessionStart hook").unwrap(), "ok");
     assert_eq!(status("PreToolUse hook").unwrap(), "ok");
     assert_eq!(status("SubagentStart hook").unwrap(), "ok");
+    assert_eq!(status("census").unwrap(), "ok");
 
     let bad = dir.path().join("acus.toml");
     std::fs::write(&bad, "[commands\ndisabled = 1\n").unwrap();

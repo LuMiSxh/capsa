@@ -13,7 +13,8 @@ use anyhow::{Context, Result};
 #[cfg(feature = "cmd-update")]
 use capsa_core::doctor::update_check;
 use capsa_core::doctor::{
-    check, dir_check, emit_report, log_checks, path_check, repair_hooks, repair_skill,
+    Sibling, check, dir_check, emit_report, interop_group, log_checks, path_check, repair_hooks,
+    repair_skill,
 };
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
@@ -47,6 +48,12 @@ pub fn run(format: Format, fix: bool) -> Result<Outcome> {
         skill_group(&home, &settings),
         hooks_group(&settings),
         guard_group(&cfg),
+        interop_group(&[Sibling {
+            tool: "census",
+            feature: "adaptive guard hints from census follow rates; \
+                guard blocks in the census status line",
+            bulletin: Some("census"),
+        }]),
     ];
     emit_report(
         &Doctor::new("acus", env!("CARGO_PKG_VERSION"), groups),

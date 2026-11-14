@@ -35,6 +35,11 @@
 - `acus self doctor` reports `guard log file`. A guard log that exists but cannot be opened for
   appending, such as one created by `sudo`, fails with a hint, instead of every decision being
   dropped unseen.
+- `acus self doctor` gets an `interop` group, after `guard`, with one line for `census`: `not
+  installed, off`, or census's bulletin age and the features that use it, adaptive guard hints
+  and guard blocks in the census status line. The lines are informational and never fail the
+  check. `acus self uninstall` removes acus's bulletins too, `acus.json` and `acus-release.json`,
+  with the binary.
 - `acus self setup` moves a guard log that older releases left beside the config file, with its
   `.old` copy, into the state directory. If the state directory already has a guard log, setup
   merges the old lines in front of it instead, oldest first, and leaves the state `.old` copy as
