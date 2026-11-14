@@ -1,17 +1,23 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use crate::state::tool_state;
+
+/// Returns the relative path of `tool`'s capsa bulletin under the scratch root.
+fn bulletin(tool: &str) -> String {
+    tool_state("capsa", &format!("bulletin/{tool}.json"))
+}
 
 #[test]
 fn guard_log_counts_rotated_and_current_lines_and_skips_bad_ones() {
     let home = Scratch::new("cli-guard");
     let cwd = home.path().to_path_buf();
     home.write(
-        "state/acus/guard.jsonl.old",
+        &tool_state("acus", "guard.jsonl.old"),
         &jsonl(&[json!({"ts": 10, "rule": "grep", "kind": "deny", "call": "grep a"})]),
     );
     home.write(
-        "state/acus/guard.jsonl",
+        &tool_state("acus", "guard.jsonl"),
         &format!(
             "{}not json\n{}",
             jsonl(&[json!({"ts": 20, "rule": "grep", "kind": "hint", "call": "grep b"})]),
@@ -34,7 +40,7 @@ fn guard_log_reads_the_current_line_format() {
     let home = Scratch::new("cli-guard-current");
     let cwd = home.path().to_path_buf();
     home.write(
-        "state/acus/guard.jsonl",
+        &tool_state("acus", "guard.jsonl"),
         &jsonl(&[
             json!({"ts": 1, "level": "info", "event": "decision", "session": "s", "cwd": "c",
             "tool": "Bash", "rule": "grep", "kind": "rewrite", "call": "x"}),
@@ -58,7 +64,7 @@ fn guard_log_reads_on_past_a_line_that_is_not_utf8() {
     bytes.extend_from_slice(
         jsonl(&[json!({"ts": 30, "rule": "sed", "kind": "escape", "call": "sed -i x"})]).as_bytes(),
     );
-    home.write_bytes("state/acus/guard.jsonl", &bytes);
+    home.write_bytes(&tool_state("acus", "guard.jsonl"), &bytes);
     let out = census(home.path(), &cwd, &["usage", "--guard", "--json"], "", &[]);
     assert_eq!(out.status.code(), Some(0));
     let v: Value = serde_json::from_slice(&out.stdout).expect("guard --json");
@@ -102,7 +108,7 @@ fn five_hints_and_a_later_escape(home: &Scratch) {
         json!({"ts": 100000, "session": "x", "rule": "sed", "kind": "escape",
         "call": "sed -i x"}),
     );
-    home.write("state/acus/guard.jsonl", &jsonl(&lines));
+    home.write(&tool_state("acus", "guard.jsonl"), &jsonl(&lines));
 }
 
 #[test]
@@ -144,9 +150,9 @@ fn guard_writes_the_follow_rates_to_the_census_bulletin() {
         &[("CENSUS_NOW", "1791964800")],
     );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    let path = home.path().join("state/capsa/bulletin/census.json");
-    let bulletin = std::fs::read_to_string(&path).expect("the census bulletin is written");
-    let b: Value = serde_json::from_str(&bulletin).expect("bulletin json");
+    let path = home.path().join(bulletin("census"));
+    let body = std::fs::read_to_string(&path).expect("the census bulletin is written");
+    let b: Value = serde_json::from_str(&body).expect("bulletin json");
     assert_eq!(b["guard_follow"]["at"], 1791964800);
     assert_eq!(b["guard_follow"]["ttl"], 604_800);
     assert_eq!(b["guard_follow"]["value"]["grep"].as_f64(), Some(1.0));
@@ -158,7 +164,7 @@ fn guard_by_project_splits_each_rule_per_working_directory() {
     let home = Scratch::new("cli-guard-projects");
     let cwd = home.path().to_path_buf();
     home.write(
-        "state/acus/guard.jsonl",
+        &tool_state("acus", "guard.jsonl"),
         &jsonl(&[
             json!({"ts": 1, "session": "s", "cwd": "/work/a", "rule": "grep", "kind": "deny", "call": "grep x"}),
             json!({"ts": 2, "session": "s", "cwd": "/work/b", "rule": "grep", "kind": "hint", "call": "grep y"}),
@@ -192,7 +198,7 @@ fn guard_by_project_names_the_rows_it_leaves_out() {
     let home = Scratch::new("cli-guard-projects-top");
     let cwd = home.path().to_path_buf();
     home.write(
-        "state/acus/guard.jsonl",
+        &tool_state("acus", "guard.jsonl"),
         &jsonl(&[
             json!({"ts": 1, "session": "s", "cwd": "/work/a", "rule": "grep", "kind": "deny", "call": "grep x"}),
             json!({"ts": 2, "session": "s", "cwd": "/work/b", "rule": "grep", "kind": "deny", "call": "grep y"}),

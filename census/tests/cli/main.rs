@@ -4,6 +4,8 @@
 
 #[path = "../common/mod.rs"]
 mod common;
+#[path = "../common/state.rs"]
+mod state;
 
 mod billing;
 mod context;

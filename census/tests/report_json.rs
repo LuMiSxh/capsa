@@ -10,8 +10,11 @@
 )]
 
 mod common;
+#[path = "common/state.rs"]
+mod state;
 
 use common::Scratch;
+use state::tool_state;
 
 /// Where census reads its config under a scratch home: macOS ignores `XDG_CONFIG_HOME`.
 const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
@@ -152,7 +155,7 @@ fn claude_fixture(home: &Scratch) {
 /// The acus guard log: a deny, a hint and an escaped call, in the format acus writes.
 fn guard_fixture(home: &Scratch) {
     home.write(
-        "state/acus/guard.jsonl",
+        &tool_state("acus", "guard.jsonl"),
         &jsonl(&[
             json!({"ts": 1791900000, "session": "s1", "cwd": "/work/app", "tool": "Bash",
                 "rule": "grep", "kind": "deny", "call": "grep -r x ."}),

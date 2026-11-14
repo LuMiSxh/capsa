@@ -2,8 +2,16 @@
 //! Runs `census hook` and `census self skill` as binaries under a scratch state and config.
 
 mod common;
+#[path = "common/state.rs"]
+mod state;
 
 use common::Scratch;
+use state::tool_state;
+
+/// Returns the relative path of `tool`'s capsa bulletin under the scratch root.
+fn bulletin(tool: &str) -> String {
+    tool_state("capsa", &format!("bulletin/{tool}.json"))
+}
 
 /// Where census reads its config under a scratch home: macOS ignores `XDG_CONFIG_HOME`.
 const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
@@ -168,24 +176,24 @@ fn a_session_start_points_at_the_report_commands_once() {
 fn a_session_start_writes_the_guard_follow_bulletin() {
     let h = Hook::new("hook-bulletin");
     h.hook(h.input("SessionStart", 48_000).as_bytes());
-    let text = std::fs::read_to_string(h.home.path().join("state/capsa/bulletin/census.json"))
+    let text = std::fs::read_to_string(h.home.path().join(bulletin("census")))
         .expect("the census bulletin is written at session start");
-    let bulletin: Value = serde_json::from_str(&text).expect("bulletin json");
-    assert_eq!(bulletin["guard_follow"]["at"], NOW);
+    let body: Value = serde_json::from_str(&text).expect("bulletin json");
+    assert_eq!(body["guard_follow"]["at"], NOW);
 }
 
 /// Returns the `at` of the census bulletin's guard follow rates, if the bulletin reads.
 fn bulletin_at(h: &Hook) -> Option<u64> {
-    let path = h.home.path().join("state/capsa/bulletin/census.json");
-    let bulletin: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
-    bulletin["guard_follow"]["at"].as_u64()
+    let path = h.home.path().join(bulletin("census"));
+    let body: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    body["guard_follow"]["at"].as_u64()
 }
 
 #[test]
 fn a_session_start_keeps_a_fresh_bulletin() {
     let h = Hook::new("hook-bulletin-fresh");
     h.home.write(
-        "state/capsa/bulletin/census.json",
+        &bulletin("census"),
         &json!({"guard_follow": {"at": NOW - 3600, "ttl": 604_800, "value": {"grep": 0.5}}})
             .to_string(),
     );
@@ -197,8 +205,9 @@ fn a_session_start_keeps_a_fresh_bulletin() {
 fn a_session_start_rewrites_a_bulletin_older_than_six_hours() {
     let h = Hook::new("hook-bulletin-stale");
     h.home.write(
-        "state/capsa/bulletin/census.json",
-        &json!({"guard_follow": {"at": NOW - 6 * 3600, "ttl": 604_800, "value": {}}}).to_string(),
+        &bulletin("census"),
+        &json!({ "guard_follow": { "at": NOW - 6 * 3600, "ttl": 604_800, "value": {} } })
+            .to_string(),
     );
     h.hook(h.input("SessionStart", 48_000).as_bytes());
     assert_eq!(bulletin_at(&h), Some(NOW));
@@ -206,7 +215,8 @@ fn a_session_start_rewrites_a_bulletin_older_than_six_hours() {
 
 /// Returns the file size that the ledger index records for `file`, if it has one.
 fn indexed_size(h: &Hook, file: &Path) -> Option<u64> {
-    let text = std::fs::read_to_string(h.home.path().join("state/census/index.json")).ok()?;
+    let text =
+        std::fs::read_to_string(h.home.path().join(tool_state("census", "index.json"))).ok()?;
     let index: Value = serde_json::from_str(&text).ok()?;
     index["files"][file.to_string_lossy().as_ref()]["size"].as_u64()
 }

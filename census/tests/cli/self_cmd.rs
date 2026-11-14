@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use crate::state::tool_state;
 
 #[test]
 fn the_config_command_moved_under_self() {
@@ -306,7 +307,7 @@ fn doctor_does_not_count_warnings_as_hook_errors() {
     let home = Scratch::new("cli-doctor-hook-warn");
     let cwd = home.path().to_path_buf();
     home.write(
-        "state/census/hook.jsonl",
+        &tool_state("census", "hook.jsonl"),
         &jsonl(&[
             json!({"ts": 10, "level": "error", "event": "hook.error", "message": "not JSON"}),
             json!({"ts": 30, "level": "warn", "event": "bulletin.refresh", "message": "full"}),
