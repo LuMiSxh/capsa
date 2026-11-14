@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0]
+
 ### Added
 
 - `vicarius self doctor` gets an `update` line in its install group: ok with `<version> is the
