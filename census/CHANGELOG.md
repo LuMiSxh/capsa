@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0]
+
 ### Added
 
 - `census self doctor` gets an `update` line in its install group: ok with
