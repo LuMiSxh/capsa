@@ -45,6 +45,21 @@
   while its bulletin is current; a missing, stale or unreadable bulletin gives none. Benchmark:
   release build, `hyperfine -N -w 5 -r 50` on a sample input with both bulletins current, mean
   1.7 ms before and 1.7 ms after (σ 0.1 ms), memory 3.1 to 3.2 MiB. Only `--line` reads them.
+- `census self doctor` gets an `interop` group after the others, with an `ok` line for acus,
+  vicarius and pons. An installed sibling shows the feature it feeds, such as `guard log for
+  census usage --guard`, and for acus and vicarius the age of its bulletin; a sibling that is not
+  installed reads `not installed, off`. No line fails.
+- `census statusline --line` adds an `update` segment after the interop segments, such as
+  `update acus,pons`, naming the capsa tools (acus, census, pons, vicarius) whose `<tool>-release`
+  bulletin is current and shows a newer release. It is absent when none does, and only `--line`
+  reads the release bulletins, through `capsa_core::update::release_status`. Benchmark: release
+  build, `hyperfine -N -w 5 -r 50` on `census statusline --line` with the DeepSeek gate, the guard
+  blocks and the four release bulletins current; three paired runs, mean 1.79 to 1.99 ms before
+  and 1.85 to 1.99 ms after, p50 1.69 to 1.87 ms before and 1.74 to 1.91 ms after, σ 0.20 to 0.35
+  ms, peak memory 3.3 MiB before and after.
+- `census self uninstall` also removes census's bulletins, `census.json` and `census-release.json`
+  in the capsa bulletin directory, so the other tools stop reading them. The removal is the shared
+  uninstall of `capsa-core`.
 
 ### Changed
 

@@ -9,7 +9,8 @@ use capsa_core::config::legacy_json;
 #[cfg(feature = "cmd-update")]
 use capsa_core::doctor::update_check;
 use capsa_core::doctor::{
-    check, dir_check, emit_report, log_checks, ok, path_check, repair_hooks, repair_skill,
+    Sibling, check, dir_check, emit_report, interop_group, log_checks, ok, path_check,
+    repair_hooks, repair_skill,
 };
 use capsa_core::exit::Outcome;
 use capsa_core::hint::ResultExt;
@@ -45,6 +46,7 @@ pub fn run(out: &Out, fix: bool) -> Result<Outcome> {
         skill_group(&home, &settings),
         hooks_group(&settings),
         state_group(),
+        interop_group(&SIBLINGS),
     ];
     emit_report(
         &Doctor::new(TOOL, env!("CARGO_PKG_VERSION"), groups),
@@ -52,6 +54,24 @@ pub fn run(out: &Out, fix: bool) -> Result<Outcome> {
         out.format,
     )
 }
+
+const SIBLINGS: [Sibling<'static>; 3] = [
+    Sibling {
+        tool: "acus",
+        feature: "guard log for `census usage --guard`, guard blocks in the status line",
+        bulletin: Some("acus"),
+    },
+    Sibling {
+        tool: "vicarius",
+        feature: "DeepSeek segment in the status line",
+        bulletin: Some("vicarius"),
+    },
+    Sibling {
+        tool: "pons",
+        feature: "rate-limit snapshots for `census limits`",
+        bulletin: None,
+    },
+];
 
 fn install_group() -> Group {
     let exe = std::env::current_exe().ok();

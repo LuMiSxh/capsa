@@ -121,6 +121,29 @@ fn deepseek_gate_shows_the_balance_when_open_and_off_when_closed() {
 }
 
 #[test]
+fn update_segment_names_the_tools_with_a_current_newer_release() {
+    let home = Scratch::new("cli-statusline-update");
+    let now = capsa_core::bulletin::now();
+    let release = |at: u64, version: &str, latest: &str| json!({"at": at, "ttl": 86400, "value": {"version": version, "latest": latest}});
+    write_bulletin(&home, "acus-release", &release(now, "0.23.0", "0.24.0"));
+    write_bulletin(&home, "pons-release", &release(now, "0.11.0", "0.11.0"));
+    write_bulletin(
+        &home,
+        "vicarius-release",
+        &release(now - 2 * 86400, "0.3.0", "0.4.0"),
+    );
+    assert_eq!(
+        line_as(&home, "s1"),
+        "ctx 44k/400k · 5h 6% · wk 1% · update acus\n"
+    );
+    write_bulletin(&home, "census-release", &release(now, "0.7.0", "0.8.0"));
+    assert_eq!(
+        line_as(&home, "s1"),
+        "ctx 44k/400k · 5h 6% · wk 1% · update acus,census\n"
+    );
+}
+
+#[test]
 fn deepseek_segment_is_absent_when_the_bulletin_is_missing_stale_or_unreadable() {
     let home = Scratch::new("cli-statusline-deepseek-absent");
     assert_eq!(line_as(&home, "s1"), BASE);

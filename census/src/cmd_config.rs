@@ -7,7 +7,7 @@ use crate::out::Out;
 use anyhow::Result;
 use capsa_core::config::ConfigFile;
 use capsa_core::exit::Outcome;
-use capsa_core::hint::{Hinted, ResultExt};
+use capsa_core::hint::{ResultExt, hinted};
 use capsa_core::render::{Doc, Render, emit};
 use census::config::{Billing, Config, Mode};
 use census::limits::{self, DailyStatus};
@@ -107,13 +107,13 @@ fn positive_usd(s: &str) -> Result<f64, String> {
 
 /// Reads the arguments of `set billing`: a provider is written in lowercase letters, digits, `-`
 /// or `_`, and a billing is `subscription` or `api`.
-fn billing_key(provider: &str, value: &str) -> Result<(String, Billing), Hinted> {
+fn billing_key(provider: &str, value: &str) -> Result<(String, Billing)> {
     let well_formed = !provider.is_empty()
         && provider
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
     if !well_formed {
-        return Err(Hinted::new(
+        return Err(hinted(
             format!("`{provider}` is not a provider name"),
             "write the provider in lowercase, as the price table names it, such as `openai`",
         ));
@@ -122,7 +122,7 @@ fn billing_key(provider: &str, value: &str) -> Result<(String, Billing), Hinted>
         "subscription" => Billing::Subscription,
         "api" => Billing::Api,
         _ => {
-            return Err(Hinted::new(
+            return Err(hinted(
                 format!("`{value}` is not a billing"),
                 "use `subscription` or `api`, as in `set billing openai subscription`",
             ));

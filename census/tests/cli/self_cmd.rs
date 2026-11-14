@@ -32,7 +32,10 @@ fn doctor_is_one_json_value_and_exits_1_only_when_a_check_fails() {
         .iter()
         .map(|g| g["name"].as_str().expect("group name"))
         .collect();
-    assert_eq!(groups, ["install", "config", "skill", "hooks", "state"]);
+    assert_eq!(
+        groups,
+        ["install", "config", "skill", "hooks", "state", "interop"]
+    );
 
     home.write(CONFIG_FILE, "mode = \"budget");
     let broken = census(home.path(), &cwd, &["self", "doctor", "--json"], "", &extra);
@@ -41,6 +44,23 @@ fn doctor_is_one_json_value_and_exits_1_only_when_a_check_fails() {
     assert_eq!(v["ok"], false);
     assert_eq!(v["groups"][1]["name"], "config");
     assert_eq!(v["groups"][1]["checks"][0]["status"], "fail");
+}
+
+#[test]
+fn doctor_lists_the_sibling_tools_in_an_ok_interop_group() {
+    let home = Scratch::new("cli-doctor-interop");
+    let cwd = home.path().to_path_buf();
+    let out = census(home.path(), &cwd, &["self", "doctor", "--json"], "", &[]);
+    let v: Value = serde_json::from_slice(&out.stdout).expect("doctor --json is one value");
+    let interop = &v["groups"][5];
+    assert_eq!(interop["name"], "interop");
+    let checks = interop["checks"].as_array().expect("interop checks");
+    let names: Vec<&str> = checks
+        .iter()
+        .map(|c| c["name"].as_str().expect("check name"))
+        .collect();
+    assert_eq!(names, ["acus", "vicarius", "pons"]);
+    assert!(checks.iter().all(|c| c["status"] == "ok"));
 }
 
 #[test]
