@@ -159,7 +159,9 @@ fn prune_if_due(dir: &Path) {
     if last.is_some_and(|age| age < DAY) {
         return;
     }
-    if std::fs::write(dir.join(MARKER), b"").is_ok() {
+    // Rewriting the marker with a byte refreshes its modification time; rewriting an empty file
+    // with no bytes leaves it unchanged on Windows, and prune then takes it for an expired entry.
+    if std::fs::write(dir.join(MARKER), b"1").is_ok() {
         prune(dir);
     }
 }
