@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::{Tool, UpdateError, release};
-use crate::bulletin;
+use crate::bulletin::{self, Stamped};
 use crate::fs::write_cache;
 use crate::paths::state_dir;
 use crate::version::{is_older, is_version};
@@ -43,37 +43,70 @@ struct Saved {
     latest: String,
 }
 
+/// The release bulletin of a tool: the version it runs and the newest version it last saw.
+///
+/// Other tools read it through [`release_status`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Release {
+    pub version: String,
+    pub latest: String,
+}
+
 /// Returns whether the running `tool` is the newest release.
 ///
 /// The newest version comes from the state directory's `latest.json` when the file is less than a
-/// day old, and from GitHub otherwise, which then rewrites the file. It never fails: a release
+/// day old, and from GitHub otherwise, which then rewrites the file. Once a version is known, the
+/// `<tool>-release` bulletin is rewritten too, see [`release_status`]. It never fails: a release
 /// that cannot be read is [`UpdateCheck::Unknown`].
 ///
 /// With `CAPSA_UPDATE_CHECK=off` in the environment the check returns `Unknown` without reading the
-/// file or asking GitHub. The tools' tests set it, so that no test run reaches the network.
+/// file, writing a bulletin or asking GitHub. The tools' tests set it, so that no test run reaches
+/// the network.
 pub fn check(tool: &Tool) -> UpdateCheck {
     if disabled_by(std::env::var_os(SWITCH).as_deref()) {
         return UpdateCheck::Unknown;
     }
     let path = cache_path(tool.name);
-    check_with(tool, &path, bulletin::now(), |running| {
+    check_with(tool, &path, &bulletin::dir(), bulletin::now(), |running| {
         let token = release::token();
         release::newest(running, token.as_deref(), Some(TIMEOUT))
             .map(|found| found.version(running).to_owned())
     })
 }
 
-/// Saves `latest` as the newest version of `tool`, so that the next check need not ask GitHub. A
-/// file that cannot be written only costs one more request, so the error is dropped.
-pub(super) fn remember(tool: &Tool, latest: &str) {
-    let _ = save(&cache_path(tool.name), bulletin::now(), latest);
+/// Saves `latest` as the newest version of `tool`, so that the next check need not ask GitHub, and
+/// writes the release bulletin with `version` as the installed version. A file that cannot be
+/// written only costs one more request, so the errors are dropped.
+pub(super) fn remember(tool: &Tool, version: &str, latest: &str) {
+    remember_in(
+        &cache_path(tool.name),
+        &bulletin::dir(),
+        tool.name,
+        version,
+        bulletin::now(),
+        latest,
+    );
+}
+
+pub(super) fn remember_in(
+    path: &Path,
+    bulletins: &Path,
+    tool: &str,
+    version: &str,
+    now: u64,
+    latest: &str,
+) {
+    let _ = save(path, now, latest);
+    publish(bulletins, tool, version, now, latest);
 }
 
 /// Judges `tool` against the version saved at `path` when it is fresh at `now`; otherwise it
-/// judges against what `fetch` returns and saves that.
+/// judges against what `fetch` returns and saves that. Either way the release bulletin in
+/// `bulletins` is rewritten, so a binary that was just installed corrects it at its next check.
 pub(super) fn check_with(
     tool: &Tool,
     path: &Path,
+    bulletins: &Path,
     now: u64,
     fetch: impl FnOnce(&Tool) -> Result<String, UpdateError>,
 ) -> UpdateCheck {
@@ -87,6 +120,7 @@ pub(super) fn check_with(
             Err(_) => return UpdateCheck::Unknown,
         },
     };
+    publish(bulletins, tool.name, tool.version, now, &latest);
     judge(tool.version, &latest)
 }
 
@@ -95,6 +129,37 @@ pub(super) fn check_with(
 /// Only the exact value `off` does; any other value, or none, leaves the check on.
 pub(super) fn disabled_by(value: Option<&OsStr>) -> bool {
     value == Some(OsStr::new("off"))
+}
+
+/// Returns the name of the release bulletin of `tool`, which is `<tool>-release`.
+pub(super) fn release_bulletin(tool: &str) -> String {
+    format!("{tool}-release")
+}
+
+/// Returns the newest version of `tool` that its last check saw, when the release bulletin is
+/// current and that release is newer than the running version it recorded.
+pub fn release_status(tool: &str) -> Option<String> {
+    release_status_in(&bulletin::dir(), tool, bulletin::now())
+}
+
+pub(super) fn release_status_in(bulletins: &Path, tool: &str, now: u64) -> Option<String> {
+    let stamped: Stamped<Release> = bulletin::read_in(bulletins, &release_bulletin(tool))?;
+    let release = stamped.current(now)?;
+    is_older(&release.version, &release.latest).then(|| release.latest.clone())
+}
+
+/// Writes the release bulletin of `tool` into `bulletins`, with its running `version` and
+/// `latest`. A failed write leaves the previous bulletin, so the error is dropped.
+fn publish(bulletins: &Path, tool: &str, version: &str, now: u64, latest: &str) {
+    let release = Stamped {
+        at: now,
+        ttl: MAX_AGE_SECS,
+        value: Release {
+            version: version.to_owned(),
+            latest: latest.to_owned(),
+        },
+    };
+    let _ = bulletin::write_in(bulletins, &release_bulletin(tool), &release);
 }
 
 fn judge(current: &str, latest: &str) -> UpdateCheck {

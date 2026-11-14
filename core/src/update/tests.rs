@@ -9,13 +9,30 @@ use super::binary::{ensure_named, remove, replace};
 use super::release::{
     archive_name, asset_url, authorization, listing_error, resolve_token, select_release, version,
 };
-use super::{Removal, Report, State, Tool, UpdateError};
+use super::{Removal, Report, State, Tool, UpdateError, withdraw_bulletins};
 use crate::format::Format;
 use crate::hint::Hint;
 use crate::render::emit_to;
 
 fn releases(json: &str) -> Vec<Value> {
     serde_json::from_str(json).unwrap()
+}
+
+#[test]
+fn withdrawing_removes_the_tools_bulletins_and_leaves_the_others() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = Tool {
+        name: "acus",
+        version: "0.2.0",
+    };
+    for name in ["acus.json", "acus-release.json", "census.json"] {
+        std::fs::write(dir.path().join(name), "{}").unwrap();
+    }
+    withdraw_bulletins(dir.path(), &tool).unwrap();
+    assert!(!dir.path().join("acus.json").exists());
+    assert!(!dir.path().join("acus-release.json").exists());
+    assert!(dir.path().join("census.json").exists());
+    withdraw_bulletins(dir.path(), &tool).unwrap();
 }
 
 #[test]

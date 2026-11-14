@@ -58,6 +58,12 @@ pub fn read<T: DeserializeOwned>(tool: &str) -> Option<T> {
     read_in(&dir(), tool)
 }
 
+/// Returns the unix second at which the bulletin of `tool` was last written, or `None` when it is
+/// missing.
+pub fn written_at(tool: &str) -> Option<u64> {
+    written_at_in(&dir(), tool)
+}
+
 /// Returns the current unix time in seconds, or 0 before the epoch.
 pub fn now() -> u64 {
     SystemTime::now()
@@ -100,12 +106,27 @@ pub fn remove_in(base: &Path, tool: &str) -> Result<(), BulletinError> {
     }
 }
 
-fn read_in<T: DeserializeOwned>(base: &Path, tool: &str) -> Option<T> {
+/// Reads the bulletin of `tool` from `base`, or `None` when it is missing, unreadable or not a `T`.
+pub fn read_in<T: DeserializeOwned>(base: &Path, tool: &str) -> Option<T> {
     if !valid_tool(tool) {
         return None;
     }
     let bytes = fs::read(base.join(format!("{tool}.json"))).ok()?;
     serde_json::from_slice(&bytes).ok()
+}
+
+fn written_at_in(base: &Path, tool: &str) -> Option<u64> {
+    if !valid_tool(tool) {
+        return None;
+    }
+    let modified = fs::metadata(base.join(format!("{tool}.json")))
+        .ok()?
+        .modified()
+        .ok()?;
+    modified
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|elapsed| elapsed.as_secs())
 }
 
 fn valid_tool(tool: &str) -> bool {
@@ -240,5 +261,15 @@ mod tests {
         assert!(matches!(err, BulletinError::InvalidTool(name) if name == "../acus"));
         assert_eq!(read_in::<Status>(dir.path(), "../acus"), None);
         assert!(names(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn written_at_is_the_last_write_and_a_missing_bulletin_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(written_at_in(dir.path(), "acus"), None);
+        write_in(dir.path(), "acus", &status(10)).unwrap();
+        let at = written_at_in(dir.path(), "acus").unwrap();
+        assert!(at.abs_diff(now()) < 60, "{at}");
+        assert_eq!(written_at_in(dir.path(), "../acus"), None);
     }
 }

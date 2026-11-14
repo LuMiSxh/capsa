@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Owns the checks every `self doctor` shares: the check constructors, the probes for directories
-//! and files, the PATH check and the health of a JSON-lines log.
+//! and files, the PATH check, the health of a JSON-lines log and the sibling-tool group.
 
 mod fix;
+mod interop;
+#[cfg(test)]
+mod interop_tests;
 mod log_health;
 mod on_path;
 mod probe;
@@ -18,6 +21,7 @@ use std::borrow::Cow;
 use crate::render::{Check, Status};
 
 pub use fix::{Repaired, emit_report, repair_hooks, repair_skill};
+pub use interop::{Sibling, interop_group};
 pub use log_health::log_checks;
 pub use on_path::path_check;
 pub use probe::{dir_check, same_file, writable};
