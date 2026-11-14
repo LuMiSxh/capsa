@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.23.0]
+
 ### Added
 
 - `acus self doctor` gets an `update` line: ok with `<version> is the latest`, a warning with
