@@ -114,7 +114,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l");
         std::fs::write(&path, "old nonce").unwrap();
-        let _held = exclusive(&path, SHORT).unwrap().unwrap();
+        let held = exclusive(&path, SHORT).unwrap().unwrap();
+        drop(held);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "old nonce");
     }
 
