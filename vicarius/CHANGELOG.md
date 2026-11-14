@@ -24,6 +24,10 @@
   that was set up. The launchd plist, the settings `env` keys and the service are left to
   `self setup` and `self start`, each with its hint. A `fixed` section lists the repairs; JSON
   gets a `fixed` array.
+- `vicarius self doctor` gets an `interop` group, printed last: the `census` line is ok with
+  `installed, active` when census is on `PATH`, since it reads the DeepSeek gate and balance from
+  the vicarius bulletin for its status line, and ok with `not installed, off` without it. The line
+  never fails, so a missing sibling does not change the exit code.
 
 ### Changed
 

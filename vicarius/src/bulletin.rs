@@ -6,7 +6,7 @@ use crate::refresh::LOG_LIMIT;
 use capsa_core::bulletin::{self, BulletinError, Stamped};
 use capsa_core::log::{self, Level};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use tokio::task::JoinHandle;
 
@@ -107,12 +107,4 @@ impl Publisher {
 #[derive(Serialize)]
 struct Failure {
     error: String,
-}
-
-/// Removes the vicarius bulletin from `dir`, for `self uninstall`.
-///
-/// # Errors
-/// Fails when the bulletin exists and cannot be removed.
-pub fn withdraw(dir: &Path) -> Result<(), BulletinError> {
-    bulletin::remove_in(dir, TOOL)
 }

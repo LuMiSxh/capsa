@@ -12,7 +12,9 @@ use anyhow::Result;
 use capsa_core::claude_settings::{self, Settings, SettingsError};
 #[cfg(feature = "cmd-update")]
 use capsa_core::doctor::update_check;
-use capsa_core::doctor::{check, dir_check, emit_report, log_checks, ok, same_file};
+use capsa_core::doctor::{
+    Sibling, check, dir_check, emit_report, interop_group, log_checks, ok, same_file,
+};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::Hint;
@@ -77,6 +79,7 @@ pub fn run(format: Format, fix: bool) -> Result<Outcome> {
         settings_group(&settings, &expected),
         agents_group(fetched.as_ref()),
         config_group(&config),
+        interop(),
     ];
     emit_report(
         &Doctor::new(TOOL, env!("CARGO_PKG_VERSION"), groups),
@@ -448,4 +451,14 @@ fn config_group(config: &Result<Config, vicarius::config::ConfigError>) -> Group
         name: "config",
         checks,
     }
+}
+
+/// Reports whether census is installed, since it reads the DeepSeek gate and balance from the
+/// vicarius bulletin for its status line.
+fn interop() -> Group {
+    interop_group(&[Sibling {
+        tool: "census",
+        feature: "DeepSeek gate and balance in the census status line",
+        bulletin: None,
+    }])
 }
