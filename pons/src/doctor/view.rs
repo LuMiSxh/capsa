@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The doctor result in the shared doctor model: four groups of checks, and the pons facts
+//! The doctor result in the shared doctor model: five groups of checks, and the pons facts
 //! that are not a check as detail lines.
 
-use capsa_core::doctor::{check, update_check};
+use capsa_core::doctor::{Sibling, check, interop_group, update_check};
 use capsa_core::exit::Outcome;
 use capsa_core::render::{Check, Doc, Doctor, Group, Render, Status};
 use serde::{Serialize, Serializer};
@@ -41,7 +41,7 @@ impl Serialize for View {
     }
 }
 
-/// The four groups of checks: launcher, zed, processes and wire log.
+/// The five groups of checks: launcher, zed, processes, wire log and interop.
 fn groups(r: &Report) -> Vec<Group> {
     vec![
         Group {
@@ -60,6 +60,11 @@ fn groups(r: &Report) -> Vec<Group> {
             name: "wire log",
             checks: log_checks(r),
         },
+        interop_group(&[Sibling {
+            tool: "census",
+            feature: "rate-limit snapshots that census reads",
+            bulletin: None,
+        }]),
     ]
 }
 

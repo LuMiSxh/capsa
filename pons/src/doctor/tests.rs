@@ -338,6 +338,17 @@ fn the_report_is_ascii_and_survives_missing_everything() {
     assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(v["groups"][0]["checks"][0]["name"], "would run");
     assert_eq!(v["groups"][0]["checks"][0]["status"], "fail");
+    let groups = v["groups"].as_array().unwrap();
+    let interop = groups.last().unwrap();
+    assert_eq!(interop["name"], "interop");
+    assert_eq!(interop["checks"][0]["name"], "census");
+    assert!(
+        interop["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["status"] == "ok")
+    );
 }
 
 /// Answers the npm registry and `claude --version`, and nothing else.
