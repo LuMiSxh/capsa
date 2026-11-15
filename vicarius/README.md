@@ -33,7 +33,7 @@ export DEEPSEEK_API_KEY=...
 
 The launchd service picks the key up through zsh's `.zshenv`. vicarius never writes the key to disk.
 
-Build from source, with the toolchain pinned in `rust-toolchain.toml` (see [Build from source](../README.md#build-from-source)): `cargo install --locked --path vicarius`.
+Build from source, with the stable toolchain set in `rust-toolchain.toml` (see [Build from source](../README.md#build-from-source)): `cargo install --locked --path vicarius`.
 
 ## Commands
 

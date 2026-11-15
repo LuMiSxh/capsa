@@ -26,7 +26,7 @@ Install the release build with the capsa installer, then wire census into Claude
 census self setup             # hooks and status line, see Hook
 ```
 
-Build from source, with the toolchain pinned in `rust-toolchain.toml` (see [Build from source](../README.md#build-from-source)): `cargo install --locked --path census`.
+Build from source, with the stable toolchain set in `rust-toolchain.toml` (see [Build from source](../README.md#build-from-source)): `cargo install --locked --path census`.
 
 ## Commands
 

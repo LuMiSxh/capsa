@@ -34,7 +34,7 @@ Windows (PowerShell), pons only:
 
 The installers put `pons` in `~/.local/bin` (`CAPSA_INSTALL_DIR` changes that) after checking the release against its `.sha256` file. Then run `pons self setup` to make sure the Claude ACP adapter is installed, and point Zed at pons as described in [Zed](#zed).
 
-Build from source, with the toolchain pinned in `rust-toolchain.toml` (see [Build from source](../README.md#build-from-source)). The `release-unwind` profile keeps panics unwinding, which the fail-safe needs:
+Build from source, with the stable toolchain set in `rust-toolchain.toml` (see [Build from source](../README.md#build-from-source)). The `release-unwind` profile keeps panics unwinding, which the fail-safe needs:
 
 ```sh
 cargo install --path pons --profile release-unwind

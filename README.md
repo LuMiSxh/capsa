@@ -52,7 +52,7 @@ cargo install --path pons --profile release-unwind
 cargo install --path vicarius
 ```
 
-The toolchain is pinned in `rust-toolchain.toml`. pons uses the `release-unwind` profile, which keeps panics unwinding for its failsafe.
+`rust-toolchain.toml` selects the stable toolchain. pons uses the `release-unwind` profile, which keeps panics unwinding for its failsafe.
 
 ## Releases
 

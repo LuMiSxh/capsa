@@ -34,7 +34,7 @@ irm https://raw.githubusercontent.com/LuMiSxh/capsa/main/install.ps1 | iex
 
 Both installers put the newest `acus-v*` release in `~/.local/bin` (`CAPSA_INSTALL_DIR` changes that), add it to `PATH` and install the agent skill to `~/.claude/skills/acus/` and `~/.agents/skills/acus/`. `CAPSA_NO_SKILL=1` (or `ACUS_NO_SKILL=1`) skips the skill. Then run `acus self setup` to register the hooks; see [Guard and agent setup](#guard-and-agent-setup).
 
-Build from source, with the toolchain pinned in `rust-toolchain.toml` (see [Build from source](../README.md#build-from-source)):
+Build from source, with the stable toolchain set in `rust-toolchain.toml` (see [Build from source](../README.md#build-from-source)):
 
 ```sh
 cargo install --path acus/crates/acus-cli

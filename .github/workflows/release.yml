@@ -107,8 +107,8 @@ jobs:
             echo "ASSET=$TOOL-$TARGET"
           } >> "$GITHUB_ENV"
 
-      # rustup reads rust-toolchain.toml and installs the pinned toolchain.
-      - name: Install pinned toolchain and target
+      # rustup reads rust-toolchain.toml and installs the stable toolchain.
+      - name: Install toolchain and target
         run: |
           rustup show
           rustup target add "$TARGET"

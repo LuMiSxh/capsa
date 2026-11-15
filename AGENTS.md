@@ -191,9 +191,10 @@ evals: it skips user skills and never reads OAuth.
 
 ## Conventions
 
-- Rust edition 2024 on the newest stable, pinned in `rust-toolchain.toml`;
-  `rust-version` in the root `Cargo.toml` matches it. New language and
-  library features are welcome. Bump both together.
+- Rust edition 2024 on the newest stable: `rust-toolchain.toml` tracks the
+  `stable` channel. `rust-version` in the root `Cargo.toml` is the oldest
+  supported release; raise it when code needs a newer feature. New language
+  and library features are welcome.
 - Versions of shared dependencies live once in `[workspace.dependencies]`;
   crates add features locally. Lints come from `[workspace.lints]`.
 - macOS is the primary platform; Linux and Windows are checked in CI.
