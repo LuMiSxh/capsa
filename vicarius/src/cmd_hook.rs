@@ -5,17 +5,23 @@
 //! exits 0.
 
 use std::io::{IsTerminal, Read, Write};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use capsa_core::exit::Outcome;
 use serde::Deserialize;
 use serde_json::json;
 use vicarius::config::Config;
+use vicarius::gate::Closed;
 
 use crate::status_client::{self, ServiceStatus};
 
 /// The time the hook waits for the service to accept the connection and answer.
 const TIMEOUT: Duration = Duration::from_millis(50);
+/// The time between two status reads while the service is still starting its first sync.
+const POLL: Duration = Duration::from_millis(100);
+/// The total time the hook waits for a starting service before it stays silent.
+const DEADLINE: Duration = Duration::from_secs(2);
 /// The most hook input read; a larger one is not a hook input.
 const MAX_INPUT: u64 = 1 << 20;
 
@@ -55,14 +61,74 @@ fn read_input() -> Option<String> {
 }
 
 /// Returns the context line for a `SessionStart` input; `None` for another event or any failure.
+///
+/// A service that answers but has not finished its first sync is polled until it has, or until
+/// `DEADLINE` passes.
 fn context_line(input: &str) -> Option<String> {
     let input: Input = serde_json::from_str(input).ok()?;
     if input.hook_event_name.as_deref() != Some("SessionStart") {
         return None;
     }
     let config = Config::load_from(&Config::path()).ok()?;
-    let fetched = status_client::fetch(config.port, TIMEOUT)?;
-    agents_line(&config, &fetched.status)
+    let clock = SystemClock(Instant::now());
+    let status = settled_status(
+        || status_client::fetch(config.port, TIMEOUT).map(|fetched| fetched.status),
+        &clock,
+        POLL,
+        DEADLINE,
+    )?;
+    agents_line(&config, &status)
+}
+
+/// Reads the status until the service is no longer starting. Gives up with `None` once `deadline`
+/// has passed on `clock`, and at once when the service does not answer.
+fn settled_status(
+    mut read: impl FnMut() -> Option<ServiceStatus>,
+    clock: &impl Clock,
+    poll: Duration,
+    deadline: Duration,
+) -> Option<ServiceStatus> {
+    loop {
+        let status = read()?;
+        if !is_starting(&status) {
+            return Some(status);
+        }
+        let elapsed = clock.elapsed();
+        if elapsed >= deadline {
+            return None;
+        }
+        clock.pause(poll.min(deadline - elapsed));
+    }
+}
+
+/// Returns whether the service has yet to read its balance or sync its agent files. A gate closed
+/// for any other reason does not change while the hook waits, so it is not starting.
+fn is_starting(status: &ServiceStatus) -> bool {
+    match status.gate.reason.as_deref() {
+        Some(reason) => reason == Closed::NotChecked.code(),
+        None => status.gate.open && status.agents.is_none(),
+    }
+}
+
+/// Measures the time a wait has taken and pauses it.
+trait Clock {
+    /// Returns the time since the wait began.
+    fn elapsed(&self) -> Duration;
+    /// Waits for `span`.
+    fn pause(&self, span: Duration);
+}
+
+/// Measures the real time since the hook started and sleeps on it.
+struct SystemClock(Instant);
+
+impl Clock for SystemClock {
+    fn elapsed(&self) -> Duration {
+        self.0.elapsed()
+    }
+
+    fn pause(&self, span: Duration) {
+        thread::sleep(span);
+    }
 }
 
 /// Builds the context line from the status and the configured models, or `None` when the gate is
@@ -102,10 +168,13 @@ fn agents_line(config: &Config, status: &ServiceStatus) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::time::Duration;
+
     use serde_json::json;
     use vicarius::config::{Agent, Config, Effort};
 
-    use super::agents_line;
+    use super::{Clock, DEADLINE, POLL, agents_line, settled_status};
     use crate::status_client::{AgentStatus, AgentsStatus, GateStatus, ServiceStatus};
 
     fn agent(from: &str, suspended: bool) -> Agent {
@@ -146,5 +215,196 @@ mod tests {
 
         assert!(line.contains("worker-ds (deepseek-flash, variant of worker)"));
         assert!(!line.contains("reviewer-ds"));
+    }
+
+    /// Moves only when a wait pauses on it, so the tests take no wall-clock time.
+    #[derive(Default)]
+    struct FakeClock(Cell<Duration>);
+
+    impl Clock for FakeClock {
+        fn elapsed(&self) -> Duration {
+            self.0.get()
+        }
+
+        fn pause(&self, span: Duration) {
+            self.0.set(self.0.get() + span);
+        }
+    }
+
+    fn senior_config() -> Config {
+        Config {
+            agents: vec![agent("senior-worker", false)],
+            ..Config::default()
+        }
+    }
+
+    fn starting() -> ServiceStatus {
+        closed_for("not_checked")
+    }
+
+    fn closed_for(code: &str) -> ServiceStatus {
+        ServiceStatus {
+            gate: GateStatus {
+                reason: Some(code.to_owned()),
+                ..GateStatus::default()
+            },
+            ..ServiceStatus::default()
+        }
+    }
+
+    fn open_without_agents() -> ServiceStatus {
+        ServiceStatus {
+            gate: GateStatus {
+                open: true,
+                ..GateStatus::default()
+            },
+            ..ServiceStatus::default()
+        }
+    }
+
+    fn settled() -> ServiceStatus {
+        ServiceStatus {
+            agents: Some(AgentsStatus {
+                entries: vec![written("senior-worker")],
+            }),
+            ..open_without_agents()
+        }
+    }
+
+    #[test]
+    fn waits_for_the_first_sync_before_printing_the_line() {
+        let reads = Cell::new(0);
+        let clock = FakeClock::default();
+        let status = settled_status(
+            || {
+                reads.set(reads.get() + 1);
+                Some(if reads.get() < 4 {
+                    starting()
+                } else {
+                    settled()
+                })
+            },
+            &clock,
+            POLL,
+            DEADLINE,
+        );
+
+        let line = status.and_then(|status| agents_line(&senior_config(), &status));
+
+        assert!(line.is_some_and(|line| {
+            line.contains("senior-worker-ds (deepseek-flash, variant of senior-worker)")
+        }));
+        assert_eq!(reads.get(), 4);
+        assert_eq!(clock.elapsed(), POLL * 3);
+    }
+
+    #[test]
+    fn waits_while_the_gate_is_open_and_the_first_sync_is_pending() {
+        let reads = Cell::new(0);
+        let clock = FakeClock::default();
+        let status = settled_status(
+            || {
+                reads.set(reads.get() + 1);
+                Some(if reads.get() < 3 {
+                    open_without_agents()
+                } else {
+                    settled()
+                })
+            },
+            &clock,
+            POLL,
+            DEADLINE,
+        );
+
+        assert!(status.is_some_and(|status| status.agents.is_some()));
+        assert_eq!(reads.get(), 3);
+    }
+
+    #[test]
+    fn stays_silent_immediately_when_the_service_does_not_answer() {
+        let reads = Cell::new(0);
+        let clock = FakeClock::default();
+        let status = settled_status(
+            || {
+                reads.set(reads.get() + 1);
+                None
+            },
+            &clock,
+            POLL,
+            DEADLINE,
+        );
+
+        assert!(status.is_none());
+        assert_eq!(reads.get(), 1);
+        assert_eq!(clock.elapsed(), Duration::ZERO);
+    }
+
+    #[test]
+    fn stays_silent_immediately_when_the_gate_is_closed_for_no_key() {
+        let reads = Cell::new(0);
+        let clock = FakeClock::default();
+        let status = settled_status(
+            || {
+                reads.set(reads.get() + 1);
+                Some(closed_for("no_key"))
+            },
+            &clock,
+            POLL,
+            DEADLINE,
+        );
+
+        let line = status.and_then(|status| agents_line(&senior_config(), &status));
+
+        assert!(line.is_none());
+        assert_eq!(reads.get(), 1);
+        assert_eq!(clock.elapsed(), Duration::ZERO);
+    }
+
+    #[test]
+    fn stays_silent_immediately_when_the_gate_is_closed_for_another_reason() {
+        for code in [
+            "payment_required",
+            "key_rejected",
+            "low_balance",
+            "unavailable",
+        ] {
+            let reads = Cell::new(0);
+            let clock = FakeClock::default();
+            let status = settled_status(
+                || {
+                    reads.set(reads.get() + 1);
+                    Some(closed_for(code))
+                },
+                &clock,
+                POLL,
+                DEADLINE,
+            );
+
+            let line = status.and_then(|status| agents_line(&senior_config(), &status));
+
+            assert!(line.is_none(), "{code}");
+            assert_eq!(reads.get(), 1, "{code}");
+            assert_eq!(clock.elapsed(), Duration::ZERO, "{code}");
+        }
+    }
+
+    #[test]
+    fn gives_up_silently_after_the_deadline_when_sync_never_finishes() {
+        let reads = Cell::new(0);
+        let clock = FakeClock::default();
+        let status = settled_status(
+            || {
+                reads.set(reads.get() + 1);
+                Some(starting())
+            },
+            &clock,
+            POLL,
+            DEADLINE,
+        );
+
+        assert!(status.is_none());
+        assert_eq!(clock.elapsed(), DEADLINE);
+        // One read at each poll from the start of the wait to the deadline.
+        assert_eq!(reads.get(), 21);
     }
 }

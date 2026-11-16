@@ -129,6 +129,51 @@ fn a_folded_block_description_keeps_the_blank_line_after_it() {
 }
 
 #[test]
+fn drops_always_try_worker_first_sentence_from_a_plain_description() {
+    let source = "---\nname: worker\ndescription: Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.\nmodel: x\n---\n";
+    let expected = format!(
+        "---\n{MARKER}\nname: worker-ds\ndescription: Does work. Split large tasks. {NOTE}\nmodel: deepseek-flash\n---\n"
+    );
+    assert_eq!(worker(source), expected);
+}
+
+#[test]
+fn drops_always_try_worker_first_sentence_from_a_single_quoted_description() {
+    let source = "---\nname: worker\ndescription: 'Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.'\nmodel: x\n---\n";
+    let expected = format!(
+        "---\n{MARKER}\nname: worker-ds\ndescription: 'Does work. Split large tasks. {NOTE}'\nmodel: deepseek-flash\n---\n"
+    );
+    assert_eq!(worker(source), expected);
+}
+
+#[test]
+fn drops_always_try_worker_first_sentence_from_a_double_quoted_description() {
+    let source = "---\nname: worker\ndescription: \"Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.\"\nmodel: x\n---\n";
+    let expected = format!(
+        "---\n{MARKER}\nname: worker-ds\ndescription: \"Does work. Split large tasks. {NOTE}\"\nmodel: deepseek-flash\n---\n"
+    );
+    assert_eq!(worker(source), expected);
+}
+
+#[test]
+fn drops_always_try_worker_first_sentence_from_a_block_scalar_description() {
+    let source = "---\nname: worker\ndescription: |\n  Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.\nmodel: x\n---\nBody\n";
+    let expected = format!(
+        "---\n{MARKER}\nname: worker-ds\ndescription: |\n  Does work. Split large tasks.\n  {NOTE}\nmodel: deepseek-flash\n---\nBody\n"
+    );
+    assert_eq!(worker(source), expected);
+}
+
+#[test]
+fn leaves_a_description_without_the_worker_first_sentence_unchanged() {
+    let source = "---\nname: worker\ndescription: Does work. Only a hand-back goes to senior-worker.\nmodel: x\n---\n";
+    let expected = format!(
+        "---\n{MARKER}\nname: worker-ds\ndescription: Does work. Only a hand-back goes to senior-worker. {NOTE}\nmodel: deepseek-flash\n---\n"
+    );
+    assert_eq!(worker(source), expected);
+}
+
+#[test]
 fn a_missing_description_is_added_before_the_closing_fence() {
     let source = "---\nname: worker\nmodel: x\n---\nBody\n";
     let expected = format!(

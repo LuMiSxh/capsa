@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.3.1]
+
+### Fixed
+
+- The SessionStart hook waits up to 2 seconds for the first balance check and agent sync after the
+  service starts, polling every 100 ms, instead of printing nothing. A session that began just after
+  a restart used to get no `vicarius:` line and never used the `-ds` agents. A service that does not
+  answer, or a gate closed for another reason (no key, payment required, rejected, low balance),
+  still ends the hook at once.
+- The derived `-ds` agent descriptions drop the sentence "Always try worker first", which told the
+  main agent to prefer the Claude worker over the DeepSeek variant.
+
 ## [0.3.0]
 
 ### Added
