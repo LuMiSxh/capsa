@@ -51,6 +51,12 @@ impl Billing {
 /// The daily thresholds in percent of the daily limit, as they are when the file does not say.
 pub const DEFAULT_DAILY_THRESHOLDS: [u32; 3] = [50, 80, 100];
 
+/// The five-hour thresholds in percent of the window, as they are when the file does not say.
+pub const DEFAULT_FIVE_HOUR_THRESHOLDS: [u32; 2] = [85, 95];
+
+/// The weekly thresholds in percent of the window, as they are when the file does not say.
+pub const DEFAULT_WEEKLY_THRESHOLDS: [u32; 2] = [90, 95];
+
 /// The days before the cached price list is fetched again.
 pub const DEFAULT_PRICES_REFRESH_DAYS: u64 = 7;
 
@@ -70,6 +76,10 @@ pub struct Config {
     pub daily_limit_usd: Option<f64>,
     /// The shares of the daily limit in percent that are announced, once per local day each.
     pub daily_thresholds: Vec<u32>,
+    /// The five-hour shares in percent that the hook announces, once per window each.
+    pub five_hour_thresholds: Vec<u32>,
+    /// The weekly shares in percent that the hook announces, once per window each.
+    pub weekly_thresholds: Vec<u32>,
     /// Days before the cached LiteLLM price list is fetched again; a value below 1 counts as 1.
     pub prices_refresh_days: u64,
     /// How each provider bills its requests. A provider the map does not list is `subscription`
@@ -84,6 +94,8 @@ impl Default for Config {
             monthly_budget_usd: None,
             daily_limit_usd: None,
             daily_thresholds: DEFAULT_DAILY_THRESHOLDS.to_vec(),
+            five_hour_thresholds: DEFAULT_FIVE_HOUR_THRESHOLDS.to_vec(),
+            weekly_thresholds: DEFAULT_WEEKLY_THRESHOLDS.to_vec(),
             prices_refresh_days: DEFAULT_PRICES_REFRESH_DAYS,
             billing: default_billing(),
         }
@@ -166,6 +178,16 @@ mod tests {
     }
 
     #[test]
+    fn limit_thresholds_parse_and_default_to_85_95_and_90_95() {
+        let c = load("").unwrap();
+        assert_eq!(c.five_hour_thresholds, vec![85, 95]);
+        assert_eq!(c.weekly_thresholds, vec![90, 95]);
+        let c = load("five_hour_thresholds = [80]\nweekly_thresholds = [70, 99]\n").unwrap();
+        assert_eq!(c.five_hour_thresholds, vec![80]);
+        assert_eq!(c.weekly_thresholds, vec![70, 99]);
+    }
+
+    #[test]
     fn billing_is_anthropic_subscription_and_every_other_provider_api_unless_set() {
         let c = load("").unwrap();
         assert_eq!(c.billing_of("anthropic"), Billing::Subscription);
@@ -192,6 +214,8 @@ mod tests {
             monthly_budget_usd: Some(150.5),
             daily_limit_usd: Some(8.0),
             daily_thresholds: vec![60, 100],
+            five_hour_thresholds: vec![80],
+            weekly_thresholds: vec![70, 99],
             prices_refresh_days: 3,
             billing: BTreeMap::from([("openai".to_owned(), Billing::Subscription)]),
         };

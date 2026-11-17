@@ -98,12 +98,12 @@ The session is `--session ID`, else `CLAUDE_CODE_SESSION_ID`, else `CLAUDE_SESSI
 | Level                                                                                                                  | Shown                                                                                               |
 | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Context 60 % / 80 % of the compaction threshold                                                                         | Once per session; 80 % adds a handoff suggestion. Both show again after the context falls below 50 %. |
-| 5h or weekly limit 75 % / 90 %                                                                                          | Once per window                                                                                     |
-| 5h forecast to fill before its reset (window 50 % used, 30 min old); weekly forecast to run out before its reset (50 % used, two weeks of history mapped) | Once per window                                                                                     |
+| 5h 85 % / 95 %, week 90 % / 95 %                                                                                          | Once per window                                                                                     |
+| Full or runs-out time on a threshold line (5h after 30 min of its window; week with two weeks of history mapped) | Once per window                                                                                     |
 | Weekly reset within 12 h with at least 30 % left                                                                        | Once per window                                                                                     |
 | Status line (context, 5h and weekly share) on the first prompt of a session or after more than 1 h without one          | Each such prompt; never with `PostToolUse`                                                          |
 
-Budget mode adds the daily-budget levels described under [Budget mode](#budget-mode).
+Limit lines come at the thresholds in `five_hour_thresholds` and `weekly_thresholds` in `config.toml` (`census self config set five-hour-thresholds 85,95`, `weekly-thresholds 90,95`), once per window each. Budget mode adds the daily-budget levels described under [Budget mode](#budget-mode).
 
 State is kept in `$XDG_STATE_HOME/census/hints/<session id>` (or `~/.local/state/census/...`): one level per line, keyed with the window's reset time. Errors go to `hook.jsonl` beside it (moved to `hook.jsonl.old` at 256 KB); `census self doctor` reports them. Limits are skipped when they take over 150 ms.
 

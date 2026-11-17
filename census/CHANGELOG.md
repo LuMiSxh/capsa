@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.7.1]
+
+### Added
+
+- `five_hour_thresholds` and `weekly_thresholds` in `config.toml`: the percentages of each window at
+  which the hook announces it, `[85, 95]` and `[90, 95]` by default.
+- `census self config set five-hour-thresholds`, `weekly-thresholds` and `daily-thresholds` take a
+  comma-separated list of whole percents, such as `85,95`. The window lists take 1 to 100 and the
+  daily list any percent above 0. A list is saved sorted and without repeats; an empty or invalid
+  list is refused with a hint. `census self config` shows the three lists.
+
+### Changed
+
+- The hook's limit line comes only at a threshold, once per window and threshold, and tells the
+  agent to finish the current step and ask the user whether to continue. For example:
+  ``census: now Wed 10:00; 5h limit 86%, reset Wed 13:00. Finish the current step, then stop and
+  ask the user whether to continue. Current numbers: `census limits`.``
+- The hook no longer prints a 75 % limit line, a standalone forecast or the five-hour burn surge. A
+  forecast is added to a threshold line when one is due. `census limits --json` still reports the
+  surge.
+- The budget line and the handoff suggestion address "the user".
+- The skill tells agents to keep working below a threshold line, and on a threshold line to finish
+  the current step and ask the user whether to continue.
+
 ## [0.7.0]
 
 ### Added

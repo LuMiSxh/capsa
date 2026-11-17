@@ -25,8 +25,9 @@ enum Action {
     /// Print the mode, the monthly budget and the config file.
     Show,
     /// Change a setting: `set mode <plan|budget>`, `set monthly-budget <usd>`,
-    /// `set daily-limit <usd|auto>`, `set prices-refresh-days <days>` or
-    /// `set billing <provider> <subscription|api>`.
+    /// `set daily-limit <usd|auto>`, `set prices-refresh-days <days>`,
+    /// `set billing <provider> <subscription|api>`, or a comma-separated list of percents for
+    /// `set daily-thresholds`, `set five-hour-thresholds` or `set weekly-thresholds`.
     Set(SetArgs),
 }
 
@@ -64,6 +65,21 @@ enum Key {
         provider: String,
         #[arg(value_name = "subscription|api")]
         value: String,
+    },
+    /// Percents of the daily limit at which the hook announces, such as `50,80,100`.
+    DailyThresholds {
+        #[arg(value_name = "PCT,PCT,...")]
+        list: String,
+    },
+    /// Percents of the five-hour window the hook announces, from 1 to 100, such as `85,95`.
+    FiveHourThresholds {
+        #[arg(value_name = "PCT,PCT,...")]
+        list: String,
+    },
+    /// Percents of the weekly window the hook announces, from 1 to 100, such as `90,95`.
+    WeeklyThresholds {
+        #[arg(value_name = "PCT,PCT,...")]
+        list: String,
     },
 }
 
@@ -156,12 +172,12 @@ impl Render for ConfigOut<'_> {
                 format!("${v:.2} fixed; `census self config set daily-limit auto` derives it again")
             },
         ));
-        let thresholds: Vec<String> = c
-            .daily_thresholds
-            .iter()
-            .map(|t| format!("{t} %"))
-            .collect();
-        doc.row("thresholds").text(thresholds.join(", "));
+        doc.row("daily thresholds")
+            .text(percent_list(&c.daily_thresholds));
+        doc.row("5h thresholds")
+            .text(percent_list(&c.five_hour_thresholds));
+        doc.row("weekly thresholds")
+            .text(percent_list(&c.weekly_thresholds));
         doc.row("prices")
             .text(format!("refresh every {} days", c.prices_refresh_days));
         let billing: Vec<String> = c
@@ -182,6 +198,12 @@ impl Render for ConfigOut<'_> {
         }
         doc.row("file").dim(self.path.as_str());
     }
+}
+
+/// Returns the percentages as `85 %, 96 %`.
+fn percent_list(values: &[u32]) -> String {
+    let parts: Vec<String> = values.iter().map(|t| format!("{t} %")).collect();
+    parts.join(", ")
 }
 
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
@@ -241,8 +263,53 @@ fn apply(file: &ConfigFile, key: Key, warnings: &mut Vec<String>) -> Result<()> 
             config.billing.insert(provider, billing);
             file.save(&config).hinted()?;
         }
+        Key::DailyThresholds { list } => {
+            let mut config = file.load::<Config>().hinted()?;
+            config.daily_thresholds = thresholds_arg(&list, None)?;
+            file.save(&config).hinted()?;
+        }
+        Key::FiveHourThresholds { list } => {
+            let mut config = file.load::<Config>().hinted()?;
+            config.five_hour_thresholds = thresholds_arg(&list, Some(100))?;
+            file.save(&config).hinted()?;
+        }
+        Key::WeeklyThresholds { list } => {
+            let mut config = file.load::<Config>().hinted()?;
+            config.weekly_thresholds = thresholds_arg(&list, Some(100))?;
+            file.save(&config).hinted()?;
+        }
     }
     Ok(())
+}
+
+/// Reads a comma-separated list of whole percents, each from 1 to `max` or, without a maximum,
+/// above 0. The list is returned sorted and without repeats.
+fn thresholds_arg(list: &str, max: Option<u32>) -> Result<Vec<u32>> {
+    let range = max.map_or_else(|| "above 0".to_owned(), |m| format!("from 1 to {m}"));
+    if list.trim().is_empty() {
+        return Err(hinted(
+            "the list of percents is empty",
+            format!("give whole percents {range}, separated by commas, such as `85,95`"),
+        ));
+    }
+    let mut values = Vec::new();
+    for part in list.split(',') {
+        let value = part
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|v| *v > 0 && max.is_none_or(|m| *v <= m));
+        let Some(value) = value else {
+            return Err(hinted(
+                format!("`{}` is not a whole percent {range}", part.trim()),
+                format!("write whole percents {range}, separated by commas, such as `85,95`"),
+            ));
+        };
+        values.push(value);
+    }
+    values.sort_unstable();
+    values.dedup();
+    Ok(values)
 }
 
 /// Returns today's spend against its daily limit in budget mode; `None` in plan mode or when no

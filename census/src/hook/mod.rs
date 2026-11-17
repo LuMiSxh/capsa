@@ -46,6 +46,14 @@ pub(super) struct Budget<'a> {
     pub thresholds: &'a [u32],
 }
 
+/// The limit status the hook announces from, with the thresholds in percent of each window.
+#[derive(Clone, Copy)]
+pub(super) struct LimitLevels<'a> {
+    pub status: &'a LimitStatus,
+    pub five_hour: &'a [u32],
+    pub weekly: &'a [u32],
+}
+
 /// What a call adds besides the level messages.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Opening {
@@ -61,7 +69,7 @@ enum Opening {
 fn announce(
     file: &std::path::Path,
     context: Option<&context::ContextUse>,
-    limits: Option<&LimitStatus>,
+    limits: Option<LimitLevels>,
     budget: Option<&Budget>,
     compacted: Option<(u64, u64)>,
     now: u64,
@@ -82,7 +90,7 @@ fn announce(
         messages.extend(levels::status_message(
             now,
             context,
-            limits,
+            limits.map(|l| l.status),
             budget.map(|b| b.month),
         ));
     }
@@ -140,6 +148,11 @@ pub fn run(
         .map(|(model, tokens)| context::measure_with(tokens, Some(&model), settings));
     let compacted = ends.compacted;
     let limits = limits(input.transcript_path.as_deref());
+    let limit_levels = limits.as_ref().map(|status| LimitLevels {
+        status,
+        five_hour: &config.five_hour_thresholds,
+        weekly: &config.weekly_thresholds,
+    });
     let month = month(input.transcript_path.as_deref());
     let budget = month.as_ref().map(|m| Budget {
         month: m,
@@ -154,7 +167,7 @@ pub fn run(
     let messages = announce(
         &file,
         context.as_ref(),
-        limits.as_ref(),
+        limit_levels,
         budget.as_ref(),
         compacted,
         now,

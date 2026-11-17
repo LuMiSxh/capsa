@@ -269,7 +269,7 @@ fn context_message_shows_once_then_the_handoff_level_adds_its_text() {
     assert_eq!(
         high.as_deref(),
         Some(
-            "census: now Wed 10:00; context 325k of 400k (compaction at 400k). At the next task boundary, suggest a handoff to Luca (session-handoff skill)."
+            "census: now Wed 10:00; context 325k of 400k (compaction at 400k). At the next task boundary, suggest a handoff to the user (session-handoff skill)."
         )
     );
     assert_eq!(h.hook(h.input("PostToolUse", 330_000).as_bytes()), None);
@@ -347,22 +347,69 @@ fn a_path_like_session_id_is_refused() {
 }
 
 #[test]
-fn a_limit_level_shows_once_per_window_and_again_for_a_new_one() {
+fn a_limit_line_shows_at_each_threshold_once_per_window() {
     let h = Hook::new("hook-limit");
-    let input = h.input("UserPromptSubmit", 10_000);
-    h.snapshot("five_hour", 82.0, NOW + 3 * 3600);
+    let input = h.input("PostToolUse", 10_000);
+    h.snapshot("five_hour", 84.0, NOW + 3 * 3600);
+    assert_eq!(h.hook(input.as_bytes()), None);
+    h.snapshot("five_hour", 86.0, NOW + 3 * 3600);
     let first = h.hook(input.as_bytes()).expect("a limit message");
-    assert!(
-        first.contains("census: now Wed 10:00; 5h limit 82%"),
-        "{first}"
-    );
-    assert!(
-        first.ends_with("Avoid large parallel agent batches; tell Luca."),
-        "{first}"
+    assert_eq!(
+        first,
+        "census: now Wed 10:00; 5h limit 86%, reset Wed 13:00. Finish the current step, then stop \
+         and ask the user whether to continue. Current numbers: `census limits`."
     );
     assert_eq!(h.hook(input.as_bytes()), None);
-    h.snapshot("five_hour", 82.0, NOW + 8 * 3600);
+    h.snapshot("five_hour", 97.0, NOW + 3 * 3600);
+    let higher = h
+        .hook(input.as_bytes())
+        .expect("a line for the higher threshold");
+    assert!(higher.contains("5h limit 97%"), "{higher}");
+    h.snapshot("five_hour", 97.0, NOW + 8 * 3600);
     assert!(h.hook(input.as_bytes()).is_some());
+}
+
+#[test]
+fn a_window_first_seen_above_two_thresholds_says_one_line() {
+    let h = Hook::new("hook-first-seen");
+    let input = h.input("PostToolUse", 10_000);
+    h.snapshot("five_hour", 97.0, NOW + 3 * 3600);
+    assert_eq!(
+        h.hook(input.as_bytes()).as_deref(),
+        Some(
+            "census: now Wed 10:00; 5h limit 97%, reset Wed 13:00. Finish the current step, then stop \
+             and ask the user whether to continue. Current numbers: `census limits`."
+        )
+    );
+    assert_eq!(h.hook(input.as_bytes()), None);
+}
+
+#[test]
+fn a_state_file_from_the_previous_version_is_read_and_the_threshold_still_says_once() {
+    let h = Hook::new("hook-old-state");
+    let reset = NOW + 3 * 3600;
+    let rel = if cfg!(windows) {
+        "state/census/state/hints/s1"
+    } else {
+        "state/census/hints/s1"
+    };
+    h.home.write(
+        rel,
+        &format!(
+            "5h:75:{reset}\n5h:90:{reset}\n5h:surge:{reset}\n5h:fc-at:{reset}:{}\n5h:fc-burn:{reset}:480\n",
+            reset + 600
+        ),
+    );
+    let input = h.input("PostToolUse", 10_000);
+    h.snapshot("five_hour", 86.0, reset);
+    assert_eq!(
+        h.hook(input.as_bytes()).as_deref(),
+        Some(
+            "census: now Wed 10:00; 5h limit 86%, reset Wed 13:00. Finish the current step, then stop \
+             and ask the user whether to continue. Current numbers: `census limits`."
+        )
+    );
+    assert_eq!(h.hook(input.as_bytes()), None);
 }
 
 #[test]
@@ -380,7 +427,7 @@ fn a_warning_in_the_first_prompt_replaces_the_status_line_it_repeats() {
 }
 
 #[test]
-fn a_burn_far_above_the_typical_rate_is_said_once_per_window() {
+fn a_burn_spike_below_the_warning_level_is_not_said() {
     let h = Hook::new("hook-surge");
     // The same hour a week earlier sets the typical rate at $2 an hour.
     let path = h.transcript_lines(&[
@@ -390,18 +437,13 @@ fn a_burn_far_above_the_typical_rate_is_said_once_per_window() {
     ]);
     h.snapshot("five_hour", 30.0, NOW + 3 * 3600);
     let input = hook_input("UserPromptSubmit", &path);
-    let text = h.hook(input.as_bytes()).expect("a surge warning");
-    assert!(
-        text.starts_with(
-            "census: now Wed 10:00; 5h burn $4.8/h, 2x your typical rate; at this rate full around "
-        ),
-        "{text}"
+    assert_eq!(
+        h.hook(input.as_bytes()).as_deref(),
+        Some(
+            "census: status: now Wed 10:00; context 150k of 400k (compaction at 400k); \
+             5h 30% (reset Wed 13:00)."
+        )
     );
-    assert!(
-        text.ends_with("reset Wed 13:00. Avoid large parallel agent batches; tell Luca."),
-        "{text}"
-    );
-    assert_eq!(h.hook(input.as_bytes()), None);
 }
 
 #[test]
@@ -487,18 +529,18 @@ fn a_post_tool_use_never_adds_the_status_line() {
 }
 
 #[test]
-fn a_five_hour_forecast_at_sixty_percent_after_forty_minutes_is_said() {
+fn a_five_hour_forecast_rides_on_the_threshold_line_after_forty_minutes() {
     let h = Hook::new("hook-forecast");
     let path = h.transcript_lines(&[
         request_at("2026-10-14T07:21:00.000Z", "m1", 250_000),
         request_at("2026-10-14T07:50:00.000Z", "m2", 250_000),
     ]);
-    h.snapshot("five_hour", 60.0, NOW + 15_600);
+    h.snapshot("five_hour", 86.0, NOW + 15_600);
     let text = h
         .hook(hook_input("UserPromptSubmit", &path).as_bytes())
         .expect("a forecast");
     assert!(
-        text.contains("census: now Wed 10:00; 5h limit 60%, full around "),
+        text.contains("census: now Wed 10:00; 5h limit 86%, full around "),
         "{text}"
     );
 }

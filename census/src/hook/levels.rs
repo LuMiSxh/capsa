@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Decides which context and limit levels the hook has newly crossed and words them.
 
-use super::Budget;
+use super::{Budget, LimitLevels};
 use crate::context::ContextUse;
 use crate::limits::{
-    DailyStatus, Forecast, Full, LimitStatus, MonthStatus, Reading, Surge, WindowStatus, when,
+    DailyStatus, Forecast, Full, LimitStatus, MonthStatus, Reading, WindowStatus, when,
 };
 use capsa_core::census_snapshot::Window;
 use std::collections::BTreeSet;
@@ -16,21 +16,12 @@ const CONTEXT_INFO_PCT: f64 = 60.0;
 const CONTEXT_HANDOFF_PCT: f64 = 80.0;
 /// Below this share after a compaction, the context levels show again.
 const CONTEXT_REARM_PCT: f64 = 50.0;
-const LIMIT_WARN_PCT: f64 = 75.0;
-const LIMIT_HIGH_PCT: f64 = 90.0;
 /// A weekly reset this close, with enough unused, is worth telling the user.
 const WEEKLY_NEAR_S: u64 = 12 * 3600;
 const WEEKLY_LEFT_PCT: f64 = 30.0;
-const LIMIT_ADVICE: &str = "Avoid large parallel agent batches; tell Luca.";
-/// A forecast is said only once its window is this full.
-const FORECAST_MIN_PCT: f64 = 50.0;
-/// A forecast is said again when its full or runs-out time moved by at least this much.
-const FORECAST_MOVE_S: u64 = 30 * 60;
-/// A forecast is said again when the 60-minute burn is at least this many times the one said last.
-const BURN_REPEAT_RATIO: f64 = 2.0;
-/// Below the limit level, the 15-minute burn of the five-hour window is said once per window when
-/// it is at least this many times the typical rate of the hour.
-const SURGE_RATIO: f64 = 2.0;
+const LIMIT_ADVICE: &str = "Finish the current step, then stop and ask the user whether to \
+    continue. Current numbers: `census limits`.";
+const BUDGET_ADVICE: &str = "Avoid large parallel agent batches; tell the user.";
 /// The five-hour forecast waits until this much of its window has passed.
 const FIVE_HOUR_MIN_ELAPSED_S: u64 = 30 * 60;
 /// The weekly forecast needs this many weeks of history mapped to weekly windows.
@@ -58,7 +49,7 @@ session`; do not read ~/.claude transcripts.";
 /// says the context was compacted, with the tokens before and after when `compacted` gives them.
 pub(super) fn decide(
     context: Option<&ContextUse>,
-    limits: Option<&LimitStatus>,
+    limits: Option<LimitLevels>,
     budget: Option<&Budget>,
     compacted: Option<(u64, u64)>,
     now: u64,
@@ -67,8 +58,13 @@ pub(super) fn decide(
     let mut out = Vec::new();
     out.extend(context.and_then(|c| context_message(c, compacted, shown)));
     if let Some(l) = limits {
-        for w in &l.windows {
-            out.extend(limit_message(w, l, shown));
+        for w in &l.status.windows {
+            let thresholds = if w.window == Window::FiveHour {
+                l.five_hour
+            } else {
+                l.weekly
+            };
+            out.extend(limit_message(w, l.status, thresholds, shown));
             if w.window == Window::SevenDay {
                 out.extend(weekly_left_message(w, now, shown));
             }
@@ -231,7 +227,7 @@ fn budget_message(m: &MonthStatus, shown: &mut Shown, daily_said: bool) -> Optio
         String::new()
     };
     Some(format!(
-        "census: monthly budget {state} ({} of {}, {} days left{projection}). {LIMIT_ADVICE}",
+        "census: monthly budget {state} ({} of {}, {} days left{projection}). {BUDGET_ADVICE}",
         usd(m.spent_usd),
         usd(budget),
         m.days_left
@@ -284,7 +280,7 @@ fn context_message(
     if handoff {
         shown.insert("ctx80".to_owned());
         text.push_str(
-            " At the next task boundary, suggest a handoff to Luca (session-handoff skill).",
+            " At the next task boundary, suggest a handoff to the user (session-handoff skill).",
         );
     }
     Some(text)
@@ -304,62 +300,39 @@ fn rearm_message(c: &ContextUse, compacted: Option<(u64, u64)>) -> String {
     )
 }
 
-/// Returns the message of one window, once per window instance (its reset time): a rung or a
-/// forecast that is new, else the surge. A forecast is said again only when its time moved by
-/// `FORECAST_MOVE_S` or the 60-minute burn at least doubled since it was last said.
-fn limit_message(w: &WindowStatus, l: &LimitStatus, shown: &mut Shown) -> Option<String> {
+/// Returns the message of one window when it crosses a threshold not yet said in this window
+/// instance (its reset time). Several thresholds crossed at once make one message, which carries
+/// the projection of the window when one is due.
+fn limit_message(
+    w: &WindowStatus,
+    l: &LimitStatus,
+    thresholds: &[u32],
+    shown: &mut Shown,
+) -> Option<String> {
     let (reset, used) = (w.reset_at?, w.used?);
     let tag = window_tag(w.window);
-    let key = |what: &str| format!("{tag}:{what}:{reset}");
-    let rungs: Vec<String> = [(LIMIT_WARN_PCT, "75"), (LIMIT_HIGH_PCT, "90")]
-        .into_iter()
-        .filter(|(pct, _)| used >= *pct)
-        .map(|(_, what)| key(what))
+    let crossed: Vec<String> = thresholds
+        .iter()
+        .filter(|pct| used >= f64::from(**pct))
+        .map(|pct| format!("{tag}:{pct}:{reset}"))
         .collect();
-    let rung_new = rungs.iter().any(|k| !shown.contains(k));
-    let projection = projection(w, l);
-    let cents = (l.burn.usd_per_hour_60 * 100.0).round() as u64;
-    let at_key = format!("{tag}:fc-at:{reset}:");
-    let burn_key = format!("{tag}:fc-burn:{reset}:");
-    let forecast_new = projection.is_some_and(|(t, _)| {
-        recorded(shown, &at_key).is_none_or(|last| t.abs_diff(last) >= FORECAST_MOVE_S)
-            || recorded(shown, &burn_key)
-                .is_some_and(|last| cents > last && cents as f64 >= BURN_REPEAT_RATIO * last as f64)
-    });
-    let surge_key = key("surge");
-    let surge = l.surge.filter(|s| {
-        w.window == Window::FiveHour
-            && used < LIMIT_WARN_PCT
-            && l.burn.usd_per_hour_15 >= SURGE_RATIO * s.typical_usd_per_hour
-            && !shown.contains(&surge_key)
-    });
-    if rung_new || forecast_new {
-        shown.extend(rungs);
-        if let Some((t, _)) = projection {
-            record(shown, &at_key, t);
-            record(shown, &burn_key, cents);
-        }
-        if surge.is_some() {
-            shown.insert(surge_key);
-        }
-        return Some(limit_text(w, used, reset, projection));
+    if crossed.iter().all(|k| shown.contains(k)) {
+        return None;
     }
-    let s = surge?;
-    shown.insert(surge_key);
-    Some(surge_text(s, l, reset))
+    shown.extend(crossed);
+    Some(limit_text(w, used, reset, projection(w, l)))
 }
 
-/// Returns the forecast of a window that is due: the time it is full (five hours) or runs out
-/// (week), with its words. It is due at half used; the week also needs two weeks of basis.
+/// Returns the forecast a threshold line may carry: the time the five-hour window is full, once
+/// it is `FIVE_HOUR_MIN_ELAPSED_S` old, or the time the week runs out, with two weeks of basis.
 fn projection(w: &WindowStatus, l: &LimitStatus) -> Option<(u64, &'static str)> {
-    let armed = w.used? >= FORECAST_MIN_PCT;
     let elapsed = w
         .start
         .is_some_and(|s| l.now.saturating_sub(s) >= FIVE_HOUR_MIN_ELAPSED_S);
     match (w.window, w.full, l.forecast.as_ref()) {
-        (Window::FiveHour, Some(Full::At { t }), _) if armed && elapsed => Some((t, "full around")),
+        (Window::FiveHour, Some(Full::At { t }), _) if elapsed => Some((t, "full around")),
         (Window::SevenDay, _, Some(Forecast::RunsOut { t }))
-            if armed && l.basis.mapped_weeks >= WEEKLY_BASIS_WEEKS =>
+            if l.basis.mapped_weeks >= WEEKLY_BASIS_WEEKS =>
         {
             Some((*t, "runs out around"))
         }
@@ -386,34 +359,6 @@ fn limit_text(
     )
 }
 
-/// Words the five-hour burn that is far above the usual rate of this hour, with the time it fills
-/// at that rate.
-fn surge_text(s: Surge, l: &LimitStatus, reset: u64) -> String {
-    let ratio = l.burn.usd_per_hour_15 / s.typical_usd_per_hour;
-    let outcome = match s.full {
-        Full::At { t } => format!("full around {}, reset {}", when(t), when(reset)),
-        Full::AfterReset => format!("it lasts to reset {}", when(reset)),
-    };
-    format!(
-        "census: 5h burn ${:.1}/h, {ratio:.0}x your typical rate; at this rate {outcome}. \
-         {LIMIT_ADVICE}",
-        l.burn.usd_per_hour_15
-    )
-}
-
-/// Returns the number last recorded under `prefix` in `shown`.
-fn recorded(shown: &Shown, prefix: &str) -> Option<u64> {
-    shown
-        .iter()
-        .find_map(|k| k.strip_prefix(prefix)?.parse().ok())
-}
-
-/// Keeps only `value` recorded under `prefix` in `shown`.
-fn record(shown: &mut Shown, prefix: &str, value: u64) {
-    shown.retain(|k| !k.starts_with(prefix));
-    shown.insert(format!("{prefix}{value}"));
-}
-
 fn weekly_left_message(w: &WindowStatus, now: u64, shown: &mut Shown) -> Option<String> {
     let (reset, used) = (w.reset_at?, w.used?);
     let left = 100.0 - used;
@@ -438,6 +383,7 @@ fn window_tag(window: Window) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{DEFAULT_FIVE_HOUR_THRESHOLDS, DEFAULT_WEEKLY_THRESHOLDS};
 
     const HOUR: u64 = 3600;
 
@@ -636,53 +582,48 @@ mod tests {
         let full = Some(Full::At { t: elapsed + HOUR });
         let w = window(Window::FiveHour, used, 5 * HOUR, full);
         let l = limits(w.clone(), elapsed, None, 0.0);
-        limit_message(&w, &l, &mut Shown::new())
+        limit_message(&w, &l, &DEFAULT_FIVE_HOUR_THRESHOLDS, &mut Shown::new())
     }
 
     #[test]
-    fn a_forecast_repeats_only_when_its_time_moved_or_the_burn_doubled() {
-        let mut shown = Shown::new();
-        let mut w = window(
-            Window::FiveHour,
-            60.0,
-            5 * HOUR,
-            Some(Full::At { t: 3 * HOUR }),
-        );
-        let mut l = limits(w.clone(), 40 * 60, None, 0.0);
-        l.burn.usd_per_hour_60 = 10.0;
-        assert!(limit_message(&w, &l, &mut shown).is_some());
-        assert_eq!(limit_message(&w, &l, &mut shown), None);
-        w.full = Some(Full::At {
-            t: 3 * HOUR + 20 * 60,
-        });
-        assert_eq!(limit_message(&w, &l, &mut shown), None);
-        w.full = Some(Full::At {
-            t: 3 * HOUR + 40 * 60,
-        });
-        assert!(limit_message(&w, &l, &mut shown).is_some());
-        l.burn.usd_per_hour_60 = 15.0;
-        assert_eq!(limit_message(&w, &l, &mut shown), None);
-        l.burn.usd_per_hour_60 = 25.0;
-        assert!(limit_message(&w, &l, &mut shown).is_some());
-    }
-
-    #[test]
-    fn a_five_hour_forecast_waits_for_half_full_and_thirty_minutes() {
-        assert_eq!(five_hour(8.0, HOUR), None);
-        assert_eq!(five_hour(60.0, 20 * 60), None);
-        let said = five_hour(60.0, 40 * 60);
-        assert!(said.is_some_and(|s| s.starts_with("census: 5h limit 60%, full around ")));
-    }
-
-    #[test]
-    fn a_weekly_runs_out_forecast_needs_two_weeks_of_basis() {
-        let w = window(Window::SevenDay, 60.0, 7 * 24 * HOUR, None);
-        let runs = Forecast::RunsOut { t: 3 * 24 * HOUR };
-        let said = |weeks| {
-            let l = limits(w.clone(), HOUR, Some(runs), weeks);
-            limit_message(&w, &l, &mut Shown::new())
+    fn a_threshold_is_said_once_per_window_and_a_higher_one_again() {
+        let said = |used: f64, shown: &mut Shown| {
+            let w = window(Window::FiveHour, used, 5 * HOUR, None);
+            let l = limits(w.clone(), HOUR, None, 0.0);
+            limit_message(&w, &l, &DEFAULT_FIVE_HOUR_THRESHOLDS, shown)
         };
-        assert_eq!(said(1.9), None);
-        assert!(said(2.0).is_some_and(|s| s.contains("runs out around ")));
+        let mut shown = Shown::new();
+        assert_eq!(said(84.0, &mut shown), None);
+        let line = said(86.0, &mut shown).expect("a threshold line");
+        assert!(line.starts_with("census: 5h limit 86%, reset "), "{line}");
+        assert_eq!(said(86.5, &mut shown), None);
+        let line = said(97.0, &mut shown).expect("a line for the higher threshold");
+        assert!(line.starts_with("census: 5h limit 97%, reset "), "{line}");
+        assert_eq!(said(97.5, &mut shown), None);
+    }
+
+    #[test]
+    fn a_threshold_line_carries_the_full_time_once_the_window_is_thirty_minutes_old() {
+        assert!(five_hour(86.0, 20 * 60).is_some_and(|s| !s.contains("full around")));
+        let said = five_hour(86.0, 40 * 60);
+        assert!(said.is_some_and(|s| s.starts_with("census: 5h limit 86%, full around ")));
+    }
+
+    #[test]
+    fn a_threshold_line_says_to_finish_the_step_and_ask_the_user() {
+        assert!(five_hour(86.0, HOUR).is_some_and(|s| s.ends_with(LIMIT_ADVICE)));
+    }
+
+    #[test]
+    fn a_weekly_runs_out_forecast_rides_on_a_threshold_line_with_two_weeks_of_basis() {
+        let runs = Forecast::RunsOut { t: 3 * 24 * HOUR };
+        let said = |used: f64, weeks: f64| {
+            let w = window(Window::SevenDay, used, 7 * 24 * HOUR, None);
+            let l = limits(w.clone(), HOUR, Some(runs), weeks);
+            limit_message(&w, &l, &DEFAULT_WEEKLY_THRESHOLDS, &mut Shown::new())
+        };
+        assert_eq!(said(89.0, 2.0), None);
+        assert!(said(91.0, 1.9).is_some_and(|s| !s.contains("runs out")));
+        assert!(said(91.0, 2.0).is_some_and(|s| s.contains("runs out around ")));
     }
 }

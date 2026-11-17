@@ -14,6 +14,7 @@ mod limits;
 mod prune;
 mod self_cmd;
 mod statusline;
+mod thresholds;
 mod usage;
 
 use common::Scratch;
