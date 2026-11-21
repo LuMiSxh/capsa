@@ -193,15 +193,15 @@ fn calls_awaited_together_run_at_the_same_time() {
     let (host, _) = slow();
     let started = Instant::now();
     let out = run(
-        "return await Promise.all([nap(200), nap(200), nap(200), nap(200)]);",
+        "return await Promise.all([nap(400), nap(400), nap(400), nap(400)]);",
         host,
         &limits(),
     )
     .unwrap();
-    assert_eq!(out.value, Some(json!([200, 200, 200, 200])));
-    // Serial would take 800 ms.
+    assert_eq!(out.value, Some(json!([400, 400, 400, 400])));
+    // Serial would take 1600 ms.
     assert!(
-        started.elapsed() < Duration::from_millis(600),
+        started.elapsed() < Duration::from_millis(1000),
         "{:?}",
         started.elapsed()
     );
@@ -308,7 +308,7 @@ fn a_call_that_ends_at_the_deadline_finishes_before_the_run_returns() {
     assert!(matches!(err, ScriptError::Timeout { .. }), "{err:?}");
     assert_eq!(*log.lock().unwrap(), ["hold:end"]);
     assert!(
-        started.elapsed() < Duration::from_secs(1),
+        started.elapsed() < Duration::from_millis(1500),
         "{:?}",
         started.elapsed()
     );

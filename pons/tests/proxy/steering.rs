@@ -50,9 +50,11 @@ async fn a_message_while_subagents_run_is_steered_and_the_subagents_survive() {
 
     // Zed answers prompt 1 as cancelled at once, then steers the message.
     h.cancel().await;
-    let cancelled = h.recv().await;
-    assert_eq!(cancelled["id"], 1);
-    assert_eq!(cancelled["result"]["stopReason"], "cancelled");
+    let cancelled = h.recv_until(|m| m["id"] == 1).await;
+    assert_eq!(
+        cancelled.last().unwrap()["result"]["stopReason"],
+        "cancelled"
+    );
     sleep(Duration::from_millis(100)).await;
     h.prompt(2, "ping").await;
     let seen = h.recv_until(|m| m["method"] == "mock/steer_seen").await;

@@ -13,10 +13,10 @@ async fn a_cancel_without_a_prompt_is_forwarded_after_the_window_and_stops_the_c
     let mut h = Harness::start(&["--cancel-defer-ms", "300"]);
     start_background_turn(&mut h).await;
     h.cancel().await;
-    let cancelled = h.recv().await;
-    assert_eq!(cancelled["id"], 1);
-    assert_eq!(cancelled["result"]["stopReason"], "cancelled");
-    let seen = h.recv_until(is_cancel_seen).await;
+    // Card updates may arrive before the answer, so skip to it and keep them.
+    let mut seen = h.recv_until(|m| m["id"] == 1).await;
+    assert_eq!(seen.last().unwrap()["result"]["stopReason"], "cancelled");
+    seen.extend(h.recv_until(is_cancel_seen).await);
     let marks: Vec<_> = seen.iter().filter(|m| is_stop_mark(m)).collect();
     assert!(
         marks
@@ -121,9 +121,8 @@ async fn a_cancel_in_a_new_prompt_is_not_a_stop_escape() {
     h.prompt(2, "plain").await;
     sleep(Duration::from_millis(300)).await;
     h.cancel().await;
-    let cancelled = h.recv().await;
-    assert_eq!(cancelled["id"], 2);
-    assert_eq!(cancelled["result"]["stopReason"], "cancelled");
+    let seen = h.recv_until(|m| m["id"] == 2).await;
+    assert_eq!(seen.last().unwrap()["result"]["stopReason"], "cancelled");
 }
 
 #[tokio::test]
@@ -133,9 +132,8 @@ async fn a_later_cancel_is_held_again() {
     h.prompt(2, "plain").await;
     sleep(Duration::from_millis(500)).await;
     h.cancel().await;
-    let cancelled = h.recv().await;
-    assert_eq!(cancelled["id"], 2);
-    assert_eq!(cancelled["result"]["stopReason"], "cancelled");
+    let seen = h.recv_until(|m| m["id"] == 2).await;
+    assert_eq!(seen.last().unwrap()["result"]["stopReason"], "cancelled");
     h.prompt(3, "finish").await;
     let rest = h.recv_until(|m| m["id"] == 3).await;
     assert!(rest.iter().all(|m| m["method"] != "mock/cancel_seen"));
