@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Owns `~` expansion for path arguments, since `acus run` lines and patch text get no shell, and
-//! the per-tool config and state directories.
+//! Owns `~` expansion for path arguments and patch-text paths, which no shell expands, and the
+//! per-tool config and state directories.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -84,9 +84,9 @@ fn log_file_with(
 
 /// Expands a leading `~` or `~/` (`~\` on Windows) to the home directory.
 ///
-/// Command-line words get a shell, but `acus run` lines and patch text do not, so the tools
-/// expand the path themselves. `~user` and a `~` anywhere else stay as written, and so does
-/// the path when no home directory is known.
+/// A shell expands a leading `~` in an unquoted command-line word, but quoted arguments and paths
+/// in patch text reach the tools as written, so the tools expand it themselves. `~user` and a `~`
+/// anywhere else stay as written, and so does the path when no home directory is known.
 pub fn expand_home(path: &str) -> PathBuf {
     expand_with_home(path, std::env::home_dir().as_deref())
 }
