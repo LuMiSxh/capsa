@@ -32,7 +32,7 @@ Shared rules: see root AGENTS.md.
 
 - Output is snapshot-tested with insta. Changing `--json` or agent text needs `cargo insta review`.
 - Guard rule names (`Rule::as_str`) are logged in `guard.jsonl` and read by `census usage --guard`. Do not rename one.
-- `skill/CORE.md` must stay under 300 words (test `core_stays_short_and_points_to_the_full_skill`). `skill/CORE.md` and `skill/SKILL.md` are embedded with `include_str!` in `crates/acus-cli/src/cmd_skill.rs`.
+- `skill/CORE.md` must stay under 400 words (test `core_stays_short_and_points_to_the_full_skill`). `skill/CORE.md` and `skill/SKILL.md` are embedded with `include_str!` in `crates/acus-cli/src/cmd_skill.rs`.
 - Output paths use `/`, also on Windows.
 
 ### Recipes

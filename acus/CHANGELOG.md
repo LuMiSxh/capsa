@@ -28,7 +28,8 @@
   that long before). A script without `await` on a function now gets a promise, not a value.
   At the script deadline, calls not yet started are dropped and each `run()` timeout is cut to
   the time left, so its command is killed and the script exits 2 within about 2 s. A call the
-  script never awaits still finishes before the script ends. No tokio: plain threads and a channel, so the `acus hook` path is unchanged.
+  script never awaits still finishes before the script ends. No tokio: plain threads and a
+  channel, so the `acus hook` path is unchanged.
 - `acus script save NAME --note TEXT [--global]` saves a script (an ES module with `description`,
   `params` and a default function) as an immutable version; `acus script NAME[@V] key=value…`
   runs it, and `list`, `show` and `log` report on it. Repo scripts live in `.acus/scripts/` with
@@ -43,11 +44,15 @@
   `acus find X --head 30`): pipes are accepted syntax. The rewrite and its `rewrite` log entry are
   unchanged, other rewrites keep their notes, and the skill no longer calls piping a mistake.
 - `acus ctx` is renamed `acus run`, with no alias: the guard rewrites builds and tests into
-  `acus run '…'`, `--topic run` prints its reference, and the config section `[ctx]` is `[run]`, so
-  a config file that still has `[ctx]` fails to load until it is renamed. The repeat-failure state
-  moves from `acus/ctx/` to `acus/run/`. Guard rule names (`ctx-pipe`, `build-pipe`) and the
+  `acus run '…'`, `--topic run` prints its reference, and the config section `[ctx]` is `[run]`,
+  so a config file that still has `[ctx]` fails to load until it is renamed. The repeat-failure
+  state moves from `acus/ctx/` to `acus/run/`. Guard rule names (`ctx-pipe`, `build-pipe`) and the
   `guard.jsonl` fields are unchanged. The batch `acus run`, which read several commands from stdin,
   is removed with its skill section.
+- The skill is shorter: `SKILL.md` 1146 → 1021 words, with flag detail moved to the references,
+  and `CORE.md` (297 words) gains the `acus script` row and example. Evals (`no-hooks`, Haiku,
+  one run each) before → after: trigger recall 4/12 → 6/14, near-miss specificity 12/12 → 12/12,
+  tasks 1/6 → 1/9; the 28 shared cases differ in two, one each way.
 
 ## [0.23.0]
 

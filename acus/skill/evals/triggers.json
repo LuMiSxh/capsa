@@ -13,7 +13,9 @@
     "List every Rust file under crates with its line count.",
     "Inspect the last ten commits that touch src/search.",
     "Add a reset method to Parser right after parse.",
-    "Search app.log for ERROR and keep the last 30 hits."
+    "Search app.log for ERROR and keep the last 30 hits.",
+    "Find where load_config is defined, then show its body and every caller in one pass.",
+    "Find every file that imports ./util, then show the function around each hit, in one go."
   ],
   "near_miss": [
     "Explain how the Rust borrow checker works.",

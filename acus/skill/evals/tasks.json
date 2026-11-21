@@ -34,6 +34,24 @@
       ]
     },
     {
+      "prompt": "Find where parse_config is defined, show its body and list every caller, all in one go.",
+      "expected": [
+        "acus script\nparse_config"
+      ]
+    },
+    {
+      "prompt": "Change the default timeout in src/config.rs from 30 to 60, then run the tests and show only the failures.",
+      "expected": [
+        "acus patch --run 'cargo test'\n*** Update File: src/config.rs"
+      ]
+    },
+    {
+      "prompt": "Run the saved fix-imports script for module ./util.",
+      "expected": [
+        "acus script fix-imports module=./util"
+      ]
+    },
+    {
       "prompt": "Delete lines 40 to 44 of src/a.rs.",
       "expected": [
         "acus patch <<'PATCH'\n*** Begin Patch\n*** Delete Lines: src/a.rs:40-44\n*** Expect: <the exact text of line 40>\n*** End Patch\nPATCH",
