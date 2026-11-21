@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.24.0]
+
 ### Added
 
 - `acus script` imports MCP servers from Claude Code's settings: `import gh from "mcp:github"`
