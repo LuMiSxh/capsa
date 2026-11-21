@@ -166,7 +166,9 @@ impl Host for Slow {
             }
             "read" => self.note("read"),
             "hold" => {
-                std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+                // Ends just past the deadline, inside the expiry grace, as a clamped `run()` does.
+                let end = deadline + Duration::from_millis(100);
+                std::thread::sleep(end.saturating_duration_since(Instant::now()));
                 self.note("hold:end");
             }
             "boom" => panic!("boom"),
