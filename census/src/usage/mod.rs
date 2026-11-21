@@ -11,6 +11,7 @@ mod handback;
 mod merge;
 pub(crate) mod prices;
 mod read;
+mod script;
 pub(crate) mod time;
 mod tools;
 
@@ -25,6 +26,9 @@ pub use handback::{HandbackWeek, RoleHandbacks};
 pub use prices::{
     Cost, LOG as PRICE_LOG, LOG_LIMIT as PRICE_LOG_LIMIT, PROVIDERS, knows_provider,
     refresh as refresh_prices,
+};
+pub use script::{
+    ScriptEntry, ScriptStat, by_script, log_path as script_log_path, read_log as read_script_log,
 };
 pub use time::{parse_date, parse_ts};
 pub use tools::group;

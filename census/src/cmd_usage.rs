@@ -4,8 +4,8 @@
 use crate::now_secs;
 use crate::out::Out;
 use crate::usage_views::{
-    AgentsView, ByView, CompareOut, GuardView, HandbacksView, ToolsView, cost_rows, k, money,
-    provider_kind, rate, sizes_text, table,
+    AgentsView, ByView, CompareOut, GuardView, HandbacksView, ScriptsView, ToolsView, cost_rows, k,
+    money, provider_kind, rate, sizes_text, table,
 };
 use anyhow::Result;
 use capsa_core::exit::Outcome;
@@ -13,8 +13,8 @@ use capsa_core::render::{Doc, Render, emit};
 use census::config::Config;
 use census::limits::{self, Kind};
 use census::usage::{
-    Report, UsageOpts, WEIGHTS, compare, guard_log_path, parse_date, read_log, refresh_prices,
-    report, write_guard_follow,
+    Report, UsageOpts, WEIGHTS, by_script, compare, guard_log_path, parse_date, read_log,
+    read_script_log, refresh_prices, report, script_log_path, write_guard_follow,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -54,6 +54,10 @@ pub struct Args {
     /// shows.
     #[arg(long, requires = "guard")]
     by_project: bool,
+    /// Runs of saved acus scripts: per name and scope, runs, failures, median duration, last use
+    /// and the most common repository.
+    #[arg(long)]
+    scripts: bool,
     /// One row per role (main, worker, worker-lite, ...): spawns, models, requests, preamble size,
     /// cost, cache hit rate, and cache rewrites (expired-cache writes, unexpected busts and compactions).
     #[arg(long)]
@@ -83,6 +87,9 @@ fn by(kind: &str, out: &Out) -> Result<Outcome> {
 }
 
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
+    if a.scripts {
+        return scripts(&a, out);
+    }
     if a.guard {
         return guard(&a, out);
     }
@@ -320,6 +327,23 @@ fn tools(doc: &mut Doc, r: &Report, top: usize) {
     if hidden > 0 {
         doc.more(hidden, "census usage --top N");
     }
+}
+
+/// `census usage --scripts`: the runs of saved acus scripts per name and scope, from the log acus
+/// writes beside `guard.jsonl`.
+fn scripts(a: &Args, out: &Out) -> Result<Outcome> {
+    let now = now_secs();
+    let path = script_log_path().unwrap_or_default();
+    let since = a.days.map_or(0, |d| now.saturating_sub(d * 86_400));
+    let entries = read_script_log(since, a.project.as_deref());
+    let stats = by_script(&entries);
+    let body = ScriptsView::new(path.display().to_string(), &stats, a.top, now);
+    let outcome = emit(&body, out.format)?;
+    Ok(if entries.is_empty() {
+        Outcome::Empty
+    } else {
+        outcome
+    })
 }
 
 /// `census usage --guard`: the guard's decisions per rule, or per project with `--by-project`, then

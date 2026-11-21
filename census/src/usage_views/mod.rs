@@ -10,6 +10,7 @@ mod by;
 mod compare;
 mod guard;
 mod handbacks;
+mod scripts;
 mod tools;
 
 pub(crate) use agents::AgentsView;
@@ -17,6 +18,7 @@ pub(crate) use by::ByView;
 pub(crate) use compare::CompareOut;
 pub(crate) use guard::GuardView;
 pub(crate) use handbacks::HandbacksView;
+pub(crate) use scripts::ScriptsView;
 pub(crate) use tools::ToolsView;
 
 /// A table with one header per column; `align` holds an `r` for each right-aligned column.
