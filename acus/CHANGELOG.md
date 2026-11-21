@@ -52,7 +52,9 @@
 - The skill is shorter: `SKILL.md` 1146 → 1021 words, with flag detail moved to the references,
   and `CORE.md` (297 words) gains the `acus script` row and example. Evals (`no-hooks`, Haiku,
   one run each) before → after: trigger recall 4/12 → 6/14, near-miss specificity 12/12 → 12/12,
-  tasks 1/6 → 1/9; the 28 shared cases differ in two, one each way.
+  tasks 1/6 → 1/9; the 28 shared cases differ in two, one each way. A rewritten description
+  (invoke first, trigger phrasings with their commands) and an exact-forms table in `SKILL.md`
+  then raise it (repeat 2) to trigger recall 28/28, near-miss specificity 23/24, tasks 13/18.
 
 ## [0.23.0]
 

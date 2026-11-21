@@ -22,4 +22,3 @@ Runs a shell command, merges stdout and stderr, drops build noise, and prints th
 - `--head N` stops after N printed lines.
 
 The exit code is the command's own; a failing command still prints its filtered output.
-

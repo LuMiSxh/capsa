@@ -149,6 +149,10 @@ mod tests {
         );
         assert_eq!(fields[0].1, super::SKILL_DEF.tool);
         assert!(fields[1].1.len() <= 1024, "{} chars", fields[1].1.len());
+        assert!(
+            !fields[1].1.contains(':'),
+            "a colon breaks the YAML frontmatter"
+        );
         assert!(super::SKILL.lines().count() < 500);
     }
 

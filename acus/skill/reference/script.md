@@ -1,8 +1,15 @@
 # script
 
-Contents: [Functions](#functions), [Saved scripts](#saved-scripts), [Limits](#limits),
-[MCP servers](#mcp-servers), [Common mistakes](#common-mistakes),
-[Parallel calls](#parallel-calls).
+## Contents
+
+- [Functions](#functions)
+- [Saved scripts](#saved-scripts)
+- [Limits](#limits)
+- [MCP servers](#mcp-servers)
+- [Common mistakes](#common-mistakes)
+- [Parallel calls](#parallel-calls)
+
+## Overview
 
 ```bash
 acus script <<'JS'
@@ -24,17 +31,17 @@ Options are an object as the last argument; a key is the long flag name in camel
 array repeats it, `paths` adds paths after the positionals. The command's own parser checks the
 flags, so `acus help <command>` lists them.
 
-| Call | Returns |
-|---|---|
+| Call                                                                              | Returns                                                                                                  |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `find(pattern or [patterns], {paths, block, filesWithMatches, count, glob, ...})` | `hits` `{path, line, symbol?, text}`; `block` gives `views`, `filesWithMatches` and `count` give `files` |
-| `show(...addresses)` | `views` `{path, start, end, symbol?, text}` |
-| `outline(paths, {...})` | `outline` `{path, lang?, lines?, symbols}` |
-| `files(paths, {glob, lines})` | `files` `{path, lines?}` |
-| `follow(address, {down})`, `blame(address)` | `follow`, `blame` edges and runs |
-| `diff(rev, {patch, paths})`, `log({n, ...})` | `diff` per file with symbols, `log` commits |
-| `patch(text, {check, diff, run})` | `{kind: "patch", written, changes, notes, regions, run?}` |
-| `run(cmd, {tail, grep, drop, timeout, json})` | `{kind: "run", ok, code, text, failures?, json?}` |
-| `read(path)` | file text without line numbers, for data (JSON, TOML, lists) |
+| `show(...addresses)`                                                              | `views` `{path, start, end, symbol?, text}`                                                              |
+| `outline(paths, {...})`                                                           | `outline` `{path, lang?, lines?, symbols}`                                                               |
+| `files(paths, {glob, lines})`                                                     | `files` `{path, lines?}`                                                                                 |
+| `follow(address, {down})`, `blame(address)`                                       | `follow`, `blame` edges and runs                                                                         |
+| `diff(rev, {patch, paths})`, `log({n, ...})`                                      | `diff` per file with symbols, `log` commits                                                              |
+| `patch(text, {check, diff, run})`                                                 | `{kind: "patch", written, changes, notes, regions, run?}`                                                |
+| `run(cmd, {tail, grep, drop, timeout, json})`                                     | `{kind: "run", ok, code, text, failures?, json?}`                                                        |
+| `read(path)`                                                                      | file text without line numbers, for data (JSON, TOML, lists)                                             |
 
 - List results are arrays carrying a `kind`. `.head(n)`, `.tail(n)`, `.grep(re)` keep it, and
   `.paths()` returns the distinct paths.
@@ -62,11 +69,11 @@ JS
 acus script fix-imports module=./util
 ```
 
-| Task | Command |
-|---|---|
-| Save a version (`--global` for every repo) | `acus script save NAME --note TEXT` |
-| Run the latest, or version 2 | `acus script NAME key=value…`, `acus script NAME@2 …` |
-| List, read, see the history | `acus script list`, `acus script show NAME[@V]`, `acus script log NAME` |
+| Task                                       | Command                                                                 |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| Save a version (`--global` for every repo) | `acus script save NAME --note TEXT`                                     |
+| Run the latest, or version 2               | `acus script NAME key=value…`, `acus script NAME@2 …`                   |
+| List, read, see the history                | `acus script list`, `acus script show NAME[@V]`, `acus script log NAME` |
 
 - `args` holds the `key=value` words as strings; a repeated key makes an array.
 - `save` refuses a module without `description`, `params` and a default function. Names use

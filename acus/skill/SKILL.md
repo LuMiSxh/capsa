@@ -1,6 +1,6 @@
 ---
 name: acus
-description: Code search, read, patch and git-summary CLI for coding agents. Use it before any Grep, Glob, Read or Edit call and before a Bash grep, rg, find, cat, head, tail, sed, git status, git diff or git log, to find code or usages, list files, read a file, symbol, line range or log file, filter piped output, edit or rename across files, or review what changed on a branch. Also runs builds and tests (cargo test, npm test) and shows only their failures with the code they point at. Results are line-numbered and grouped by enclosing symbol, every truncation names the next command, and patches apply all or nothing. Chains dependent lookups into one `acus script` program and runs saved scripts.
+description: Code search, read, patch and git-summary CLI for coding agents. Always invoke this skill first, before any Grep, Glob, Read or Edit call and before any Bash grep, rg, find, cat, head, sed -i, git diff, git log or ls. It owns every code lookup and edit, so use it to find usages, callers or definitions (acus find, follow), read lines N-M or a function (acus show), list files with line counts (acus files), see what changed on a branch or versus main (acus diff main -p), read git log for a path (acus log), rename or replace text across files, add, change or delete a method or lines (acus patch), search a log file and keep the last hits, run cargo test or npm test and show only failures (acus run), and chain several dependent lookups into one `acus script` or run a saved script by name. Results are line-numbered and grouped by symbol.
 ---
 
 # acus
@@ -33,6 +33,40 @@ JS
 ```
 
 Use a script when the next call is known before the first one runs; when a step depends on what you read, make single calls. Saved scripts are ES modules with `description`, `params` and a default function; `save` needs `--note`. Details: [script](reference/script.md).
+
+Exact forms:
+
+| Task | Command |
+|---|---|
+| callers, callees | `acus follow src/parser.rs#Parser::parse`, add `--down` for callees |
+| read lines 40-80 | `acus show src/parser.rs:40-80` |
+| branch vs main, changed lines | `acus diff main -p` |
+| rename everywhere under src | `*** Replace All: src` block in `acus patch` |
+| delete lines 40-44 | `*** Delete Lines: src/a.rs:40-44` plus `*** Expect:` in `acus patch` |
+| edit, then run the tests | `acus patch --run 'cargo test' <<'PATCH' … PATCH` |
+| run saved script `fix-imports` | `acus script fix-imports module=./util` |
+| find, then show, then callers | one `acus script`; never chain acus commands with `&&` |
+
+```bash
+acus patch <<'PATCH'
+*** Begin Patch
+*** Replace All: src
+<<<<<<< SEARCH
+old_timeout
+=======
+timeout
+>>>>>>> REPLACE
+*** End Patch
+PATCH
+```
+
+```bash
+acus script <<'JS'
+const hits = await find('fn parse_config', {glob: '*.rs'});
+const addr = hits.head(1).map((h) => `${h.path}#parse_config`);
+return [await show(addr), await follow(addr[0])];
+JS
+```
 
 Flags beyond each default: [find](reference/find.md), [read](reference/read.md), [patch](reference/patch.md), [git](reference/git.md), [run](reference/run.md), [script](reference/script.md). `acus help <command>` lists them too.
 
