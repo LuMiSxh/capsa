@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.8.0]
+
 ### Added
 
 - `census usage --scripts` reports the runs of saved acus scripts from acus's `script.jsonl`: runs,
