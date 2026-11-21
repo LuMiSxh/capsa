@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use crate::common::*;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 /// A git repository with its own home, Claude config and acus config, and one MCP server `fake`
 /// defined in the user scope.
@@ -183,6 +182,7 @@ fn managed_settings_deny_a_tool_and_save_starts_no_server() {
 #[cfg(unix)]
 #[test]
 fn the_deadline_kills_a_hanging_server() {
+    use std::time::{Duration, Instant};
     let sandbox = Sandbox::new("[script]\nmcp = [\"fake\"]\ntimeout = 2\n");
     let started = Instant::now();
     let (code, _, err) = sandbox.script("import fake from \"mcp:fake\"; await fake.hang({});");
