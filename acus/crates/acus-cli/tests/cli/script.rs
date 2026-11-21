@@ -52,10 +52,10 @@ fn script_filters_keep_the_kind_and_an_empty_result_exits_1() {
 fn script_run_returns_code_text_and_parsed_json() {
     let (code, out, _) = script(
         &["--json"],
-        "const r = await run(\"echo '{\\\"a\\\":1}'\", {json: true}); return [r.ok, r.code, r.json.a]",
+        "const r = await run('echo 7', {json: true}); return [r.ok, r.code, r.json]",
     );
     assert_eq!(code, 0);
-    assert_eq!(out, "{\"prints\":[],\"result\":[true,0,1]}\n");
+    assert_eq!(out, "{\"prints\":[],\"result\":[true,0,7]}\n");
     let (code, out, _) = script(&[], "return (await run('exit 3')).code");
     assert_eq!((code, out.as_str()), (0, "3\n"));
 }
@@ -83,10 +83,12 @@ fn script_option_objects_become_flags_checked_by_the_command() {
 
 #[test]
 fn script_read_stays_inside_the_repository() {
-    let (code, _, err) = script(&[], "return read('/etc/hosts')");
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    let path = outside.path().to_string_lossy().replace('\\', "/");
+    let (code, _, err) = script(&[], &format!("return read('{path}')"));
     assert_eq!(code, 2);
     assert!(
-        err.contains("/etc/hosts is outside the repository"),
+        err.contains(&format!("{path} is outside the repository")),
         "{err}"
     );
 }

@@ -119,12 +119,21 @@ fn run_saved(words: &[String], cfg: Config, format: Format) -> Result<Outcome> {
             name,
             version: found.version,
             scope: found.scope,
-            cwd: cwd.to_string_lossy().into_owned(),
+            cwd: logged_cwd(&cwd),
             ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             ok: outcome.is_ok(),
         },
     );
     render::emit(&result::Output::new(outcome.map_err(failure)?), format)
+}
+
+/// Returns `cwd` resolved the way `recommend` resolves the directories it compares against, so
+/// symlinks, Windows short names and verbatim prefixes cannot make the two differ.
+fn logged_cwd(cwd: &std::path::Path) -> String {
+    cwd.canonicalize()
+        .unwrap_or_else(|_| cwd.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Returns the run's limits: the defaults, with the configured time limit.

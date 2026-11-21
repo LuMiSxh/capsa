@@ -51,6 +51,15 @@ impl Sandbox {
         out
     }
 
+    fn script_log(&self) -> PathBuf {
+        let state = self.dir.path().join("state/acus");
+        if cfg!(windows) {
+            state.join("state/script.jsonl")
+        } else {
+            state.join("script.jsonl")
+        }
+    }
+
     fn meta(&self, name: &str) -> PathBuf {
         self.repo()
             .join(".acus/scripts")
@@ -204,7 +213,7 @@ fn a_failing_saved_script_is_logged_as_not_ok() {
     sb.save("greet", &failing);
     let (code, _, err) = sb.acus(&["greet"], "");
     assert_eq!(code, 2, "{err}");
-    let log = std::fs::read_to_string(sb.dir.path().join("state/acus/script.jsonl")).unwrap();
+    let log = std::fs::read_to_string(sb.script_log()).unwrap();
     assert!(
         log.contains("\"name\":\"greet\"") && log.contains("\"ok\":false"),
         "{log}"
@@ -238,7 +247,7 @@ fn session_start_names_used_scripts_and_leaves_out_stale_ones() {
         meta["versions"][0]["at"] = 1.into();
         std::fs::write(sb.meta(name), meta.to_string()).unwrap();
     }
-    let stale_log = sb.dir.path().join("state/acus/script.jsonl");
+    let stale_log = sb.script_log();
     std::fs::write(stale_log, "").unwrap();
     assert!(!sb.session_start().contains("scripts here"));
 }
