@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use crate::{Host, HostError, Limits, ScriptError, check_module, run};
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -135,6 +136,8 @@ fn nothing_but_the_host_functions_reaches_outside() {
 /// Sleeps in `nap`, records what ran in `log`, and treats `write` as a call that must run alone.
 struct Slow {
     log: Arc<Mutex<Vec<String>>>,
+    live: AtomicUsize,
+    peak: Arc<AtomicUsize>,
 }
 
 impl Slow {
@@ -156,7 +159,10 @@ impl Host for Slow {
         let ms = args.first().and_then(Value::as_u64).unwrap_or(0);
         match name {
             "nap" => {
+                let live = self.live.fetch_add(1, Ordering::SeqCst) + 1;
+                self.peak.fetch_max(live, Ordering::SeqCst);
                 std::thread::sleep(Duration::from_millis(ms));
+                self.live.fetch_sub(1, Ordering::SeqCst);
                 self.note("nap:end");
             }
             "write" => {
@@ -179,32 +185,40 @@ impl Host for Slow {
 }
 
 fn slow() -> (Slow, Arc<Mutex<Vec<String>>>) {
+    let (host, log, _) = slow_with_peak();
+    (host, log)
+}
+
+/// Also returns the most `nap` calls that ever ran at the same time.
+fn slow_with_peak() -> (Slow, Arc<Mutex<Vec<String>>>, Arc<AtomicUsize>) {
     let log = Arc::new(Mutex::new(Vec::new()));
+    let peak = Arc::new(AtomicUsize::new(0));
     (
         Slow {
             log: Arc::clone(&log),
+            live: AtomicUsize::new(0),
+            peak: Arc::clone(&peak),
         },
         log,
+        peak,
     )
 }
 
 #[test]
 fn calls_awaited_together_run_at_the_same_time() {
-    let (host, _) = slow();
-    let started = Instant::now();
+    let (host, _, peak) = slow_with_peak();
+    let patient = Limits {
+        deadline: Duration::from_secs(20),
+        ..limits()
+    };
     let out = run(
-        "return await Promise.all([nap(400), nap(400), nap(400), nap(400)]);",
+        "return await Promise.all([nap(200), nap(200), nap(200), nap(200)]);",
         host,
-        &limits(),
+        &patient,
     )
     .unwrap();
-    assert_eq!(out.value, Some(json!([400, 400, 400, 400])));
-    // Serial would take 1600 ms.
-    assert!(
-        started.elapsed() < Duration::from_millis(1000),
-        "{:?}",
-        started.elapsed()
-    );
+    assert_eq!(out.value, Some(json!([200, 200, 200, 200])));
+    assert!(peak.load(Ordering::SeqCst) >= 2);
 }
 
 #[test]
