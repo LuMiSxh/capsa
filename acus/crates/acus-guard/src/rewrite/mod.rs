@@ -15,7 +15,7 @@ pub(super) use span::*;
 #[derive(Debug)]
 pub struct Rewrite {
     pub command: String,
-    /// Pairs what was run instead of what, for the agent.
+    /// Pairs what was run instead of what, for the agent; empty when the rewrite needs no note.
     pub note: String,
     pub rule: Rule,
     /// Marks that a build, test or patch was rewritten, so the hook gives no permission decision.
@@ -77,12 +77,17 @@ pub(super) fn rewrite_parsed(cmd: &str, p: &Parsed, scope: Option<&Scope>) -> Op
     if !accepted(&folded.out, scope) {
         return None;
     }
-    Some(Rewrite {
-        command: folded.out,
-        note: format!(
+    let note = if folded.notes.is_empty() {
+        String::new()
+    } else {
+        format!(
             "acus guard: {}. The command was rewritten, not refused; use acus directly next time.",
             folded.notes.join("; ")
-        ),
+        )
+    };
+    Some(Rewrite {
+        command: folded.out,
+        note,
         rule: folded.first?,
         deferred: folded.deferred,
     })
@@ -110,7 +115,7 @@ pub(super) fn send_instead_parsed(
         return None;
     }
     let folded = fold_all(cmd, segs, scope, true)?;
-    let send = (!folded.notes.is_empty() && parse(&folded.out, Dialect::Bash).is_some())
+    let send = (folded.first.is_some() && parse(&folded.out, Dialect::Bash).is_some())
         .then_some(folded.out);
     Some((send, folded.blocked))
 }
@@ -118,6 +123,7 @@ pub(super) fn send_instead_parsed(
 /// Holds a command with its folds applied, and what each fold ran instead of.
 struct Folded {
     out: String,
+    /// What each fold ran instead of, for the agent. A pipe fold adds none.
     notes: Vec<String>,
     first: Option<Rule>,
     deferred: bool,
@@ -182,7 +188,9 @@ fn fold_all(cmd: &str, segs: &[Segment], scope: Option<&Scope>, partial: bool) -
             }
             _ => "",
         };
-        notes.push(format!("ran `{new}` instead of `{old}`{why}"));
+        if rule != Rule::AcusPipe {
+            notes.push(format!("ran `{new}` instead of `{old}`{why}"));
+        }
         out.push_str(&cmd[at..from]);
         out.push_str(&new);
         deferred |= matches!(

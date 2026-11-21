@@ -18,27 +18,27 @@ fn folds_gh_logs_timeouts_and_quoted_angle_brackets() {
     assert_rewrites(&[
         (
             "gh run view 123 --log-failed | grep error | tail -20",
-            "acus ctx 'gh run view 123 --log-failed' --grep 'error' --tail 20",
+            "acus run 'gh run view 123 --log-failed' --grep 'error' --tail 20",
         ),
         (
             "gh run view 123 --log | tail -5",
-            "acus ctx 'gh run view 123 --log' --tail 5",
+            "acus run 'gh run view 123 --log' --tail 5",
         ),
         (
             "timeout 300 cargo test 2>&1 | tail -30",
-            "acus ctx 'cargo test' --timeout 300 --tail 30",
+            "acus run 'cargo test' --timeout 300 --tail 30",
         ),
         (
             "gtimeout 2h cargo test | tail -3",
-            "acus ctx 'cargo test' --timeout 7200 --tail 3",
+            "acus run 'cargo test' --timeout 7200 --tail 3",
         ),
         (
             "timeout 5m cargo build | grep -E 'error|warning'",
-            "acus ctx 'cargo build' --timeout 300 --grep 'error|warning'",
+            "acus run 'cargo build' --timeout 300 --grep 'error|warning'",
         ),
         (
             "cargo test 2>&1 | grep '<T>' | tail -5",
-            "acus ctx 'cargo test' --grep '<T>' --tail 5",
+            "acus run 'cargo test' --grep '<T>' --tail 5",
         ),
     ]);
 }
@@ -46,7 +46,7 @@ fn folds_gh_logs_timeouts_and_quoted_angle_brackets() {
 #[test]
 fn keeps_the_old_verdict_where_a_timeout_or_gh_fold_does_not_apply() {
     for cmd in [
-        // Filters that no ctx flag can express.
+        // Filters that no run flag can express.
         "gh run list --limit 4 2>&1 | head; gh run view 7 --log-failed 2>&1 | grep -E a -A5 | grep -v b | head -4",
         "timeout 590 cargo clippy --workspace 2>&1 | grep -E \"^(warning|error)\" -A4 | grep -v b | head -9",
         "pkill -f foo; cd d && echo x >> n.md; timeout 590 cargo clippy 2>&1 | grep -E \"^e\" -A4 | grep -v b | head -9",
@@ -66,7 +66,7 @@ fn keeps_the_old_verdict_where_a_timeout_or_gh_fold_does_not_apply() {
 fn head_zero_after_a_build_folds_as_before() {
     assert_eq!(
         rw("swift build -q 2>&1 | head -n 0; echo hi").as_deref(),
-        Some("acus ctx 'swift build -q' --max-output 2; echo hi")
+        Some("acus run 'swift build -q' --max-output 2; echo hi")
     );
     assert!(crate::check("swift build -q 2>&1 | head -n 0").is_some());
 }
@@ -85,7 +85,7 @@ fn leaves_other_gh_and_timeout_commands() {
         let got = rw(cmd);
         assert!(
             got.as_deref()
-                .is_none_or(|s| !s.contains("--timeout") && !s.starts_with("acus ctx 'gh")),
+                .is_none_or(|s| !s.contains("--timeout") && !s.starts_with("acus run 'gh")),
             "{cmd}: {got:?}"
         );
     }
@@ -96,11 +96,11 @@ fn names_every_filter_that_blocks_the_ctx_form() {
     for (cmd, want) in [
         (
             "cargo test 2>&1 | grep FAIL | tail -n +5 | grep -c x",
-            "no ctx flag does `tail`, `grep`,",
+            "no run flag does `tail`, `grep`,",
         ),
         (
-            "acus ctx 'cargo test' | tail -n +5 | grep x | tail -n +2",
-            "no ctx flag does `tail`, so",
+            "acus run 'cargo test' | tail -n +5 | grep x | tail -n +2",
+            "no run flag does `tail`, so",
         ),
     ] {
         let Some(crate::Verdict::Deny(_, reason)) = crate::check(cmd) else {
@@ -114,20 +114,20 @@ fn names_every_filter_that_blocks_the_ctx_form() {
 fn a_head_that_keeps_every_tail_line_folds_away() {
     assert_rewrites(&[
         (
-            "acus ctx 'cargo test' --tail 20 | head -25",
-            "acus ctx 'cargo test' --tail 20",
+            "acus run 'cargo test' --tail 20 | head -25",
+            "acus run 'cargo test' --tail 20",
         ),
         (
-            "acus ctx 'cargo test' --tail 20 | head -20",
-            "acus ctx 'cargo test' --tail 20",
+            "acus run 'cargo test' --tail 20 | head -20",
+            "acus run 'cargo test' --tail 20",
         ),
         (
             "cargo test 2>&1 | tail -20 | head -25",
-            "acus ctx 'cargo test' --tail 20",
+            "acus run 'cargo test' --tail 20",
         ),
         (
             "cargo test 2>&1 | tail -20 | head -20; echo hi",
-            "acus ctx 'cargo test' --tail 20; echo hi",
+            "acus run 'cargo test' --tail 20; echo hi",
         ),
     ]);
 }
@@ -135,7 +135,7 @@ fn a_head_that_keeps_every_tail_line_folds_away() {
 #[test]
 fn a_head_that_cuts_the_tail_keeps_the_old_verdict() {
     for cmd in [
-        "acus ctx 'cargo test' --tail 20 | head -5",
+        "acus run 'cargo test' --tail 20 | head -5",
         "cargo test 2>&1 | tail -20 | head -5",
     ] {
         assert!(rw(cmd).is_none(), "{cmd}");
@@ -152,7 +152,7 @@ fn sort_and_uniq_chains_run_as_written() {
         "cargo test 2>&1 | grep FAIL | sort | uniq -c",
         "npm run build | sort -u",
         "cargo test 2>&1 | sort | uniq",
-        "acus ctx 'cargo test' | grep FAIL | sort | uniq",
+        "acus run 'cargo test' | grep FAIL | sort | uniq",
     ] {
         assert!(crate::check(cmd).is_none(), "{cmd}");
         assert!(rw(cmd).is_none(), "{cmd}");
@@ -161,21 +161,21 @@ fn sort_and_uniq_chains_run_as_written() {
 
 #[test]
 fn stacked_ctx_greps_run_as_written() {
-    let cmd = "acus ctx 'cargo test' | grep a | grep b";
+    let cmd = "acus run 'cargo test' | grep a | grep b";
     assert!(crate::check(cmd).is_none(), "{cmd}");
     assert!(rw(cmd).is_none(), "{cmd}");
 }
 
-// Stacked greps that one ctx flag set expresses still fold: `grep -v` becomes `--drop`.
+// Stacked greps that one run flag set expresses still fold: `grep -v` becomes `--drop`.
 #[test]
 fn stacked_greps_that_fold_keep_their_rewrite() {
     assert_eq!(
-        rw("acus ctx 'cargo test' | grep -v x | grep y").as_deref(),
-        Some("acus ctx 'cargo test' --drop 'x' --grep 'y'")
+        rw("acus run 'cargo test' | grep -v x | grep y").as_deref(),
+        Some("acus run 'cargo test' --drop 'x' --grep 'y'")
     );
 }
 
-// A build piped into stacked greps that no ctx flag set expresses runs as written, as ctx does.
+// A build piped into stacked greps that no run flag set expresses runs as written, as run does.
 #[test]
 fn stacked_build_greps_run_as_written() {
     let cmd = "cargo test 2>&1 | grep a | grep b";
@@ -193,11 +193,11 @@ fn stacked_build_greps_that_fold_keep_their_rewrite() {
     );
     assert_eq!(
         rw(cmd).as_deref(),
-        Some("acus ctx 'cargo test' --drop 'x' --grep 'y'")
+        Some("acus run 'cargo test' --drop 'x' --grep 'y'")
     );
 }
 
-// Greps with context windows stay refused, as the ctx form does.
+// Greps with context windows stay refused, as the run form does.
 #[test]
 fn build_greps_with_context_stay_refused() {
     let cmd = "cargo test 2>&1 | grep -A2 error | grep -v warn";
@@ -213,7 +213,7 @@ fn build_greps_with_context_stay_refused() {
 fn awk_chains_keep_running_as_written() {
     for cmd in [
         "cargo test | awk '{print $1}'",
-        "acus ctx 'cargo test' | awk '{print $1}'",
+        "acus run 'cargo test' | awk '{print $1}'",
     ] {
         assert!(crate::check(cmd).is_none(), "{cmd}");
     }
@@ -224,15 +224,15 @@ fn a_send_line_keeps_every_stage_of_the_chain() {
     for (cmd, want) in [
         (
             "xcodebuild build 2>&1 | grep -E 'error|BUILD' | cut -c1-150 | tail -4",
-            "acus ctx 'xcodebuild build' --grep 'error|BUILD' --tail 4 | cut -c1-150",
+            "acus run 'xcodebuild build' --grep 'error|BUILD' --tail 4 | cut -c1-150",
         ),
         (
-            "acus ctx 'xcodebuild build' | grep -E 'error|BUILD' | cut -c1-150 | tail -4",
-            "acus ctx 'xcodebuild build' --grep 'error|BUILD' --tail 4 | cut -c1-150",
+            "acus run 'xcodebuild build' | grep -E 'error|BUILD' | cut -c1-150 | tail -4",
+            "acus run 'xcodebuild build' --grep 'error|BUILD' --tail 4 | cut -c1-150",
         ),
         (
             "timeout 300 xcodebuild build 2>&1 | grep -E 'error' | cut -c1-150 | tail -4",
-            "acus ctx 'xcodebuild build' --timeout 300 --grep 'error' --tail 4 | cut -c1-150",
+            "acus run 'xcodebuild build' --timeout 300 --grep 'error' --tail 4 | cut -c1-150",
         ),
     ] {
         let Some(crate::Verdict::Deny(_, reason)) = crate::check(cmd) else {
@@ -243,7 +243,7 @@ fn a_send_line_keeps_every_stage_of_the_chain() {
             "{reason}"
         );
     }
-    // A stage that no ctx flag does, or one that is not an output filter, names no command.
+    // A stage that no run flag does, or one that is not an output filter, names no command.
     for cmd in [
         "xcodebuild build 2>&1 | grep -E 'error' | awk '{print $1}'",
         "xcodebuild build 2>&1 | grep -E 'error' | cut -c1-150 | awk '{print $1}'",
@@ -260,7 +260,7 @@ fn a_send_line_keeps_every_stage_of_the_chain() {
 fn other_unfoldable_filters_are_still_refused() {
     for cmd in [
         "cargo test 2>&1 | tail -n +5 | grep x",
-        "acus ctx 'cargo test' | tail -n +5 | grep x",
+        "acus run 'cargo test' | tail -n +5 | grep x",
     ] {
         assert!(
             matches!(crate::check(cmd), Some(crate::Verdict::Deny(..))),

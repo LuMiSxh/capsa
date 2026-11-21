@@ -10,6 +10,7 @@ use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::paths::expand_home;
 use capsa_core::render::{Align, Doc, Table};
+use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -51,11 +52,32 @@ pub struct Args {
     cut: Option<u64>,
 }
 
+/// The files `acus files` lists, with line counts and the notes for an empty walk.
+#[derive(Debug, Serialize)]
+pub(crate) struct FilesReport {
+    files: Vec<String>,
+    counts: Option<Vec<Option<usize>>>,
+    total: usize,
+    /// Whether hidden and .gitignored files were skipped (no `--hidden -u`).
+    skipped_note: bool,
+    searched: Option<String>,
+}
+
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the command dispatch hands over the parsed arguments"
+)]
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
+    let report = compute(&a)?;
+    print(&report, &a, out)
+}
+
+/// Walks the paths and counts lines when asked. Writes nothing.
+pub(crate) fn compute(a: &Args) -> Result<FilesReport> {
     // Named in the hint when nothing matches.
     let searched = searched_globs(&a.globs, &a.paths);
     let (exclude, mut include): (Vec<String>, Vec<String>) =
-        a.globs.into_iter().partition(|g| g.starts_with('!'));
+        a.globs.iter().cloned().partition(|g| g.starts_with('!'));
     add_type_globs(&a.types, &mut include);
     let opts = WalkOpts {
         roots: a
@@ -86,51 +108,63 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         .into_inner()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     files.sort();
-    if files.is_empty() {
-        if out.format != Format::Json && !(a.hidden && a.no_ignore) {
+    let counts = a.lines.then(|| line_counts(&files));
+    // The total covers every file, including those the listing cuts off.
+    let total: usize = counts.iter().flatten().flatten().sum();
+    Ok(FilesReport {
+        files,
+        counts,
+        total,
+        skipped_note: !(a.hidden && a.no_ignore),
+        searched,
+    })
+}
+
+/// Prints the report in the format `out` names, within `--head`.
+pub(crate) fn print(r: &FilesReport, a: &Args, out: &Out) -> Result<Outcome> {
+    if r.files.is_empty() {
+        if out.format != Format::Json && r.skipped_note {
             eprintln!("(no files; hidden and .gitignored files were skipped: --hidden, -u)");
         }
         if out.format != Format::Json
-            && let Some(s) = &searched
+            && let Some(s) = &r.searched
         {
             eprintln!("(searched {s})");
         }
         return Ok(Outcome::Empty);
     }
-    // The total covers every file, including those the listing cuts off.
-    let counts = a.lines.then(|| line_counts(&files));
-    let total: usize = counts.iter().flatten().flatten().sum();
-    let shown = files.len().min(MAX_FILES);
-    let rest = files.len() - shown;
+    let shown = r.files.len().min(MAX_FILES);
+    let rest = r.files.len() - shown;
     let mut budget = Budget::new(a.head.map(|n| n as usize));
     let cut = a.cut.map(|n| n as usize);
     if out.format == Format::Json {
-        let json = match &counts {
+        let json = match &r.counts {
             Some(c) => {
-                let rows: Vec<_> = files
+                let rows: Vec<_> = r
+                    .files
                     .iter()
                     .zip(c)
                     .take(shown)
                     .map(|(f, n)| serde_json::json!({ "path": f, "lines": n }))
                     .collect();
-                serde_json::json!({ "files": rows, "total": total, "truncated": rest })
+                serde_json::json!({ "files": rows, "total": r.total, "truncated": rest })
             }
-            None => serde_json::json!({ "files": &files[..shown], "truncated": rest }),
+            None => serde_json::json!({ "files": &r.files[..shown], "truncated": rest }),
         };
         outln!("{json}");
     } else if out.format == Format::Human {
         print_human(
-            &files[..shown],
-            counts.as_deref(),
-            total,
+            &r.files[..shown],
+            r.counts.as_deref(),
+            r.total,
             rest,
             out,
             &mut budget,
             cut,
         )?;
     } else {
-        for (i, f) in files[..shown].iter().enumerate() {
-            let line = match &counts {
+        for (i, f) in r.files[..shown].iter().enumerate() {
+            let line = match &r.counts {
                 Some(c) => format!("{f}  {}", c[i].map_or("-".to_owned(), |n| n.to_string())),
                 None => f.clone(),
             };
@@ -140,8 +174,8 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         if rest > 0 {
             budget.emit(&format!("… {rest} more; narrow with -g or a path"));
         }
-        if counts.is_some() {
-            budget.emit(&format!("total  {total}"));
+        if r.counts.is_some() {
+            budget.emit(&format!("total  {}", r.total));
         }
     }
     if let Some(f) = budget.footer() {

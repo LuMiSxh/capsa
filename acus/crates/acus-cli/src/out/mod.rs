@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Everything a command prints: stdout or the capture buffer `run` reads, colour, the `--head`
+//! Everything a command prints: stdout, colour, the `--head`
 //! budget, clipping and the footers that name the command to rerun.
 
 use capsa_core::format::{Format, Stream, color};
 use capsa_core::render::{Doc, Profile, bold};
-use std::cell::RefCell;
+
 use std::io;
 
-/// Prints one line through `out::write`, so `run` can capture a line's output.
+/// Prints one line through `out::write`.
 macro_rules! outln {
    () => { $crate::out::write("\n") };
    ($($arg:tt)*) => {{
@@ -28,28 +28,9 @@ mod clip;
 pub use budget::Budget;
 pub use clip::{CUT, clip, fit_line, hit_text, more_lines};
 
-thread_local! {
-    /// Holds the output of the line `run` is executing instead of writing it to stdout.
-    static CAPTURE: RefCell<Option<String>> = const { RefCell::new(None) };
-}
-
-/// Writes `s` to stdout, or into the buffer `capture` installed.
+/// Writes `s` to stdout.
 pub fn write(s: &str) {
-    CAPTURE.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        match slot.as_mut() {
-            Some(buf) => buf.push_str(s),
-            None => print!("{s}"),
-        }
-    });
-}
-
-/// Runs `f` while `write` collects what it prints; returns the value and the collected text.
-pub fn capture<T>(f: impl FnOnce() -> T) -> (T, String) {
-    CAPTURE.with(|slot| *slot.borrow_mut() = Some(String::new()));
-    let value = f();
-    let text = CAPTURE.with(|slot| slot.borrow_mut().take().unwrap_or_default());
-    (value, text)
+    print!("{s}");
 }
 
 /// Printing helpers. Colour follows `capsa_core::format::color`: human output on a terminal

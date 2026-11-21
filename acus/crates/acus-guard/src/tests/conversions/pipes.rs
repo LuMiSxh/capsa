@@ -6,36 +6,36 @@ use super::*;
 fn folds_filters_after_acus_ctx_into_its_flags() {
     for (cmd, want) in [
         (
-            "acus ctx 'cargo test' | tail -20",
-            "acus ctx 'cargo test' --tail 20",
+            "acus run 'cargo test' | tail -20",
+            "acus run 'cargo test' --tail 20",
         ),
         (
-            "acus ctx 'cargo test' | tail -n 20",
-            "acus ctx 'cargo test' --tail 20",
+            "acus run 'cargo test' | tail -n 20",
+            "acus run 'cargo test' --tail 20",
         ),
         (
-            "acus ctx 'cargo test' 2>&1 | tail",
-            "acus ctx 'cargo test' --tail 10",
+            "acus run 'cargo test' 2>&1 | tail",
+            "acus run 'cargo test' --tail 10",
         ),
         (
-            "acus ctx 'cargo test' 2>&1 | tail -3",
-            "acus ctx 'cargo test' --tail 3",
+            "acus run 'cargo test' 2>&1 | tail -3",
+            "acus run 'cargo test' --tail 3",
         ),
         (
-            "acus ctx 'cargo test' | grep -E 'a|b'",
-            "acus ctx 'cargo test' --grep 'a|b'",
+            "acus run 'cargo test' | grep -E 'a|b'",
+            "acus run 'cargo test' --grep 'a|b'",
         ),
         (
-            "acus ctx 'cargo test' | grep FAILED",
-            "acus ctx 'cargo test' --grep 'FAILED'",
+            "acus run 'cargo test' | grep FAILED",
+            "acus run 'cargo test' --grep 'FAILED'",
         ),
         (
-            "acus ctx 'cargo test' --tail 5 | tail -3",
-            "acus ctx 'cargo test' --tail 3",
+            "acus run 'cargo test' --tail 5 | tail -3",
+            "acus run 'cargo test' --tail 3",
         ),
         (
-            "acus ctx 'cargo test' --tail 3 | tail -5",
-            "acus ctx 'cargo test' --tail 3",
+            "acus run 'cargo test' --tail 3 | tail -5",
+            "acus run 'cargo test' --tail 3",
         ),
     ] {
         let r = rewrite(cmd, None).unwrap_or_else(|| panic!("not rewritten: {cmd}"));
@@ -44,8 +44,8 @@ fn folds_filters_after_acus_ctx_into_its_flags() {
     }
     // No exact flag, or the flag is set already: refused.
     for cmd in [
-        "acus ctx 'cargo test' | tail -n +5",
-        "acus ctx 'cargo test' | grep a*",
+        "acus run 'cargo test' | tail -n +5",
+        "acus run 'cargo test' | grep a*",
     ] {
         assert!(rewrite(cmd, None).is_none(), "{cmd}");
         assert!(
@@ -53,12 +53,12 @@ fn folds_filters_after_acus_ctx_into_its_flags() {
             "{cmd}"
         );
     }
-    // `grep -v` becomes ctx's `--drop`.
+    // `grep -v` becomes run's `--drop`.
     assert_eq!(
-        rewrite("acus ctx 'cargo test' | grep -v ok", None)
+        rewrite("acus run 'cargo test' | grep -v ok", None)
             .map(|r| r.command)
             .as_deref(),
-        Some("acus ctx 'cargo test' --drop 'ok'")
+        Some("acus run 'cargo test' --drop 'ok'")
     );
 }
 
@@ -147,7 +147,7 @@ fn display_filters_show_the_output_to_the_model() {
         rewrite("cat a.rs | head -5", None).unwrap().command,
         "acus show 'a.rs:1-5'"
     );
-    // A sort in the chain is no ctx flag: the chain runs as written.
+    // A sort in the chain is no run flag: the chain runs as written.
     assert!(check("cargo build 2>&1 | grep error | sort -u | head -20").is_none());
     // A count is not the lines: the search runs as written.
     for cmd in ["grep -rn foo src | wc -l", "grep foo a.rs | sort | wc -l"] {
@@ -212,7 +212,7 @@ fn never_converts_output_that_feeds_another_stage() {
             .as_deref(),
         Some("acus show 'a.rs:4-5'")
     );
-    // Folded into one ctx call, a trailing stage would read the rewritten output.
+    // Folded into one run call, a trailing stage would read the rewritten output.
     assert!(rewrite("cargo test | tail -5 | grep x", None).is_none());
     assert!(rewrite("cargo test | grep a | head -5 | tail -2", None).is_none());
 }

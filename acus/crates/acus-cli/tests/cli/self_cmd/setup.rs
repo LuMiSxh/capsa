@@ -78,7 +78,7 @@ fn setup_installs_the_reference_files_and_uninstall_removes_them() {
     let (code, _, err) = run(&["self", "setup"]);
     assert_eq!(code, 0, "{err}");
     let skill = home.join(".claude/skills/acus");
-    for topic in ["find", "read", "patch", "git", "ctx"] {
+    for topic in ["find", "read", "patch", "git", "run"] {
         let file = skill.join("reference").join(format!("{topic}.md"));
         assert!(file.is_file(), "{}", file.display());
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus hook`: reads one hook event from stdin. `SessionStart` and `SubagentStart` print the
-//! core skill; `PreToolUse`, and a Codex payload without an event, runs the guard; another event
-//! does nothing.
+//! core skill (`SessionStart` also names the repo's saved scripts); `PreToolUse`, and a Codex
+//! payload without an event, runs the guard; another event does nothing.
 
 use crate::config::Config;
 use crate::guard_log;
@@ -62,6 +62,13 @@ fn session_start(v: &Value, cfg: &Config) -> Result<Outcome> {
     }
     acus_guard::blocks::register(&gcfg, session);
     outprint!("{}", crate::cmd_skill::CORE);
+    #[cfg(feature = "script")]
+    if let Some(line) = v["cwd"]
+        .as_str()
+        .and_then(|cwd| crate::cmd_script::scripts_here(cfg, Path::new(cwd)))
+    {
+        outprint!("{line}\n");
+    }
     Ok(Outcome::Found)
 }
 
@@ -164,14 +171,17 @@ fn log_decision(gcfg: &GuardConfig, hook: &Value, verdict: &Verdict) {
     let _ = acus_guard::log::append(gcfg, hook, verdict);
 }
 
-/// The reply to a rewritten call: the updated input, and the note that says what ran instead.
+/// The reply to a rewritten call: the updated input, and the note that says what ran instead, when
+/// the rewrite has one.
 fn rewrite_reply(mut input: Value, rw: Rewrite, note: Option<&str>) -> HookOutput {
     input["command"] = rw.command.into();
     HookOutput {
         hook_event_name: "PreToolUse",
         updated_input: Some(input),
         // No permissionDecisionReason: an allow reason would reach only the user, not the agent.
-        additional_context: Some(with_note(rw.note, note).into()),
+        additional_context: Some(with_note(rw.note, note))
+            .filter(|text| !text.is_empty())
+            .map(Into::into),
         // A build is left undecided, so Claude Code's permission flow decides the rewritten call.
         permission_decision: (!rw.deferred).then_some("allow"),
         ..HookOutput::default()
@@ -244,6 +254,7 @@ fn config_note(gcfg: &GuardConfig, session: &str, problem: &str, path: &Path) ->
 /// Appends the config note, when there is one, to the text the agent reads.
 fn with_note(text: String, note: Option<&str>) -> String {
     match note {
+        Some(note) if text.is_empty() => note.to_owned(),
         Some(note) => format!("{text}\n{note}"),
         None => text,
     }

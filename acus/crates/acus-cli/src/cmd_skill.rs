@@ -19,7 +19,8 @@ enum Topic {
     Read,
     Patch,
     Git,
-    Ctx,
+    Run,
+    Script,
 }
 
 impl Topic {
@@ -29,18 +30,20 @@ impl Topic {
             Self::Read => include_str!("../../../skill/reference/read.md"),
             Self::Patch => include_str!("../../../skill/reference/patch.md"),
             Self::Git => include_str!("../../../skill/reference/git.md"),
-            Self::Ctx => include_str!("../../../skill/reference/ctx.md"),
+            Self::Run => include_str!("../../../skill/reference/run.md"),
+            Self::Script => include_str!("../../../skill/reference/script.md"),
         }
     }
 }
 
 /// The reference files installed beside `SKILL.md`, by path below the skill directory.
-const REFERENCES: [(&str, &str); 5] = [
+const REFERENCES: [(&str, &str); 6] = [
     ("reference/find.md", Topic::Find.text()),
     ("reference/read.md", Topic::Read.text()),
     ("reference/patch.md", Topic::Patch.text()),
     ("reference/git.md", Topic::Git.text()),
-    ("reference/ctx.md", Topic::Ctx.text()),
+    ("reference/run.md", Topic::Run.text()),
+    ("reference/script.md", Topic::Script.text()),
 ];
 
 /// The skill this binary installs, for `capsa_core::skill`.
@@ -198,7 +201,8 @@ mod tests {
         let Some(sub) = tokens.first() else {
             return (String::new(), None, Vec::new());
         };
-        let action = (*sub == "self" && tokens.get(1).is_some_and(|t| !t.starts_with('-')))
+        let grouped = matches!(*sub, "self" | "script");
+        let action = (grouped && tokens.get(1).is_some_and(|t| !t.starts_with('-')))
             .then(|| tokens[1].to_owned());
         let start = if action.is_some() { 2 } else { 1 };
         let flags = tokens[start..]
@@ -244,8 +248,13 @@ mod tests {
         }
         let group = root.get_subcommands().find(|c| c.get_name() == sub)?;
         let target = match action {
+            // A word after `script` that is no action is a saved script's name.
+            Some(action) if sub == "script" => group
+                .get_subcommands()
+                .find(|c| c.get_name() == action)
+                .unwrap_or(group),
             Some(action) => group.get_subcommands().find(|c| c.get_name() == action)?,
-            None if group.has_subcommands() => return None,
+            None if group.has_subcommands() && sub != "script" => return None,
             None => group,
         };
         let mut flags = flags_of(root);

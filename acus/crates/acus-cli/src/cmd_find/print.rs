@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Prints `acus find` results: hit lines, whole blocks, matched parts and JSON.
 
-use super::matched;
-use crate::out::{Budget, Out, clip, hit_text, more_lines};
+use super::{Args, FindReport, matched};
+use crate::out::{Budget, CUT, Out, clip, hit_text, more_lines};
 use acus_search::{FileHits, Hit, Row};
 use acus_syntax::Symbol;
+use anyhow::Result;
+use capsa_core::exit::Outcome;
+use capsa_core::format::Format;
 use capsa_core::render::{Tone, paint};
 use std::collections::{BTreeSet, HashMap};
 
@@ -161,6 +164,84 @@ pub(super) fn print_only(shown: &[(&FileHits, usize)], out: &Out, cut: usize, bu
                 }
             }
         }
+    }
+}
+
+/// Prints the report in the format `out` names, within the `--head` budget.
+pub(crate) fn print(r: &FindReport, a: &Args, out: &Out) -> Result<Outcome> {
+    if r.files.is_empty() {
+        print_no_matches(r, out);
+        return Ok(Outcome::Empty);
+    }
+    print_files(r, a, out);
+    Ok(Outcome::Found)
+}
+
+/// The stderr notes for a search with no hits; JSON output stays silent.
+fn print_no_matches(r: &FindReport, out: &Out) {
+    if out.format != Format::Json && r.skipped_note {
+        eprintln!("(no matches; hidden and .gitignored files were skipped: --hidden, -u)");
+    }
+    if out.format != Format::Json
+        && let Some(s) = &r.searched
+    {
+        eprintln!("(searched {s})");
+    }
+    if r.newline_hint && out.format != Format::Json {
+        eprintln!("hint: \\n matches only across lines; add -U to match across line breaks");
+    }
+}
+
+/// Prints the files with hits as counts, file names or hit lines, within the `--head` budget.
+fn print_files(r: &FindReport, a: &Args, out: &Out) {
+    if a.count && out.format == Format::Json {
+        let total: usize = r.counts.iter().sum();
+        let counts: Vec<_> = r
+            .files
+            .iter()
+            .zip(&r.counts)
+            .map(|(f, n)| serde_json::json!({ "path": f.path, "count": n }))
+            .collect();
+        outln!("{}", serde_json::json!({ "files": counts, "total": total }));
+        return;
+    }
+    let mut budget = Budget::new(a.head.map(|n| n as usize));
+    if a.count {
+        let total: usize = r.counts.iter().sum();
+        for (f, n) in r.files.iter().zip(&r.counts) {
+            budget.emit(&format!("{} {}", f.path, n));
+        }
+        budget.emit(&format!("total {total} in {} files", r.files.len()));
+        if let Some(f) = budget.footer() {
+            outln!("{f}");
+        }
+        return;
+    }
+    if a.files_only && out.format != Format::Json {
+        for (f, n) in r.files.iter().zip(&r.counts) {
+            budget.emit(&format!("{} {}", f.path, n));
+        }
+        if let Some(f) = budget.footer() {
+            outln!("{f}");
+        }
+        return;
+    }
+    let shown: Vec<(&FileHits, usize)> = r.shown.iter().map(|&(i, n)| (&r.files[i], n)).collect();
+    let cut = a.cut.map_or(CUT, |n| n as usize);
+    match out.format {
+        Format::Json => print_json(&shown, r.rest, a.only_matching),
+        _ if a.only_matching => print_only(&shown, out, cut, &mut budget),
+        _ if a.block => print_blocks(&shown, out, a.max_lines, cut, &mut budget),
+        _ => print_lines(&shown, out, r.context, cut, &mut budget),
+    }
+    if r.rest > 0 && out.format != Format::Json {
+        budget.emit(&format!(
+            "… {} more hits in {} files (narrow with -g/-e or raise --max-hits)",
+            r.rest, r.rest_files
+        ));
+    }
+    if let Some(f) = budget.footer() {
+        outln!("{f}");
     }
 }
 

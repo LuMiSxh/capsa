@@ -6,16 +6,16 @@ mod pattern;
 mod print;
 
 use crate::globs::{add_type_globs, searched_globs};
-use crate::out::{Budget, CUT, Out};
+use crate::out::Out;
 use crate::source::{address, locate};
 use acus_search::{FileHits, FindOpts, Hit, attach_outlines};
 use acus_syntax::{Address, Target};
 use acus_walk::WalkOpts;
 use anyhow::{Result, anyhow};
 use capsa_core::exit::Outcome;
-use capsa_core::format::Format;
 use capsa_core::hint::hinted;
-use print::{print_blocks, print_json, print_lines, print_only};
+use print::print;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -124,7 +124,44 @@ pub struct Args {
     no_syntax: bool,
 }
 
+/// The hits `acus find` prints, with the budget and the notes for an empty search.
+#[derive(Debug, Serialize)]
+pub(crate) struct FindReport {
+    files: Vec<FileHits>,
+    /// Hit counts before `--last`, which `-c` and `-l` report.
+    counts: Vec<usize>,
+    /// The files the hit budget shows, as `(index in files, hits shown)`.
+    shown: Vec<(usize, usize)>,
+    rest: usize,
+    rest_files: usize,
+    context: Option<(usize, usize)>,
+    searched: Option<String>,
+    newline_hint: bool,
+    skipped_note: bool,
+}
+
+impl FindReport {
+    /// Returns every file with hits, in path order; only the files within the hit budget carry
+    /// their outline.
+    #[cfg(feature = "script")]
+    pub(crate) fn files(&self) -> &[FileHits] {
+        &self.files
+    }
+
+    /// Returns the hit count of each file in `files`, before `--last`.
+    #[cfg(feature = "script")]
+    pub(crate) fn counts(&self) -> &[usize] {
+        &self.counts
+    }
+}
+
 pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
+    let report = compute(a)?;
+    print(&report, a, out)
+}
+
+/// Searches `a` and parses outlines for the files the hit budget shows. Writes nothing.
+pub(crate) fn compute(a: &Args) -> Result<FindReport> {
     let context = context_of(a);
     refuse_conflicts(a, context.is_some())?;
     let patterns = pattern::take_patterns(a)?;
@@ -155,12 +192,30 @@ pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
         &spans,
     )
     .map_err(|e| explain_pattern_error(e, a.fixed_strings, a.perl))?;
-    if files.is_empty() {
-        print_no_matches(a, out, searched.as_deref(), newline_hint);
-        return Ok(Outcome::Empty);
+    // `--last` trims the listing; `-c` and `-l` keep reporting the counts before it.
+    let counts: Vec<usize> = files.iter().map(|f| f.hits.len()).collect();
+    if let Some(n) = a.last {
+        for f in &mut files {
+            let cut = f.hits.len().saturating_sub(n as usize);
+            f.hits.drain(..cut);
+        }
     }
-    print_files(a, out, &mut files, context);
-    Ok(Outcome::Found)
+    let (shown, rest, rest_files) = take_budget(&files, a.max_hits);
+    if !a.no_syntax && !a.count {
+        // Shown files are a prefix in path order, and files past the budget stay unparsed.
+        attach_outlines(&mut files[..shown.len()]);
+    }
+    Ok(FindReport {
+        files,
+        counts,
+        shown,
+        rest,
+        rest_files,
+        context,
+        searched,
+        newline_hint,
+        skipped_note: !(a.hidden && a.no_ignore),
+    })
 }
 
 /// `-A`, `-B` and `-C` as (before, after) when any is given. `-A` or `-B` overrides `-C` on
@@ -300,94 +355,17 @@ fn find_opts(a: &Args, patterns: Vec<String>, roots: Vec<PathBuf>) -> FindOpts {
     }
 }
 
-/// The stderr notes for a search with no hits; JSON output stays silent.
-fn print_no_matches(a: &Args, out: &Out, searched: Option<&str>, newline_hint: bool) {
-    if out.format != Format::Json && !(a.hidden && a.no_ignore) {
-        eprintln!("(no matches; hidden and .gitignored files were skipped: --hidden, -u)");
-    }
-    if out.format != Format::Json
-        && let Some(s) = searched
-    {
-        eprintln!("(searched {s})");
-    }
-    if newline_hint && out.format != Format::Json {
-        eprintln!("hint: \\n matches only across lines; add -U to match across line breaks");
-    }
-}
-
-/// Prints the files with hits as counts, file names or hit lines, within the `--head` budget.
-fn print_files(a: &Args, out: &Out, files: &mut [FileHits], context: Option<(usize, usize)>) {
-    if a.count && out.format == Format::Json {
-        let total: usize = files.iter().map(|f| f.hits.len()).sum();
-        let counts: Vec<_> = files
-            .iter()
-            .map(|f| serde_json::json!({ "path": f.path, "count": f.hits.len() }))
-            .collect();
-        outln!("{}", serde_json::json!({ "files": counts, "total": total }));
-        return;
-    }
-    let mut budget = Budget::new(a.head.map(|n| n as usize));
-    if a.count {
-        let total: usize = files.iter().map(|f| f.hits.len()).sum();
-        for f in &*files {
-            budget.emit(&format!("{} {}", f.path, f.hits.len()));
-        }
-        budget.emit(&format!("total {total} in {} files", files.len()));
-        if let Some(f) = budget.footer() {
-            outln!("{f}");
-        }
-        return;
-    }
-    if a.files_only && out.format != Format::Json {
-        for f in &*files {
-            budget.emit(&format!("{} {}", f.path, f.hits.len()));
-        }
-        if let Some(f) = budget.footer() {
-            outln!("{f}");
-        }
-        return;
-    }
-    if let Some(n) = a.last {
-        for f in &mut *files {
-            let cut = f.hits.len().saturating_sub(n as usize);
-            f.hits.drain(..cut);
-        }
-    }
-    if !a.no_syntax {
-        // Files with no budget left are not printed, so they stay unparsed. Shown files are a
-        // prefix because the budget is spent in path order.
-        let k = take_budget(files, a.max_hits).0.len();
-        attach_outlines(&mut files[..k]);
-    }
-    let (shown, rest, rest_files) = take_budget(files, a.max_hits);
-    let cut = a.cut.map_or(CUT, |n| n as usize);
-    match out.format {
-        Format::Json => print_json(&shown, rest, a.only_matching),
-        _ if a.only_matching => print_only(&shown, out, cut, &mut budget),
-        _ if a.block => print_blocks(&shown, out, a.max_lines, cut, &mut budget),
-        _ => print_lines(&shown, out, context, cut, &mut budget),
-    }
-    if rest > 0 && out.format != Format::Json {
-        budget.emit(&format!(
-            "… {rest} more hits in {rest_files} files (narrow with -g/-e or raise --max-hits)"
-        ));
-    }
-    if let Some(f) = budget.footer() {
-        outln!("{f}");
-    }
-}
-
-/// Spends the hit budget in path order: the shown files with their hit counts, then the
+/// Spends the hit budget in path order: the shown files as `(index, hits shown)`, then the
 /// number of hits and files that were cut off.
-fn take_budget(files: &[FileHits], max_hits: usize) -> (Vec<(&FileHits, usize)>, usize, usize) {
+fn take_budget(files: &[FileHits], max_hits: usize) -> (Vec<(usize, usize)>, usize, usize) {
     let mut budget = max_hits;
     let mut shown = Vec::new();
     let (mut rest, mut rest_files) = (0, 0);
-    for f in files {
+    for (i, f) in files.iter().enumerate() {
         let n = f.hits.len().min(budget);
         budget -= n;
         if n > 0 {
-            shown.push((f, n));
+            shown.push((i, n));
         }
         if n < f.hits.len() {
             rest += f.hits.len() - n;

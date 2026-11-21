@@ -2,16 +2,19 @@
 //! `acus patch`: applies a patch from stdin or `--file`, then reports what was written.
 
 mod formatter;
+mod print;
 
+use crate::cmd_run;
 use crate::config::Config;
-use crate::out::{Out, more_lines};
-use acus_edit::{Change, FileText, Op, Region};
+use crate::out::Out;
+use acus_edit::{Applied, Change, FileText, Op, Region};
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::ResultExt;
 use capsa_core::hint::hinted;
 use formatter::{Tools, command_for, pipe};
+use serde::Serialize;
 use similar::{Algorithm, DiffOp, TextDiff, capture_diff_slices};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -31,6 +34,10 @@ pub struct Args {
     /// Validate and summarise the changes; write nothing.
     #[arg(long)]
     check: bool,
+    /// Run CMD after the patch applies, as `acus run CMD` would, and print its output after the
+    /// patch's; the exit code is CMD's. A failed patch runs nothing, and `--check` never runs CMD.
+    #[arg(long, value_name = "CMD")]
+    run: Option<String>,
     /// Print a unified diff instead of the written lines; with --check nothing is written.
     #[arg(long)]
     diff: bool,
@@ -56,32 +63,54 @@ pub struct Args {
     no_fuzzy: bool,
 }
 
-/// Written lines shown per region; longer regions end with a `show` hint.
-const REGION_LINES: usize = 20;
-/// Region lines echoed per patch, so a large patch does not flood the output.
-const ECHO_LINES: usize = 120;
-/// Regions past the echo cap that are named by address, the rest are counted.
-const NAMED_REGIONS: usize = 10;
 /// `Replace Symbol` bodies longer than this echo only their first and last lines.
 const SYMBOL_BODY_LINES: usize = 40;
-/// Lines kept at each end of a long `Replace Symbol` body.
-const SYMBOL_EDGE_LINES: usize = 5;
 
-pub fn run(a: &Args, out: &Out, nested: bool, cfg: &Config) -> Result<Outcome> {
-    if nested && a.file.is_none() {
-        return Err(hinted(
-            "patch inside run needs --file",
-            "write the patch to a file or call acus patch directly",
-        ));
-    }
+/// What `acus patch` prints: the summary, the notes, the written lines and any diffs.
+#[derive(Debug, Serialize)]
+pub(crate) struct PatchReport {
+    /// One summary line per change, phrased for `--check` when nothing was written, plus the
+    /// formatter notes.
+    changes: Vec<String>,
+    /// Tolerant matches, skipped blocks and files written broken.
+    notes: Vec<String>,
+    /// Written line ranges and the lines to echo, in patch order.
+    regions: Vec<WrittenRegion>,
+    /// Unified diffs for `--diff`.
+    diffs: Vec<String>,
+    /// Whether the patch only validated, and whether the summary is the whole output.
+    check: bool,
+    quiet: bool,
+    diff: bool,
+    /// Whether the patch wrote to disk, for the `--json` document.
+    written: bool,
+}
+
+/// A written line range and whether it is a long `Replace Symbol` body echoed at its edges.
+#[derive(Debug, Serialize)]
+pub(crate) struct WrittenRegion {
+    path: String,
+    start: usize,
+    lines: Vec<String>,
+    long: bool,
+}
+
+/// Applies the patch and gathers its report; writes the files but nothing to stdout.
+pub(crate) fn compute(a: &Args, cfg: &Config) -> Result<PatchReport> {
     let text = read_patch(a.file.as_deref())?;
+    compute_text(a, &text, cfg)
+}
+
+/// Applies the patch `text`, which the caller already has, as `compute` applies one read from
+/// stdin.
+pub(crate) fn compute_text(a: &Args, text: &str, cfg: &Config) -> Result<PatchReport> {
     if a.fmt && a.check {
         return Err(hinted(
             "--fmt cannot be combined with --check, which writes nothing",
             "drop --fmt to preview, or drop --check to format while applying",
         ));
     }
-    let ops = acus_edit::parse(&text).hinted()?;
+    let ops = acus_edit::parse(text).hinted()?;
     let options = apply_options(a, cfg);
     let mut applied = acus_edit::apply(&ops, Path::new(""), &options).hinted()?;
     let long_bodies = long_symbol_bodies(&ops);
@@ -90,12 +119,60 @@ pub fn run(a: &Args, out: &Out, nested: bool, cfg: &Config) -> Result<Outcome> {
         fmt_notes = format_written(&applied.changes, &mut applied.regions, &mut applied.texts);
         applied.recount();
     }
-    let mut lines: Vec<String> = applied
+    let mut changes: Vec<String> = applied
         .changes
         .iter()
         .map(|c| if a.check { would(c) } else { c.to_string() })
         .collect();
-    lines.extend(fmt_notes);
+    changes.extend(fmt_notes);
+    let diffs = if a.diff {
+        applied.texts.iter().map(unified).collect()
+    } else {
+        Vec::new()
+    };
+    Ok(PatchReport {
+        changes,
+        notes: note_lines(&applied),
+        regions: written_regions(applied.regions, &long_bodies),
+        diffs,
+        check: a.check,
+        quiet: a.quiet,
+        diff: a.diff,
+        written: !a.check,
+    })
+}
+
+/// Applies a patch, prints the written lines, then runs `--run`'s command when it applied.
+pub fn run(a: &Args, out: &Out, cfg: &Config) -> Result<Outcome> {
+    let report = compute(a, cfg)?;
+    let command = a.run.as_deref().filter(|_| !a.check);
+    if out.format == Format::Json
+        && !report.diff
+        && let Some(command) = command
+    {
+        let run_args = cmd_run::Args::for_command(command.to_owned());
+        let run_report = cmd_run::compute(&run_args, out, cfg)?;
+        outln!(
+            "{}",
+            serde_json::json!({
+                "patch": print::json(&report),
+                "run": cmd_run::json(&run_report)
+            })
+        );
+        return Ok(cmd_run::outcome(&run_report));
+    }
+    let outcome = print::print(&report, out);
+    match command {
+        Some(command) => {
+            let run_args = cmd_run::Args::for_command(command.to_owned());
+            cmd_run::run(&run_args, out, cfg)
+        }
+        None => Ok(outcome),
+    }
+}
+
+/// The notes on tolerant matches, skipped blocks and files written broken or unchecked.
+fn note_lines(applied: &Applied) -> Vec<String> {
     let mut notes: Vec<String> = Vec::new();
     for (list, what) in [
         (&applied.numbered, "stripped line-number prefixes"),
@@ -133,32 +210,25 @@ pub fn run(a: &Args, out: &Out, nested: bool, cfg: &Config) -> Result<Outcome> {
             format!("note: patch line {n}: SEARCH is identical to REPLACE; block skipped")
         }),
     );
-    if a.diff {
-        for t in &applied.texts {
-            outprint!("{}", unified(t));
-        }
-        for l in &notes {
-            outln!("{l}");
-        }
-        return Ok(Outcome::Found);
-    }
-    if out.format == Format::Json {
-        print_json(&applied.regions, &lines, &notes, !a.check);
-        return Ok(Outcome::Found);
-    }
-    for l in &lines {
-        outln!("{l}");
-    }
-    for l in &notes {
-        outln!("{l}");
-    }
-    if !a.quiet {
-        echo_regions(out, &applied.regions, &long_bodies);
-    }
-    if a.check {
-        outln!("(check only, nothing written)");
-    }
-    Ok(Outcome::Found)
+    notes
+}
+
+/// The written regions with whether each is a long `Replace Symbol` body.
+fn written_regions(regions: Vec<Region>, long_bodies: &[(&str, &[String])]) -> Vec<WrittenRegion> {
+    regions
+        .into_iter()
+        .map(|r| {
+            let long = long_bodies
+                .iter()
+                .any(|&(path, lines)| path == r.path && lines == r.lines.as_slice());
+            WrittenRegion {
+                path: r.path,
+                start: r.start,
+                lines: r.lines,
+                long,
+            }
+        })
+        .collect()
 }
 
 /// The apply options from the flags and the `[patch]` config.
@@ -186,88 +256,6 @@ fn read_patch(file: Option<&Path>) -> Result<String> {
     })
 }
 
-/// The `--format json` document: the changes, the notes and the written regions.
-fn print_json(regions: &[Region], lines: &[String], notes: &[String], written: bool) {
-    let regions: Vec<_> = regions
-        .iter()
-        .map(|r| {
-            serde_json::json!({
-                "path": r.path,
-                "start": r.start,
-                "end": r.start + r.lines.len() - 1,
-                "text": r.lines.join("\n"),
-            })
-        })
-        .collect();
-    outln!(
-        "{}",
-        serde_json::json!({ "changes": lines, "notes": notes, "regions": regions, "written": written })
-    );
-}
-
-/// Echoes the written regions up to the line cap; the rest are named as `acus show` addresses.
-fn echo_regions(out: &Out, regions: &[Region], long_bodies: &[(&str, &[String])]) {
-    let mut echoed = 0;
-    let mut unshown: Vec<String> = Vec::new();
-    for r in regions {
-        let end = r.start + r.lines.len() - 1;
-        let long = long_bodies
-            .iter()
-            .any(|&(path, lines)| path == r.path && lines == r.lines.as_slice());
-        let shown = if long {
-            2 * SYMBOL_EDGE_LINES
-        } else {
-            r.lines.len().min(REGION_LINES)
-        };
-        // Once one region does not fit, the rest are named too, so the echo keeps patch order.
-        if !unshown.is_empty() || echoed + shown > ECHO_LINES {
-            unshown.push(format!("{}:{}-{end}", r.path, r.start));
-            continue;
-        }
-        echoed += shown;
-        outln!(
-            "{}",
-            out.header(&format!("== {} {}-{end}", r.path, r.start))
-        );
-        for line in region_lines(out, r, long) {
-            outln!("{line}");
-        }
-    }
-    if !unshown.is_empty() {
-        outln!("{}", more_regions(&unshown));
-    }
-}
-
-/// The printed lines of a region: all of it, or the edges of a long `Replace Symbol` body.
-fn region_lines(out: &Out, r: &Region, long: bool) -> Vec<String> {
-    let n = r.lines.len();
-    let end = r.start + n - 1;
-    let numbered = |i: usize| out.numbered(r.start + i, &r.lines[i], false);
-    if long {
-        let edge = SYMBOL_EDGE_LINES;
-        let mut lines: Vec<String> = (0..edge).map(numbered).collect();
-        lines.push(more_lines(
-            &r.path,
-            r.start + edge,
-            end - edge,
-            n - 2 * edge,
-        ));
-        lines.extend((n - edge..n).map(numbered));
-        lines
-    } else {
-        let mut lines: Vec<String> = (0..n.min(REGION_LINES)).map(numbered).collect();
-        if n > REGION_LINES {
-            lines.push(more_lines(
-                &r.path,
-                r.start + REGION_LINES,
-                end,
-                n - REGION_LINES,
-            ));
-        }
-        lines
-    }
-}
-
 /// The `Replace Symbol` bodies that are long enough to echo only their edges.
 fn long_symbol_bodies(ops: &[Op]) -> Vec<(&str, &[String])> {
     ops.iter()
@@ -278,30 +266,6 @@ fn long_symbol_bodies(ops: &[Op]) -> Vec<(&str, &[String])> {
             _ => None,
         })
         .collect()
-}
-
-/// The footer for regions the echo cap left out, as `acus show` addresses.
-fn more_regions(unshown: &[String]) -> String {
-    let named: Vec<&str> = unshown
-        .iter()
-        .take(NAMED_REGIONS)
-        .map(String::as_str)
-        .collect();
-    let more = if unshown.len() > NAMED_REGIONS {
-        " …"
-    } else {
-        ""
-    };
-    let regions = if unshown.len() == 1 {
-        "region"
-    } else {
-        "regions"
-    };
-    format!(
-        "… {} more written {regions}: acus show {}{more}",
-        unshown.len(),
-        named.join(" ")
-    )
 }
 
 /// The summary of a change that `--check` did not write.

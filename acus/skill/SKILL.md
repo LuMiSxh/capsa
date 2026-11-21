@@ -17,14 +17,15 @@ One call replaces search → read: line-numbered, grouped by symbol; every trunc
 | ls -R, tree | `acus map [DIR…]` |
 | Glob, find -name, ls, fd, git ls-files | `acus files [PATH…] [-g GLOB]`; `--lines` adds counts |
 | sed -i, perl -pi, Edit | `acus patch` (below) |
-| cargo test, npm test | `acus ctx 'CMD'`; failures plus their code |
+| cargo test, npm test | `acus run 'CMD'`; failures plus their code |
 | git status, git diff | `acus diff [REV]`; `-p` adds the changed lines |
 | git log | `acus log [-n N] [REV] [PATH…]` |
 | git blame | `acus blame PATH#Sym` |
 | who calls, what it calls | `acus follow PATH#Sym`; `--down` for callees |
 
 Flags beyond each default: [find](reference/find.md), [read and addresses](reference/read.md),
-[patch](reference/patch.md), [diff and log](reference/git.md), [build output](reference/ctx.md).
+[patch](reference/patch.md), [diff and log](reference/git.md), [build output](reference/run.md),
+[chained calls with data flow](reference/script.md) (`acus script`).
 `acus help <command>` lists them too, and `acus self skill --topic <topic>` prints a reference.
 
 ## Patch
@@ -58,6 +59,8 @@ PATCH
 - One patch holds the whole change set; never write files with `cat >`, `printf >` or Python scripts.
 - `acus patch --check` validates a large patch without writing, and `acus patch --check --diff` shows the result. `acus patch --fmt` formats the written files; add it only where the project requires it.
 - `acus patch -q`: summary only.
+- `acus patch --run 'CMD'` runs CMD after the patch applies, with `acus run`'s output and exit
+  code; `--check` runs nothing.
 - `*** Append File`, `*** Delete Lines` and `*** Move Lines` (both with `*** Expect:`), `*** Resolve Conflict`, symbol moves and `*** Replace All` are in [patch](reference/patch.md).
 
 ## Addresses
@@ -73,33 +76,21 @@ acus blame src/parser.rs#Parser::parse
 - `PATH:A-B` is a line range, `PATH:A` one line, `PATH:-N` the last N lines, `PATH:N-` line N to the end, and `PATH#Sym` a symbol. A unique suffix such as `#parse` is enough; an ambiguous one lists the candidates. Config keys nest with `::`: `cfg.yaml#server::port`.
 - Paths are relative to the current directory. `REV:PATH` reads a file as of a commit, branch or tag, counted from the repository root as git does.
 
-## Batch lookups
-
-Batch lookups with `acus run`.
-
-```bash
-acus run <<'EOF'
-find 'fn parse' --block
-show src/a.rs#f src/b.rs:10-30
-outline src/lib.rs
-EOF
-```
-
-`acus run` exits 0 when at least one line succeeded and lists the rest in a `failed: N of M lines` footer; it exits 2 only when every line failed or `--fail-fast` stopped at the first. Output is cut within 24k characters, and each cut names the follow-up with `--head N` (or `acus run --full`).
-
 ## Reading the output
 
-- Exit 0 = results, 1 = nothing found (not a failure), 2 = error with a `hint:` line naming the fix; `ctx` returns the command's own code.
-- `ctx` leads with `3rd identical failure …` after three identical failures of a command in one session. Fix the key line it repeats instead of rerunning the command.
+- Exit 0 = results, 1 = nothing found (not a failure), 2 = error with a `hint:` line naming the fix; `run` returns the command's own code.
+- `run` leads with `3rd identical failure …` after three identical failures of a command in one session. Fix the key line it repeats instead of rerunning the command.
 - `… N more …` names the follow-up command; run it instead of searching again.
 - `acus show` prints a whole file over 400 lines as its outline, first 60 lines and pointers, and stops a call near 24k characters; `--full` prints everything, `--head N` stops after N printed lines, and `--cut N` clips long lines. The two caps work on `find`, `outline`, `diff` and the other read commands.
+
+- Limit output with `--head N` (`find`, `show`, `outline`, `diff`) or `acus run --tail N`, `--grep RE`, `--drop RE`.
 
 ## Common mistakes
 
 - A SEARCH block that is not found: read every block the error reports, fix them all and resend once. Use `--check` first on a large patch; an error writes nothing.
 - A SEARCH block that differs from the file only in whitespace (tabs vs spaces, extra spaces or blank lines) misses: add `--fuzzy` after the exact forms fail; it still refuses two matches.
 - A pattern that starts with `-` is read as a flag: use `acus find -e '-x' PATH`.
-- Don't pipe: `--head N` (`find`, `show`, `outline`, `diff`); `acus ctx --tail/--grep/--drop`; the guard rewrites it anyway.
+- Pipes are fine: `| head -N` after `find`, `show`, `outline` or `diff` runs as `--head N`, and the `acus run` flags `--tail`, `--grep` and `--drop` cover `| tail`, `| grep` and `| grep -v`.
 - `-A` and `-C` print grep-style context; `--block` prints the enclosing symbol, which is usually what you want.
 - `PATH:A:B` is not a range and fails; the range is `PATH:A-B`.
 - Paths are relative to the current directory, not the repository root, unless the output prints them from there.

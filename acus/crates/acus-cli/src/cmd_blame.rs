@@ -8,6 +8,7 @@ use acus_syntax::Address;
 use anyhow::{Result, bail};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -35,8 +36,31 @@ struct Commit {
     summary: String,
 }
 
+/// The blame of an address: one entry per run of lines from one commit.
+#[derive(Debug, Serialize)]
+pub(crate) struct BlameReport {
+    lines: Vec<BlameLine>,
+}
+
+/// One run of lines with the header fields of the commit that last changed it.
+#[derive(Debug, Serialize)]
+pub(crate) struct BlameLine {
+    start: usize,
+    end: usize,
+    commit: String,
+    author: String,
+    date: String,
+    summary: String,
+}
+
 /// `git blame` of the lines an address names: one line per run of lines from one commit.
 pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
+    let report = compute(a)?;
+    Ok(print(&report, out))
+}
+
+/// Reads `git blame` for the lines an address names; writes nothing.
+pub(crate) fn compute(a: &Args) -> Result<BlameReport> {
     let addr = Address::parse(&a.addr);
     let path = addr.path.as_str();
     let src = read_text(path)?;
@@ -64,33 +88,51 @@ pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
         "--",
         name,
     ])?);
+    let blame_lines = runs
+        .iter()
+        .map(|r| {
+            let c = &commits[&r.hash];
+            BlameLine {
+                start: r.start,
+                end: r.end,
+                commit: r.hash.clone(),
+                author: c.author.clone(),
+                date: date(c),
+                summary: c.summary.clone(),
+            }
+        })
+        .collect();
+    Ok(BlameReport { lines: blame_lines })
+}
+
+/// Prints the blame lines in the chosen format.
+pub(crate) fn print(report: &BlameReport, out: &Out) -> Outcome {
     if out.format == Format::Json {
-        let rows: Vec<_> = runs
+        let rows: Vec<_> = report
+            .lines
             .iter()
             .map(|r| {
-                let c = &commits[&r.hash];
                 serde_json::json!({
-                    "start": r.start, "end": r.end, "commit": r.hash, "author": c.author,
-                    "date": date(c), "summary": c.summary,
+                    "start": r.start, "end": r.end, "commit": r.commit, "author": r.author,
+                    "date": r.date, "summary": r.summary,
                 })
             })
             .collect();
         outln!("{}", serde_json::Value::Array(rows));
-        return Ok(Outcome::Found);
+        return Outcome::Found;
     }
-    for r in &runs {
-        let c = &commits[&r.hash];
+    for r in &report.lines {
         outln!(
             "{}-{}  {}  {}  {}  {}",
             r.start,
             r.end,
-            &r.hash[..8],
-            c.author,
-            date(c),
-            c.summary
+            &r.commit[..8],
+            r.author,
+            r.date,
+            r.summary
         );
     }
-    Ok(Outcome::Found)
+    Outcome::Found
 }
 
 /// Splits `git blame --porcelain` into runs and the header fields of each commit.
@@ -151,7 +193,7 @@ fn date(c: &Commit) -> String {
 }
 
 /// Civil (proleptic Gregorian) date of a day count since 1970-01-01.
-fn civil(days: i64) -> (i64, i64, i64) {
+pub(crate) fn civil(days: i64) -> (i64, i64, i64) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;

@@ -3,6 +3,7 @@
 
 use crate::git::git;
 use anyhow::Result;
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 /// The `git status` flags behind the header, the untracked list and the unmerged paths.
@@ -16,10 +17,11 @@ const FLAGS: &[&str] = &[
 ];
 
 /// A git operation that stopped for the user to resolve it.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Serialize)]
 enum Operation {
     Merge,
     Rebase,
+    #[serde(rename = "cherry-pick")]
     CherryPick,
 }
 
@@ -34,8 +36,8 @@ impl Operation {
 }
 
 /// The working tree's status: branch, upstream position, change counts and conflict state.
-#[derive(Default)]
-pub(super) struct Status {
+#[derive(Debug, Default, Serialize)]
+pub(crate) struct Status {
     head: String,
     oid: String,
     upstream: Option<String>,

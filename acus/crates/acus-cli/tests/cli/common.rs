@@ -11,7 +11,7 @@ pub fn snapshot_settings() -> insta::Settings {
 }
 
 /// The binary with any user config hidden and the guard log kept out of the user's state directory.
-/// Each call is its own Claude Code session, so `ctx` repeat counts never carry between tests.
+/// Each call is its own Claude Code session, so `run` repeat counts never carry between tests.
 pub fn bin() -> Command {
     static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let session = format!(

@@ -18,15 +18,15 @@ fn converts_reads_searches_and_filters_exactly() {
         ("cat a.rs | head -5", "acus show 'a.rs:1-5'"),
         (
             "FOO=1 cargo test | tail -3",
-            "acus ctx 'FOO=1 cargo test' --tail 3",
+            "acus run 'FOO=1 cargo test' --tail 3",
         ),
         (
             "cargo test | grep 'FAIL*'",
-            "acus ctx 'cargo test' --grep 'FAIL*'",
+            "acus run 'cargo test' --grep 'FAIL*'",
         ),
         (
             "cargo test | grep \"FAIL*\"",
-            "acus ctx 'cargo test' --grep 'FAIL*'",
+            "acus run 'cargo test' --grep 'FAIL*'",
         ),
         ("cat a.rs | head", "acus show 'a.rs:1-10'"),
         ("cat a.rs | head -n 20", "acus show 'a.rs:1-20'"),
@@ -69,43 +69,43 @@ fn converts_reads_searches_and_filters_exactly() {
         ),
         (
             "CARGO_TARGET_DIR=/tmp/t cargo test 2>&1 | tail -5",
-            "acus ctx 'CARGO_TARGET_DIR=/tmp/t cargo test' --tail 5",
+            "acus run 'CARGO_TARGET_DIR=/tmp/t cargo test' --tail 5",
         ),
         (
             "time cargo test | tail -5",
-            "time acus ctx 'cargo test' --tail 5",
+            "time acus run 'cargo test' --tail 5",
         ),
         (
             "cargo test --test 'a b' | tail -3",
-            "acus ctx \"cargo test --test 'a b'\" --tail 3",
+            "acus run \"cargo test --test 'a b'\" --tail 3",
         ),
         (
             "cargo test | grep -E 'FAIL|panic' -A 2",
-            "acus ctx 'cargo test' --grep 'FAIL|panic' -A 2",
+            "acus run 'cargo test' --grep 'FAIL|panic' -A 2",
         ),
         (
             "cargo test | grep -A3 FAILED",
-            "acus ctx 'cargo test' --grep 'FAILED' -A 3",
+            "acus run 'cargo test' --grep 'FAILED' -A 3",
         ),
         (
             "cargo test | grep -C2 -i x",
-            "acus ctx 'cargo test' --grep '(?i)x' -C 2",
+            "acus run 'cargo test' --grep '(?i)x' -C 2",
         ),
         (
             "cargo test | grep 'a\\|b'",
-            "acus ctx 'cargo test' --grep 'a|b'",
+            "acus run 'cargo test' --grep 'a|b'",
         ),
         (
             "cd X && cargo build 2>&1 | grep -E '^(error|warning)' -A4",
-            "cd X && acus ctx 'cargo build' --grep '^(error|warning)' -A 4",
+            "cd X && acus run 'cargo build' --grep '^(error|warning)' -A 4",
         ),
         (
             "swift build 2>&1 | grep -E \"error\" | head -20",
-            "acus ctx 'swift build' --grep 'error' --max-output 20",
+            "acus run 'swift build' --grep 'error' --max-output 20",
         ),
         (
             "cargo test | grep FAIL | tail -5",
-            "acus ctx 'cargo test' --grep 'FAIL' --tail 5",
+            "acus run 'cargo test' --grep 'FAIL' --tail 5",
         ),
         (
             "grep -n \"a\\.b\\|c\" src/a.rs",
@@ -448,29 +448,29 @@ fn folds_the_status_echo_after_a_pipeline_into_dollar_question() {
     for (cmd, want) in [
         (
             "cargo test | tail -5; echo \"exit=${PIPESTATUS[0]}\"",
-            "acus ctx 'cargo test' --tail 5; echo \"exit=$?\"",
+            "acus run 'cargo test' --tail 5; echo \"exit=$?\"",
         ),
         (
             "cargo test 2>&1 | tail -n 5; echo \"exit ${pipestatus[1]}\"",
-            "acus ctx 'cargo test' --tail 5; echo \"exit $?\"",
+            "acus run 'cargo test' --tail 5; echo \"exit $?\"",
         ),
         (
             "cargo test | grep -E 'ok|FAILED'; echo \"exit=${PIPESTATUS[0]}\"",
-            "acus ctx 'cargo test' --grep 'ok|FAILED'; echo \"exit=$?\"",
+            "acus run 'cargo test' --grep 'ok|FAILED'; echo \"exit=$?\"",
         ),
         // Another status index, single quotes, or `&&` before the echo: the pipeline converts
         // and the echo stays as written.
         (
             "cargo test | tail -5; echo \"a ${PIPESTATUS[0]} ${PIPESTATUS[1]}\"",
-            "acus ctx 'cargo test' --tail 5; echo \"a ${PIPESTATUS[0]} ${PIPESTATUS[1]}\"",
+            "acus run 'cargo test' --tail 5; echo \"a ${PIPESTATUS[0]} ${PIPESTATUS[1]}\"",
         ),
         (
             "cargo test | tail -5; echo 'exit=${PIPESTATUS[0]}'",
-            "acus ctx 'cargo test' --tail 5; echo 'exit=${PIPESTATUS[0]}'",
+            "acus run 'cargo test' --tail 5; echo 'exit=${PIPESTATUS[0]}'",
         ),
         (
             "cargo test | tail -5 && echo \"exit=${PIPESTATUS[0]}\"",
-            "acus ctx 'cargo test' --tail 5 && echo \"exit=${PIPESTATUS[0]}\"",
+            "acus run 'cargo test' --tail 5 && echo \"exit=${PIPESTATUS[0]}\"",
         ),
     ] {
         let r = rewrite(cmd, None).unwrap_or_else(|| panic!("not rewritten: {cmd}"));

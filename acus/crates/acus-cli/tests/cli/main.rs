@@ -5,7 +5,6 @@ mod blame;
 mod budget;
 mod bulletin;
 mod common;
-mod ctx;
 mod diff_log;
 mod diff_moves;
 mod diff_status;
@@ -16,6 +15,13 @@ mod guard;
 mod map;
 mod patch;
 mod rev;
+mod run;
 mod run_config_misc;
+#[cfg(feature = "script")]
+mod script;
+#[cfg(feature = "script")]
+mod script_mcp;
+#[cfg(feature = "script")]
+mod script_saved;
 mod self_cmd;
 mod show_outline;

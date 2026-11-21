@@ -1,5 +1,5 @@
 ---
-source: crates/acus-cli/tests/cli/ctx.rs
+source: crates/acus-cli/tests/cli/run.rs
 assertion_line: 200
 expression: out
 ---

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Rewrites and refuses builds and tests piped into filters, with the ctx flags that replace them.
+//! Rewrites and refuses builds and tests piped into filters, with the run flags that replace them.
 
 use super::*;
 
@@ -15,7 +15,7 @@ pub(super) use ctx::*;
 pub(super) use shell::*;
 
 /// Refuses a build or test piped into `tail`, `head` or `grep`: the cut output often hides the
-/// failure, and the build runs again to see more. `acus ctx '…' | tail` is refused too: ctx has
+/// failure, and the build runs again to see more. `acus run '…' | tail` is refused too: run has
 /// `--tail` and `--grep`. `oseg` and `onext` are the original case of the segments, which the
 /// rewritten command quotes.
 pub(super) fn filtered_build(
@@ -26,7 +26,7 @@ pub(super) fn filtered_build(
 ) -> Option<Verdict> {
     // `rest` holds the filters after `next` in the same chain: a refusal that names a command
     // must cover all of them, or name none. `open` is set when the chain goes on past `rest` into
-    // a stage that no ctx flag does: the refusal stands, and names no command.
+    // a stage that no run flag does: the refusal stands, and names no command.
     let chained = !rest.is_empty();
     let stages: Vec<&str> = std::iter::once(next.orig())
         .chain(rest.iter().map(Segment::orig))
@@ -47,7 +47,7 @@ pub(super) fn filtered_build(
         .trim_end();
     if chained {
         if call.is_ctx {
-            // Stacked greps that no single ctx flag set expresses run as written; a chain that
+            // Stacked greps that no single run flag set expresses run as written; a chain that
             // folds keeps its verdict.
             if stacked_greps(&stages) && ctx_with_flags(cmd, &stages).is_none() {
                 return None;
@@ -57,7 +57,7 @@ pub(super) fn filtered_build(
                 chain_ctx_reason(cmd, &stages, filter, open),
             ));
         }
-        // Stacked greps that no ctx flag set expresses run as written, as they do after ctx; a
+        // Stacked greps that no run flag set expresses run as written, as they do after run; a
         // chain that folds keeps its verdict.
         if stacked_greps(&stages) && rewrite_build(cmd, &stages).is_none() {
             return None;
@@ -77,47 +77,47 @@ pub(super) fn filtered_build(
     }
     let bare = strip_timeout(cmd).map_or(cmd, |(_, rest)| rest);
     let mut example = if bare.contains('$') {
-        ctx_arg(bare).map_or("acus ctx 'COMMAND'".to_owned(), |arg| {
-            format!("acus ctx {arg}")
+        ctx_arg(bare).map_or("acus run 'COMMAND'".to_owned(), |arg| {
+            format!("acus run {arg}")
         })
     } else if bare.contains('\'') {
-        "acus ctx 'COMMAND'".to_owned()
+        "acus run 'COMMAND'".to_owned()
     } else {
-        format!("acus ctx '{bare}'")
+        format!("acus run '{bare}'")
     };
     if let Some(secs) = call.timed {
         example += &format!(" --timeout {secs}");
     }
     let reason = match flag {
         Some((flag, what)) => format!(
-            "Use `{example} {flag}` instead of piping {build} into {filter}: acus ctx drops build noise, the flag {what}, and the full log is saved for follow-up reads, so the build need not run again. {ESCAPE}\nSend instead: {example} {flag}",
+            "Use `{example} {flag}` instead of piping {build} into {filter}: acus run drops build noise, the flag {what}, and the full log is saved for follow-up reads, so the build need not run again. {ESCAPE}\nSend instead: {example} {flag}",
             build = call.build,
         ),
         None => format!(
-            "Use acus instead of piping {build} into {filter}: `{example}` drops build noise, shows the failures with the code they point at, and saves the full log for follow-up reads, so the build need not run again (`acus ctx` alone runs the project's tests; `--tail N` keeps the last N lines plus the failures, `--grep RE` keeps matching lines plus their code). {ESCAPE}\nSend instead: {example}",
+            "Use acus instead of piping {build} into {filter}: `{example}` drops build noise, shows the failures with the code they point at, and saves the full log for follow-up reads, so the build need not run again (`acus run` alone runs the project's tests; `--tail N` keeps the last N lines plus the failures, `--grep RE` keeps matching lines plus their code). {ESCAPE}\nSend instead: {example}",
             build = call.build,
         ),
     };
     Some(Verdict::Deny(Rule::BuildPipe, reason))
 }
 
-/// The build or ctx call a segment runs, with `timeout N` taken off.
+/// The build or run call a segment runs, with `timeout N` taken off.
 struct Call<'a> {
     /// The command name: the build's tool, or `acus`.
     build: &'a str,
     /// The `timeout` limit in seconds, when the call has one.
     timed: Option<u64>,
-    /// Whether the call is `acus ctx`.
+    /// Whether the call is `acus run`.
     is_ctx: bool,
 }
 
-/// Returns the call when the segment runs a build or `acus ctx` that a filter can fold.
+/// Returns the call when the segment runs a build or `acus run` that a filter can fold.
 fn call_of(low: &str) -> Option<Call<'_>> {
-    // `timeout N BUILD`: the build is what follows; ctx has `--timeout` for the limit.
+    // `timeout N BUILD`: the build is what follows; run has `--timeout` for the limit.
     let timed = strip_timeout(low);
     let (build, args) = head(timed.map_or(low, |(_, rest)| rest))?;
     let args: Vec<&str> = args.collect();
-    let is_ctx = build == "acus" && args.first() == Some(&"ctx");
+    let is_ctx = build == "acus" && args.first() == Some(&"run");
     let sub = args
         .iter()
         .copied()
@@ -152,7 +152,7 @@ fn fold_filter<'a>(seg: &Segment, next: &'a Segment, stages: &[&str]) -> Option<
     if !FILTERS.contains(&filter) {
         return None;
     }
-    // `sort` and `uniq` dedupe or reorder whole lines, which no ctx flag does: a chain with one
+    // `sort` and `uniq` dedupe or reorder whole lines, which no run flag does: a chain with one
     // runs as written.
     if stages.iter().copied().any(is_sort_or_uniq) {
         return None;
@@ -193,34 +193,34 @@ fn is_build_command(build: &str, sub: Option<&str>, args: &[&str]) -> bool {
     }
 }
 
-/// Returns the refusal for `acus ctx` piped into a filter, naming the flags that do its work.
+/// Returns the refusal for `acus run` piped into a filter, naming the flags that do its work.
 fn ctx_pipe_reason(
     cmd: &str,
     next: &Segment,
     filter: &str,
     flag: Option<(String, String)>,
 ) -> String {
-    // A head that keeps every line the ctx `--tail` keeps does nothing: the command runs as it is.
+    // A head that keeps every line the run `--tail` keeps does nothing: the command runs as it is.
     let tail_noop = noop_heads_dropped(ctx_tail(cmd), &[next.orig()]).is_empty();
     match ctx_command(cmd).filter(|inner| unquoted_pipe(inner).is_some()) {
         Some(inner) => inner_pipe_reason(inner, filter),
         None if tail_noop => format!(
-            "Use `{cmd}` instead of piping acus ctx into {filter}: its `--tail` already keeps every line that {filter} would keep, so the pipe does nothing. {ESCAPE}\nSend instead: {cmd}"
+            "Use `{cmd}` instead of piping acus run into {filter}: its `--tail` already keeps every line that {filter} would keep, so the pipe does nothing. {ESCAPE}\nSend instead: {cmd}"
         ),
         None if has_line_count(cmd) => format!(
-            "Use `{cmd}` instead of piping acus ctx into {filter}: the command already has a line count (`--tail` or `--max-output`), and a second one would keep other lines. {ESCAPE}\nSend instead: {cmd}"
+            "Use `{cmd}` instead of piping acus run into {filter}: the command already has a line count (`--tail` or `--max-output`), and a second one would keep other lines. {ESCAPE}\nSend instead: {cmd}"
         ),
         None => {
-            // Suggested only where ctx accepts the flag: not when the command has it, or `--`.
+            // Suggested only where run accepts the flag: not when the command has it, or `--`.
             let send = flag
                 .as_ref()
                 .and_then(|_| ctx_with_flags(cmd, &[next.orig()]));
             let own = format!(
-                "Use acus ctx's own flags instead of piping it into {filter}: `acus ctx '…' --tail N` keeps the last N lines plus every failure with the code it points at, `--grep RE` keeps the lines matching RE plus the code they point at, `--max-output N` keeps the first and last N/2 lines. {ESCAPE}"
+                "Use acus run's own flags instead of piping it into {filter}: `acus run '…' --tail N` keeps the last N lines plus every failure with the code it points at, `--grep RE` keeps the lines matching RE plus the code they point at, `--max-output N` keeps the first and last N/2 lines. {ESCAPE}"
             );
             match (flag, send) {
                 (Some((_, what)), Some(send)) => format!(
-                    "Use `{send}` instead of piping acus ctx into {filter}: the flag {what}, so no failure is cut away. {ESCAPE}\nSend instead: {send}"
+                    "Use `{send}` instead of piping acus run into {filter}: the flag {what}, so no failure is cut away. {ESCAPE}\nSend instead: {send}"
                 ),
                 (Some(_), None) => own,
                 (None, _) => format!("{own}\nSend instead: {cmd}"),
@@ -229,12 +229,12 @@ fn ctx_pipe_reason(
     }
 }
 
-/// Returns `acus ctx 'BUILD' --tail N` for `BUILD | tail -N`, and the same for the other filters
+/// Returns `acus run 'BUILD' --tail N` for `BUILD | tail -N`, and the same for the other filters
 /// `ctx_flag` knows.
 pub(super) fn rewrite_build(build: &str, filters: &[&str]) -> Option<String> {
     let (filters, keep) = split_cut(filters);
     let build = build.trim().trim_end_matches("2>&1").trim_end();
-    // ctx's shell runs the text again, so a `$` or backtick would expand twice: the suggestion
+    // run's shell runs the text again, so a `$` or backtick would expand twice: the suggestion
     // names such a command, nothing rewrites it.
     if build
         .replace("2>&1", "")
@@ -242,14 +242,14 @@ pub(super) fn rewrite_build(build: &str, filters: &[&str]) -> Option<String> {
     {
         return None;
     }
-    // The shell ctx runs the text in applies `time` to the build alone: keep it in front.
+    // The shell that `acus run` runs the text in applies `time` to the build alone: keep it in front.
     // Only a bare `time`: with an option (`time -p`) the text is not just the build.
     let (time, build) = match build.strip_prefix("time ") {
         Some(rest) if rest.trim_start().starts_with('-') => return None,
         Some(rest) => ("time ", rest.trim_start()),
         None => ("", build),
     };
-    // `timeout N BUILD` becomes ctx's own `--timeout`, which exits 124 as timeout does.
+    // `timeout N BUILD` becomes run's own `--timeout`, which exits 124 as timeout does.
     let (limit, build) = match strip_timeout(build) {
         Some((secs, rest)) => (format!(" --timeout {secs}"), rest),
         None => (String::new(), build),
@@ -260,25 +260,25 @@ pub(super) fn rewrite_build(build: &str, filters: &[&str]) -> Option<String> {
     let filters = noop_heads_dropped(None, filters);
     let flags = ctx_flags(&filters)?;
     Some(format!(
-        "{time}acus ctx {}{limit} {}{keep}",
+        "{time}acus run {}{limit} {}{keep}",
         ctx_arg(build)?,
         flags.join(" ")
     ))
 }
 
-/// Returns `acus ctx '…' FLAG` for `acus ctx '…' | tail -N` and the other filters `ctx_flag`
-/// knows, or `None` if the ctx call has that flag already.
+/// Returns `acus run '…' FLAG` for `acus run '…' | tail -N` and the other filters `ctx_flag`
+/// knows, or `None` if the run call has that flag already.
 pub(super) fn rewrite_ctx(ctx: &str, filters: &[&str]) -> Option<String> {
     let (filters, keep) = split_cut(filters);
     Some(format!("{}{keep}", ctx_with_flags(ctx, filters)?))
 }
 
-/// Returns the ctx command with `filters` as its flags and the trailing `2>&1` dropped, or `None`
+/// Returns the run command with `filters` as its flags and the trailing `2>&1` dropped, or `None`
 /// where a filter has no exact flag, the command redirects anything but stderr, or it already
 /// has a line count.
 fn ctx_with_flags(ctx: &str, filters: &[&str]) -> Option<String> {
     let ctx = ctx.trim().trim_end_matches("2>&1").trim_end();
-    // A `2>&1` in the quoted command is ctx's own redirect: harmless, so only others stop it.
+    // A `2>&1` in the quoted command is run's own redirect: harmless, so only others stop it.
     if ctx.replace("2>&1", "").contains(['<', '>']) {
         return None;
     }
@@ -293,7 +293,7 @@ fn ctx_with_flags(ctx: &str, filters: &[&str]) -> Option<String> {
     }
     let flags = ctx_flags(&filters)?;
     let words = split_words(ctx);
-    // `acus ctx … --tail M | tail -N` keeps the smaller count, and the pipe goes.
+    // `acus run … --tail M | tail -N` keeps the smaller count, and the pipe goes.
     if let [flag] = flags.as_slice()
         && let Some(n) = flag.strip_prefix("--tail ")
         && let Some(i) = words.iter().position(|w| *w == "--tail")

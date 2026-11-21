@@ -7,6 +7,7 @@ use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::render::{Align, Doc, Table, Tone, paint};
+use serde::Serialize;
 use std::io;
 use std::path::Path;
 
@@ -29,7 +30,8 @@ pub struct Args {
     _oneline: bool,
 }
 
-struct Commit {
+#[derive(Debug, Serialize)]
+pub(crate) struct Commit {
     hash: String,
     at: i64,
     date: String,
@@ -40,8 +42,14 @@ struct Commit {
     del: usize,
 }
 
-/// Compact `git log`: one line per commit with date, author and changed lines.
-pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
+/// The commits `acus log` lists, newest first.
+#[derive(Debug, Serialize)]
+pub(crate) struct LogReport {
+    commits: Vec<Commit>,
+}
+
+/// Reads the commits `acus log` lists, with the changed lines of each; writes nothing.
+pub(crate) fn compute(a: &Args) -> Result<LogReport> {
     // Like git: the first argument is a revision unless it names an existing path.
     let (rev, paths) = match a.args.split_first() {
         Some((r, rest)) if !Path::new(r).exists() => (Some(r.as_str()), rest),
@@ -62,7 +70,20 @@ pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     cmd.extend(rev);
     cmd.push("--");
     cmd.extend(paths.iter().map(String::as_str));
-    let commits = parse(&git(&cmd)?);
+    Ok(LogReport {
+        commits: parse(&git(&cmd)?),
+    })
+}
+
+/// Compact `git log`: one line per commit with date, author and changed lines.
+pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
+    let report = compute(a)?;
+    print(&report, out, a)
+}
+
+/// Prints `acus log` in the chosen format and returns its exit outcome.
+pub(crate) fn print(report: &LogReport, out: &Out, a: &Args) -> Result<Outcome> {
+    let commits = &report.commits;
     if commits.is_empty() {
         if out.format != Format::Json {
             eprintln!("(no commits)");
@@ -85,10 +106,10 @@ pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     let mut budget = Budget::new(a.head.map(|n| n as usize));
     let cut = a.cut.map(|n| n as usize);
     if out.format == Format::Human {
-        print_human(&commits, out, &mut budget, cut)?;
+        print_human(commits, out, &mut budget, cut)?;
     } else {
         let now = now();
-        for c in &commits {
+        for c in commits {
             let line = format!(
                 "{} {} {}",
                 out.header(&c.hash),

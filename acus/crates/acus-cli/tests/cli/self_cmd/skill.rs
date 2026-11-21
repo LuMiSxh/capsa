@@ -43,7 +43,7 @@ fn skill_install_writes_the_reference_topics() {
         &[("HOME", h), ("USERPROFILE", h)],
     );
     assert_eq!(code, 0, "{err}");
-    for topic in ["find", "read", "patch", "git", "ctx"] {
+    for topic in ["find", "read", "patch", "git", "run"] {
         let file = home
             .path()
             .join(".claude/skills/acus/reference")

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Folds a read of a background task's output file into one `acus ctx --log` call.
+//! Folds a read of a background task's output file into one `acus run --log` call.
 
 use super::*;
 
@@ -48,7 +48,7 @@ pub(crate) fn fold(segs: &[Segment], i: usize) -> Option<(usize, String)> {
     if !is_task_output(file) {
         return None;
     }
-    let log = format!("acus ctx --log {}", quote(file));
+    let log = format!("acus run --log {}", quote(file));
     let last = filter_last(segs, i);
     let end = &segs[last];
     if (last != i && cmd != "cat") || end.out != Out::Agent || end.gates || continues(segs, last) {
@@ -90,23 +90,23 @@ mod tests {
     fn reads_of_a_task_output_become_ctx_log() {
         assert_eq!(
             rw(&format!("cat {F}")),
-            Some(format!("acus ctx --log '{F}'"))
+            Some(format!("acus run --log '{F}'"))
         );
         assert_eq!(
             rw(&format!("tail -n 40 {F}")),
-            Some(format!("acus ctx --log '{F}' --tail 40"))
+            Some(format!("acus run --log '{F}' --tail 40"))
         );
         assert_eq!(
             rw(&format!("cat '{F}'")),
-            Some(format!("acus ctx --log '{F}'"))
+            Some(format!("acus run --log '{F}'"))
         );
         let g = rw(&format!("grep -n error {F}")).unwrap();
         assert!(
-            g.starts_with(&format!("acus ctx --log '{F}' --grep")),
+            g.starts_with(&format!("acus run --log '{F}' --grep")),
             "{g}"
         );
         let p = rw(&format!("cat {F} | grep -v warn | tail -5")).unwrap();
-        assert!(p.starts_with(&format!("acus ctx --log '{F}' ")), "{p}");
+        assert!(p.starts_with(&format!("acus run --log '{F}' ")), "{p}");
         assert!(p.contains("--drop") && p.contains("--tail 5"), "{p}");
     }
 

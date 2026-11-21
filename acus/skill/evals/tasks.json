@@ -17,7 +17,7 @@
     {
       "prompt": "Run the Rust tests and show only the failures with the code they point at.",
       "expected": [
-        "acus ctx 'cargo test'"
+        "acus run 'cargo test'"
       ]
     },
     {

@@ -2,13 +2,15 @@
 //! Pairs symbols removed in one place and added elsewhere in the same diff.
 
 use super::file_path;
-use super::render::View;
+use super::groups::View;
 use acus_syntax::{Outline, Symbol};
+use serde::Serialize;
 use similar::{ChangeTag, TextDiff};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// One symbol that left one place and arrived in another.
-pub(super) struct Move {
+#[derive(Debug, Serialize)]
+pub(crate) struct Move {
     pub(super) from_file: usize,
     pub(super) from_sym: usize,
     pub(super) to_file: usize,

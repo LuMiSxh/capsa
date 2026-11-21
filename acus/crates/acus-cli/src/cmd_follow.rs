@@ -2,13 +2,14 @@
 //! `acus follow`: the callers or callees of a symbol, as a tree of call edges.
 
 use crate::follow::{CALLABLE, Edge, Node, addr_of, callees, callers, container_of};
-use crate::out::{Budget, Out, clip};
+use crate::out::{Out, clip};
 use acus_syntax::calls;
 use acus_syntax::{Address, Lang, Resolve, Target, resolve};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::hinted;
+use serde::Serialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -42,6 +43,72 @@ const UNSURE_CAP: usize = 15;
 const LINE_BUDGET: usize = 40;
 
 pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
+    let report = compute(a)?;
+    print(&report, out);
+    Ok(report.outcome())
+}
+
+/// What `follow` found: the JSON fields, and the text header and rows that print lays out.
+#[derive(Debug, Serialize)]
+pub(crate) struct FollowReport {
+    root: Root,
+    direction: &'static str,
+    edges: Vec<EdgeRow>,
+    truncated: Vec<Truncation>,
+    header: String,
+    lines: Vec<String>,
+    head_cut: Option<HeadCut>,
+    found: bool,
+}
+
+impl FollowReport {
+    fn outcome(&self) -> Outcome {
+        if self.found {
+            Outcome::Found
+        } else {
+            Outcome::Empty
+        }
+    }
+}
+
+/// The symbol `follow` starts from, as the JSON `target` names it.
+#[derive(Debug, Serialize)]
+struct Root {
+    addr: String,
+    kind: &'static str,
+    start: usize,
+    end: usize,
+}
+
+/// One printed edge, as the JSON `edges` lists it.
+#[derive(Debug, Serialize)]
+struct EdgeRow {
+    from: String,
+    to: String,
+    lines: Vec<usize>,
+    text: String,
+    sure: bool,
+    depth: usize,
+}
+
+/// One cap that cut the tree, as the JSON `truncated` lists it.
+#[derive(Debug, Serialize)]
+struct Truncation {
+    at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    more: Option<usize>,
+    next: String,
+}
+
+/// The lines that `--head` dropped, and the cap they were dropped under.
+#[derive(Debug, Serialize)]
+struct HeadCut {
+    head: usize,
+    dropped: usize,
+}
+
+/// Computes what `follow` prints for `a`, without printing it.
+pub(crate) fn compute(a: &Args) -> Result<FollowReport> {
     let max = a.depth.max(1);
     let dir = if a.down { "callees" } else { "callers" };
     let mut nodes = vec![resolve_target(&a.addr)?];
@@ -74,59 +141,101 @@ pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
         tree.lines
             .push(format!("… more: acus follow {} --all", root.addr));
     }
-    if out.format == Format::Json {
-        let edge = |&(i, depth): &(usize, usize)| {
-            let e = &edges[i];
-            let parent = &nodes[e.parent].addr;
-            let (from, to) = if a.down {
-                (parent.as_str(), e.addr.as_str())
-            } else {
-                (e.addr.as_str(), parent.as_str())
-            };
-            json!({
-                "from": from, "to": to, "lines": e.lines, "text": e.text,
-                "sure": e.sure, "depth": depth,
-            })
-        };
-        let more: Vec<_> = tree
+    let (lines, head_cut) = text_lines(&tree.lines, a);
+    Ok(FollowReport {
+        root: Root {
+            addr: root.addr.clone(),
+            kind: root.sym.kind,
+            start: root.sym.start_line,
+            end: root.sym.end_line,
+        },
+        direction: dir,
+        edges: tree
+            .shown
+            .iter()
+            .map(|&(i, depth)| edge_row(a.down, &nodes, &edges[i], depth))
+            .collect(),
+        truncated: tree
             .more
             .iter()
-            .map(|(at, n, next)| match n {
-                Some(n) => json!({"at": at, "more": n, "next": next}),
-                None => json!({"at": at, "next": next}),
+            .map(|(at, more, next)| Truncation {
+                at: at.clone(),
+                more: *more,
+                next: next.clone(),
             })
-            .collect();
+            .collect(),
+        header: format!(
+            "{}  {} {}-{}  {dir} depth {max}",
+            root.addr, root.sym.kind, root.sym.start_line, root.sym.end_line
+        ),
+        lines,
+        head_cut,
+        found: !edges.is_empty(),
+    })
+}
+
+/// Returns the tree's text lines after the header, clipped by `--cut`, and the lines that
+/// `--head` drops. The header is the first line that `--head` counts.
+fn text_lines(lines: &[String], a: &Args) -> (Vec<String>, Option<HeadCut>) {
+    let cut = a.cut.map(|n| n as usize);
+    let room = a
+        .head
+        .map_or(usize::MAX, |n| (n as usize).saturating_sub(1));
+    let kept = lines
+        .iter()
+        .take(room)
+        .map(|l| cut.map_or_else(|| l.clone(), |n| clip(l, 0, n)))
+        .collect();
+    let dropped = lines.len().saturating_sub(room);
+    let head_cut = a.head.filter(|_| dropped > 0).map(|head| HeadCut {
+        head: head as usize,
+        dropped,
+    });
+    (kept, head_cut)
+}
+
+/// Returns the JSON row of one printed edge; `down` flips it to callee direction.
+fn edge_row(down: bool, nodes: &[Node], e: &Edge, depth: usize) -> EdgeRow {
+    let parent = nodes[e.parent].addr.as_str();
+    let (from, to) = if down {
+        (parent, e.addr.as_str())
+    } else {
+        (e.addr.as_str(), parent)
+    };
+    EdgeRow {
+        from: from.to_owned(),
+        to: to.to_owned(),
+        lines: e.lines.clone(),
+        text: e.text.clone(),
+        sure: e.sure,
+        depth,
+    }
+}
+
+/// Prints a `FollowReport`: its JSON object, or the header and tree lines under `--head`.
+pub(crate) fn print(report: &FollowReport, out: &Out) {
+    if out.format == Format::Json {
         outln!(
             "{}",
             json!({
-                "target": {"addr": root.addr, "kind": root.sym.kind,
-                           "start": root.sym.start_line, "end": root.sym.end_line},
-                "direction": dir,
-                "edges": tree.shown.iter().map(edge).collect::<Vec<_>>(),
-                "truncated": more,
+                "target": report.root,
+                "direction": report.direction,
+                "edges": report.edges,
+                "truncated": report.truncated,
             })
         );
-    } else {
-        let header = format!(
-            "{}  {} {}-{}  {dir} depth {max}",
-            root.addr, root.sym.kind, root.sym.start_line, root.sym.end_line
-        );
-        let mut budget = Budget::new(a.head.map(|n| n as usize));
-        let cut = a.cut.map(|n| n as usize);
-        budget.emit(&out.header(&header));
-        for l in &tree.lines {
-            let line = cut.map_or_else(|| l.clone(), |n| clip(l, 0, n));
-            budget.emit(&line);
-        }
-        if let Some(f) = budget.footer() {
-            outln!("{f}");
-        }
+        return;
     }
-    Ok(if edges.is_empty() {
-        Outcome::Empty
-    } else {
-        Outcome::Found
-    })
+    outln!("{}", out.header(&report.header));
+    for line in &report.lines {
+        outln!("{line}");
+    }
+    if let Some(HeadCut { head, dropped }) = report.head_cut {
+        outln!(
+            "… output cut at --head {head}; {dropped} more lines (rerun with --head {})",
+            head + dropped
+        );
+    }
 }
 
 /// The rows `follow` prints, in tree order, with the caps applied. Text and JSON both come

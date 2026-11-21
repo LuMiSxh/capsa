@@ -119,23 +119,23 @@ fn rewrites_compound_commands_in_place() {
         ),
         (
             "cd X && acus patch <<'P'\n*** Begin Patch\ncat a.rs `x` $(y)\nP\ncargo test -p a -p b 2>&1 | tail -40",
-            "cd X && acus patch <<'P'\n*** Begin Patch\ncat a.rs `x` $(y)\nP\nacus ctx 'cargo test -p a -p b' --tail 40",
+            "cd X && acus patch <<'P'\n*** Begin Patch\ncat a.rs `x` $(y)\nP\nacus run 'cargo test -p a -p b' --tail 40",
         ),
         (
             "cd X && acus patch <<'P' && cargo test -p a -p b 2>&1 | tail -40\nbody cat a.rs\nP\n",
-            "cd X && acus patch <<'P' && acus ctx 'cargo test -p a -p b' --tail 40\nbody cat a.rs\nP\n",
+            "cd X && acus patch <<'P' && acus run 'cargo test -p a -p b' --tail 40\nbody cat a.rs\nP\n",
         ),
         (
-            "acus ctx 'just check' 2>&1 | head -n 120",
-            "acus ctx 'just check' --max-output 120",
+            "acus run 'just check' 2>&1 | head -n 120",
+            "acus run 'just check' --max-output 120",
         ),
         (
             "cd X && cat a.rs b.rs 2>/dev/null && echo ok",
             "cd X && acus show 'a.rs' 'b.rs' 2>/dev/null && echo ok",
         ),
         (
-            "acus ctx 'just check' --tail 5 | tail -3",
-            "acus ctx 'just check' --tail 3",
+            "acus run 'just check' --tail 5 | tail -3",
+            "acus run 'just check' --tail 3",
         ),
     ];
     for (cmd, want) in cases {
@@ -161,14 +161,14 @@ fn rewrites_compound_commands_in_place() {
         .as_deref(),
         Some("cd X && acus show 'a.rs'; acus find 'exec' '../../CHANGELOG.md' --max-hits 40")
     );
-    // The ctx pipe is deferred like a build; plain reads are not.
+    // The run pipe is deferred like a build; plain reads are not.
     assert!(
-        rewrite("acus ctx 'just check' | head -9", None)
+        rewrite("acus run 'just check' | head -9", None)
             .unwrap()
             .deferred
     );
     // No exact flag, or the flag is there already: refused as before.
-    let cmd = "cat a.rs && acus ctx 'x' | tail -n +5";
+    let cmd = "cat a.rs && acus run 'x' | tail -n +5";
     assert!(rw(cmd, None).is_none(), "{cmd}");
     assert!(matches!(check(cmd), Some(Verdict::Deny(..))), "{cmd}");
     // A hint is not a refusal: nothing to rewrite.
@@ -281,9 +281,9 @@ fn compound_rewrites_never_pass_user_text_unquoted() {
         rw("cd x && cargo test | grep \"a';touch pwned;'\"", None),
         None
     );
-    // Nothing but quoted words reaches an `acus ctx` flag.
+    // Nothing but quoted words reaches an `acus run` flag.
     let r = rw("cd x && cargo test | grep \"a;touch pwned\"", None).unwrap();
-    assert_eq!(r, "cd x && acus ctx 'cargo test' --grep 'a;touch pwned'");
+    assert_eq!(r, "cd x && acus run 'cargo test' --grep 'a;touch pwned'");
 }
 
 #[test]
@@ -318,11 +318,11 @@ fn rewrites_build_pipes_into_deferred_acus_calls() {
     for (cmd, want) in [
         (
             "cargo test 2>&1 | tail -3",
-            "acus ctx 'cargo test' --tail 3",
+            "acus run 'cargo test' --tail 3",
         ),
         (
             "cd app && swift build | grep error && echo ok",
-            "cd app && acus ctx 'swift build' --grep 'error' && echo ok",
+            "cd app && acus run 'swift build' --grep 'error' && echo ok",
         ),
     ] {
         assert_eq!(rw(cmd, None).as_deref(), Some(want), "{cmd}");
@@ -332,10 +332,10 @@ fn rewrites_build_pipes_into_deferred_acus_calls() {
     let r = rewrite("cat a.rs; cargo test | tail -3", None).unwrap();
     assert_eq!(
         r.command,
-        "acus show 'a.rs'; acus ctx 'cargo test' --tail 3"
+        "acus show 'a.rs'; acus run 'cargo test' --tail 3"
     );
     assert!(r.deferred);
-    // A filter ctx has no flag for stays refused.
+    // A filter run has no flag for stays refused.
     assert_eq!(rw("cargo test | tail -n +5", None), None);
 }
 
@@ -344,17 +344,17 @@ fn build_pipes_chain_their_filters_into_one_ctx_call() {
     for (cmd, want) in [
         (
             "swift build --build-tests 2>&1 | grep -E 'error|warning' | grep -v '^\\[' | head -30",
-            "acus ctx 'swift build --build-tests' --grep 'error|warning' --drop '^\\[' --max-output 30",
+            "acus run 'swift build --build-tests' --grep 'error|warning' --drop '^\\[' --max-output 30",
         ),
         (
             "cargo test 2>&1 | grep -v '^warning\\|^note'",
-            "acus ctx 'cargo test' --drop '^warning|^note'",
+            "acus run 'cargo test' --drop '^warning|^note'",
         ),
     ] {
         assert_eq!(rw(cmd, None).as_deref(), Some(want), "{cmd}");
         assert!(rewrite(cmd, None).unwrap().deferred, "{cmd}");
     }
-    // A build chain that one ctx call cannot carry stays refused.
+    // A build chain that one run call cannot carry stays refused.
     for cmd in [
         "cargo test 2>&1 | head -3 | grep x",
         "cargo test 2>&1 | grep -v x | grep -v y | wc -l",
@@ -362,7 +362,7 @@ fn build_pipes_chain_their_filters_into_one_ctx_call() {
         assert!(matches!(check(cmd), Some(Verdict::Deny(..))), "{cmd}");
         assert!(rewrite(cmd, None).is_none(), "{cmd}");
     }
-    // ctx only drops adjacent repeats, so a chain with sort or uniq runs as written.
+    // run only drops adjacent repeats, so a chain with sort or uniq runs as written.
     for cmd in [
         "cargo test 2>&1 | grep error | sort | head -30",
         "swift build --build-tests 2>&1 | grep -E 'error' | sort -u | head -30",
@@ -377,7 +377,7 @@ fn build_pipes_chain_their_filters_into_one_ctx_call() {
 #[test]
 fn help_and_version_output_is_not_a_build_and_passes() {
     for cmd in [
-        "acus ctx --help 2>&1 | grep -E '^\\s+-'",
+        "acus run --help 2>&1 | grep -E '^\\s+-'",
         "cargo --help | grep x",
         "swift build --help | grep x",
         "cargo -V | grep x",
@@ -404,56 +404,56 @@ fn names_the_ctx_flag_that_replaces_a_build_filter() {
     for (cmd, want) in [
         (
             "cargo test -q | tail -n 40",
-            "`acus ctx 'cargo test -q' --tail 40`",
+            "`acus run 'cargo test -q' --tail 40`",
         ),
         (
             "cargo test -q 2>&1 | tail -40",
-            "`acus ctx 'cargo test -q' --tail 40`",
+            "`acus run 'cargo test -q' --tail 40`",
         ),
         (
             "cargo test -q | tail -n40",
-            "`acus ctx 'cargo test -q' --tail 40`",
+            "`acus run 'cargo test -q' --tail 40`",
         ),
         (
             "cargo build | tail --lines=5",
-            "`acus ctx 'cargo build' --tail 5`",
+            "`acus run 'cargo build' --tail 5`",
         ),
-        ("cargo build | tail", "`acus ctx 'cargo build' --tail 10`"),
+        ("cargo build | tail", "`acus run 'cargo build' --tail 10`"),
         (
             "cargo test | grep -E 'FAILED|panicked'",
-            "`acus ctx 'cargo test' --grep 'FAILED|panicked'`",
+            "`acus run 'cargo test' --grep 'FAILED|panicked'`",
         ),
         (
             "cargo test | grep -n FAILED",
-            "`acus ctx 'cargo test' --grep 'FAILED'`",
+            "`acus run 'cargo test' --grep 'FAILED'`",
         ),
         (
             "cargo test | grep -i error",
-            "`acus ctx 'cargo test' --grep '(?i)error'`",
+            "`acus run 'cargo test' --grep '(?i)error'`",
         ),
         (
             "cargo test | grep -v ok",
-            "`acus ctx 'cargo test' --drop 'ok'`",
+            "`acus run 'cargo test' --drop 'ok'`",
         ),
         (
             "cargo test | grep -e FAILED",
-            "`acus ctx 'cargo test' --grep 'FAILED'`",
+            "`acus run 'cargo test' --grep 'FAILED'`",
         ),
         (
             "cargo test | grep 'a\\|b'",
-            "`acus ctx 'cargo test' --grep 'a|b'`",
+            "`acus run 'cargo test' --grep 'a|b'`",
         ),
         (
             "cargo test | rg 'a|b'",
-            "`acus ctx 'cargo test' --grep 'a|b'`",
+            "`acus run 'cargo test' --grep 'a|b'`",
         ),
         (
             "swift build 2>&1 | head -50",
-            "`acus ctx 'swift build' --max-output 50`",
+            "`acus run 'swift build' --max-output 50`",
         ),
         (
             "npm test | head -n 20",
-            "`acus ctx 'npm test' --max-output 20`",
+            "`acus run 'npm test' --max-output 20`",
         ),
     ] {
         let (rule, r) = deny(check(cmd));
@@ -472,15 +472,15 @@ fn names_the_ctx_flag_that_replaces_a_build_filter() {
     ] {
         let (rule, r) = deny(check(cmd));
         assert_eq!(rule, "build-pipe", "{cmd}");
-        assert!(r.contains("`acus ctx 'cargo test'`"), "{cmd}: {r}");
+        assert!(r.contains("`acus run 'cargo test'`"), "{cmd}: {r}");
         assert!(
             r.contains("`--tail N`") && r.contains("`--grep RE`"),
             "{cmd}: {r}"
         );
-        assert!(!r.contains("Use `acus ctx 'cargo test' --"), "{cmd}: {r}");
+        assert!(!r.contains("Use `acus run 'cargo test' --"), "{cmd}: {r}");
     }
     let (_, r) = deny(check("cd app && cargo test -q | tail -5 && echo done"));
-    assert!(r.contains("Use `acus ctx 'cargo test -q' --tail 5`"), "{r}");
+    assert!(r.contains("Use `acus run 'cargo test -q' --tail 5`"), "{r}");
     assert!(r.contains("Replace that segment"), "{r}");
 }
 
@@ -488,12 +488,12 @@ fn names_the_ctx_flag_that_replaces_a_build_filter() {
 fn refuses_acus_ctx_pipes_that_cannot_fold() {
     // A pipe inside the quoted command: the pipe goes and its filter becomes the flag.
     let (rule, r) = deny(check(
-        "acus ctx 'swift build --quiet | tail -40' | head -60",
+        "acus run 'swift build --quiet | tail -40' | head -60",
     ));
     assert_eq!(rule, "ctx-pipe");
     assert!(
         r.contains(
-            "Use `acus ctx 'swift build --quiet' --tail 40` instead of piping acus ctx into head"
+            "Use `acus run 'swift build --quiet' --tail 40` instead of piping acus run into head"
         ),
         "{r}"
     );
@@ -502,40 +502,40 @@ fn refuses_acus_ctx_pipes_that_cannot_fold() {
         "{r}"
     );
     assert!(
-        r.contains("Send instead: acus ctx 'swift build --quiet' --tail 40"),
+        r.contains("Send instead: acus run 'swift build --quiet' --tail 40"),
         "{r}"
     );
     // The command already has a line count: a second one would keep other lines.
-    let (rule, r) = deny(check("acus ctx 'cargo test' --tail 15 | head -5"));
+    let (rule, r) = deny(check("acus run 'cargo test' --tail 15 | head -5"));
     assert_eq!(rule, "ctx-pipe");
     assert!(
-        r.contains("Use `acus ctx 'cargo test' --tail 15` instead of piping acus ctx into head"),
+        r.contains("Use `acus run 'cargo test' --tail 15` instead of piping acus run into head"),
         "{r}"
     );
     // `sort` and `uniq` dedupe or reorder whole lines, so such a chain runs as written.
     for cmd in [
-        "acus ctx 'cargo test' | sort | tail -3",
-        "acus ctx 'cargo test' | uniq | tail -3",
-        "acus ctx 'cargo test' | sort -u",
+        "acus run 'cargo test' | sort | tail -3",
+        "acus run 'cargo test' | uniq | tail -3",
+        "acus run 'cargo test' | sort -u",
     ] {
         assert!(check(cmd).is_none(), "{cmd}");
     }
     // A flag the command has already, or a `--` before the pipe, has no second copy: the refusal
     // names no command to send.
     for cmd in [
-        "acus ctx 'x' --grep a | grep b",
-        "acus ctx 'x' --tail=5 | tail -3",
-        "acus ctx 'x' -- | grep y",
+        "acus run 'x' --grep a | grep b",
+        "acus run 'x' --tail=5 | tail -3",
+        "acus run 'x' -- | grep y",
     ] {
         let (rule, r) = deny(check(cmd));
         assert_eq!(rule, "ctx-pipe", "{cmd}");
         assert!(!r.contains("Send instead:"), "{cmd}: {r}");
     }
     // A context window before a `grep -v` reads other lines than the pipe does: refused, in both
-    // the ctx pipe and the build pipe.
+    // the run pipe and the build pipe.
     // A filter chain after the pair: no command is named unless every stage maps, since one that
     // maps only the pair would drop the stages after it.
-    let cmd = "acus ctx 'c' | grep -A2 error | grep -v warn";
+    let cmd = "acus run 'c' | grep -A2 error | grep -v warn";
     let (rule, r) = deny(check(cmd));
     assert_eq!(rule, "ctx-pipe");
     assert!(!r.contains("Send instead:"), "{cmd}: {r}");
@@ -545,12 +545,12 @@ fn refuses_acus_ctx_pipes_that_cannot_fold() {
     assert_eq!(rule, "build-pipe");
     assert!(!r.contains("Send instead:"), "{cmd}: {r}");
     assert!(rewrite(cmd, None).is_none(), "{cmd}");
-    // Stacked greps that no ctx flag set expresses run as written, in a build pipe as after ctx.
+    // Stacked greps that no run flag set expresses run as written, in a build pipe as after run.
     let cmd = "cargo test | grep a | grep b";
     assert!(check(cmd).is_none(), "{cmd}");
     assert!(rewrite(cmd, None).is_none(), "{cmd}");
     assert_eq!(
-        check("command acus ctx 'cargo test' | tail"),
+        check("command acus run 'cargo test' | tail"),
         Some(Verdict::Escape(Rule::CtxPipe))
     );
 }
@@ -559,67 +559,67 @@ fn refuses_acus_ctx_pipes_that_cannot_fold() {
 fn folds_acus_ctx_pipes_into_its_flags() {
     let cases = [
         (
-            "acus ctx 'cargo test -q' 2>&1 | tail -5",
-            "acus ctx 'cargo test -q' --tail 5",
+            "acus run 'cargo test -q' 2>&1 | tail -5",
+            "acus run 'cargo test -q' --tail 5",
         ),
         (
-            "acus ctx 'cargo test -q' | tail -n 30",
-            "acus ctx 'cargo test -q' --tail 30",
+            "acus run 'cargo test -q' | tail -n 30",
+            "acus run 'cargo test -q' --tail 30",
         ),
-        ("acus ctx | grep FAILED", "acus ctx --grep 'FAILED'"),
+        ("acus run | grep FAILED", "acus run --grep 'FAILED'"),
         (
-            "acus ctx 'make' --raw | head -20",
-            "acus ctx 'make' --raw --max-output 20",
-        ),
-        (
-            "~/bin/acus ctx 'go test ./...' | tail",
-            "~/bin/acus ctx 'go test ./...' --tail 10",
+            "acus run 'make' --raw | head -20",
+            "acus run 'make' --raw --max-output 20",
         ),
         (
-            "acus ctx 'cargo test' | grep -v ok",
-            "acus ctx 'cargo test' --drop 'ok'",
+            "~/bin/acus run 'go test ./...' | tail",
+            "~/bin/acus run 'go test ./...' --tail 10",
         ),
         (
-            "acus ctx 'cargo test' | grep -vE 'ok|FAIL' | tail -20",
-            "acus ctx 'cargo test' --drop 'ok|FAIL' --tail 20",
+            "acus run 'cargo test' | grep -v ok",
+            "acus run 'cargo test' --drop 'ok'",
         ),
-        // `grep -v` first: ctx drops the lines before the context window, as the pipe does.
         (
-            "acus ctx 'cargo test' | grep -v warn | grep -A2 error",
-            "acus ctx 'cargo test' --drop 'warn' --grep 'error' -A 2",
+            "acus run 'cargo test' | grep -vE 'ok|FAIL' | tail -20",
+            "acus run 'cargo test' --drop 'ok|FAIL' --tail 20",
+        ),
+        // `grep -v` first: run drops the lines before the context window, as the pipe does.
+        (
+            "acus run 'cargo test' | grep -v warn | grep -A2 error",
+            "acus run 'cargo test' --drop 'warn' --grep 'error' -A 2",
         ),
         (
             "cargo test | grep -v warn | grep -A2 error",
-            "acus ctx 'cargo test' --drop 'warn' --grep 'error' -A 2",
+            "acus run 'cargo test' --drop 'warn' --grep 'error' -A 2",
         ),
-        // A `2>&1` inside the quoted command is kept; the one after ctx is dropped.
+        // A `2>&1` inside the quoted command is kept; the one after run is dropped.
         (
-            "acus ctx 'cargo build 2>&1' | tail -40",
-            "acus ctx 'cargo build 2>&1' --tail 40",
+            "acus run 'cargo build 2>&1' | tail -40",
+            "acus run 'cargo build 2>&1' --tail 40",
         ),
         // A trailing `cut` stays behind the rewritten command.
         (
-            "acus ctx 'cargo test' | tail -n 5 | cut -c1-300",
-            "acus ctx 'cargo test' --tail 5 | cut -c1-300",
+            "acus run 'cargo test' | tail -n 5 | cut -c1-300",
+            "acus run 'cargo test' --tail 5 | cut -c1-300",
         ),
         (
-            "acus ctx 'cargo test' | grep -E ok | cut -c1-80",
-            "acus ctx 'cargo test' --grep 'ok' | cut -c1-80",
+            "acus run 'cargo test' | grep -E ok | cut -c1-80",
+            "acus run 'cargo test' --grep 'ok' | cut -c1-80",
         ),
         (
-            "acus ctx 'cargo test' --tail 15 | tail -15",
-            "acus ctx 'cargo test' --tail 15",
+            "acus run 'cargo test' --tail 15 | tail -15",
+            "acus run 'cargo test' --tail 15",
         ),
     ];
     assert_rewrites(&cases, None);
     // Counts and word counts print no lines to cut: they pass, on both paths.
     for cmd in [
-        "acus ctx 'cargo test' | wc -l",
-        "acus ctx 'cargo test' | grep -c ok",
+        "acus run 'cargo test' | wc -l",
+        "acus run 'cargo test' | grep -c ok",
         "cargo test | grep -c ok",
-        "acus ctx 'cargo test' --tail 40",
+        "acus run 'cargo test' --tail 40",
         "acus find foo | head",
-        "acus ctx 'cargo test | tail -5'",
+        "acus run 'cargo test | tail -5'",
     ] {
         assert_eq!(check(cmd), None, "{cmd}");
     }
@@ -627,15 +627,15 @@ fn folds_acus_ctx_pipes_into_its_flags() {
 
 #[test]
 fn build_pipes_with_expansions_are_refused_and_plain_ones_rewritten() {
-    // ctx's shell would expand `$X` again: refused; the suggestion names double quotes.
+    // run's shell would expand `$X` again: refused; the suggestion names double quotes.
     for (cmd, want) in [
         (
             "cargo test -p $P | tail -3",
-            "`acus ctx \"cargo test -p $P\" --tail 3`",
+            "`acus run \"cargo test -p $P\" --tail 3`",
         ),
         (
             "X='a; rm -rf y'; cargo build $X 2>&1 | tail -5",
-            "`acus ctx \"cargo build $X\" --tail 5`",
+            "`acus run \"cargo build $X\" --tail 5`",
         ),
     ] {
         assert!(rewrite(cmd, None).is_none(), "{cmd}");
@@ -648,6 +648,6 @@ fn build_pipes_with_expansions_are_refused_and_plain_ones_rewritten() {
     }
     // Plain commands keep single quotes; a backtick is refused as well.
     let r = rewrite("cargo build 2>&1 | tail -5", None).unwrap();
-    assert_eq!(r.command, "acus ctx 'cargo build' --tail 5");
+    assert_eq!(r.command, "acus run 'cargo build' --tail 5");
     assert!(rewrite("cargo build `pwd` | tail -5", None).is_none());
 }

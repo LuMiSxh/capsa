@@ -18,6 +18,8 @@ acus-syntax = { path = "acus/crates/acus-syntax", default-features = false }
 acus-edit = { path = "acus/crates/acus-edit" }
 acus-search = { path = "acus/crates/acus-search" }
 acus-guard = { path = "acus/crates/acus-guard", default-features = false }
+acus-mcp = { path = "acus/crates/acus-mcp" }
+acus-script = { path = "acus/crates/acus-script" }
 # shared
 anstyle = "1.0.14"
 anyhow = "1.0.104"
@@ -37,6 +39,7 @@ insta = "1.49.0"
 libc = "0.2.191"
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false }
+rquickjs = { version = "0.14.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value", "preserve_order"] }
 sha2 = "0.11.1"

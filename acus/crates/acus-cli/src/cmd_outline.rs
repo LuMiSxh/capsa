@@ -9,6 +9,7 @@ use anyhow::Result;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::hinted;
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -48,11 +49,34 @@ fn check_paths(paths: &[PathBuf]) -> Result<()> {
     }
 }
 
+/// The outline of each file `acus outline` prints.
+#[derive(Debug, Serialize)]
+pub(crate) struct OutlineReport {
+    files: Vec<OutlineEntry>,
+}
+
+/// One file's outline, if its language is supported.
+#[derive(Debug, Serialize)]
+struct OutlineEntry {
+    path: String,
+    outline: Option<Outline>,
+}
+
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the command dispatch hands over the parsed arguments"
+)]
 pub fn run(a: Args, out: &Out) -> Result<Outcome> {
+    let report = compute(&a)?;
+    print(&report, &a, out)
+}
+
+/// Parses the files, keeps the requested kinds and sorts by path. Writes nothing.
+pub(crate) fn compute(a: &Args) -> Result<OutlineReport> {
     check_kinds(&a.kinds)?;
     check_paths(&a.paths)?;
     let (exclude, include): (Vec<String>, Vec<String>) =
-        a.globs.into_iter().partition(|g| g.starts_with('!'));
+        a.globs.iter().cloned().partition(|g| g.starts_with('!'));
     let found = Mutex::new(Vec::new());
     let parse = |p: &Path| {
         let o = Lang::from_path(p)
@@ -102,9 +126,22 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         files.retain(|(_, o)| o.as_ref().is_some_and(|o| !o.symbols.is_empty()));
     }
     if files.is_empty() {
-        return Ok(Outcome::Empty);
+        return Ok(OutlineReport { files: Vec::new() });
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(OutlineReport {
+        files: files
+            .into_iter()
+            .map(|(path, outline)| OutlineEntry { path, outline })
+            .collect(),
+    })
+}
+
+/// Prints the report in the format `out` names, within `--head` and `--max-lines`.
+pub(crate) fn print(r: &OutlineReport, a: &Args, out: &Out) -> Result<Outcome> {
+    if r.files.is_empty() {
+        return Ok(Outcome::Empty);
+    }
     let depth = a.depth.unwrap_or(usize::MAX);
     // Data files can hold thousands of nested keys; list the top level unless asked.
     let depth_of = |o: &Option<Outline>| match (a.depth, o.as_ref().map(|o| o.lang)) {
@@ -112,16 +149,18 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         _ => depth,
     };
     if out.format == Format::Json {
-        let v: Vec<_> = files
+        let v: Vec<_> = r
+            .files
             .iter()
-            .map(|(path, o)| {
+            .map(|e| {
+                let o = &e.outline;
                 let syms: Vec<_> = o
                     .iter()
                     .flat_map(|o| &o.symbols)
                     .filter(|s| s.depth < depth_of(o))
                     .collect();
                 serde_json::json!({
-                    "path": path,
+                    "path": e.path,
                     "lang": o.as_ref().map(|o| o.lang),
                     "lines": o.as_ref().map(|o| o.lines),
                     "symbols": syms,
@@ -134,13 +173,20 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     let mut budget = Budget::new(a.head.map(|n| n as usize));
     let cut = a.cut.map(|n| n as usize);
     let mut printed = 0;
-    for (i, (path, o)) in files.iter().enumerate() {
-        let folded = a.depth.is_none() && depth_of(o) == 1;
-        let block = render(path, o.as_ref(), depth_of(o), folded, cut, out);
+    for (i, e) in r.files.iter().enumerate() {
+        let folded = a.depth.is_none() && depth_of(&e.outline) == 1;
+        let block = render(
+            &e.path,
+            e.outline.as_ref(),
+            depth_of(&e.outline),
+            folded,
+            cut,
+            out,
+        );
         if printed > 0 && printed + block.len() > a.max_lines {
             budget.emit(&format!(
                 "… {} more files (narrow with -g, a subdirectory, or --depth 1)",
-                files.len() - i
+                r.files.len() - i
             ));
             break;
         }

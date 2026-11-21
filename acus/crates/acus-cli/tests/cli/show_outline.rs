@@ -237,10 +237,6 @@ fn tilde_paths_expand_to_home() {
         out.contains("fn worker() {}") && out.contains("fn other() {}"),
         "{out}"
     );
-    // Lines of `acus run` get no shell either.
-    let (code, out, err) = acus_in_env(h, &["run"], "show ~/w.rs:1-1\n", &env);
-    assert_eq!(code, 0, "{err}");
-    assert!(out.contains("fn worker() {}"), "{out}");
     // Paths named inside patch text, and the patch file itself.
     std::fs::write(
         h.join("p.patch"),

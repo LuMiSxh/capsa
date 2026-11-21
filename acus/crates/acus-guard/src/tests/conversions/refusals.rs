@@ -237,15 +237,15 @@ fn new_conversions_never_pass_user_text_unquoted() {
         ),
         (
             "cargo test \"a;touch pwned\" | tail -3",
-            "acus ctx 'cargo test \"a;touch pwned\"' --tail 3",
+            "acus run 'cargo test \"a;touch pwned\"' --tail 3",
         ),
         (
             "cargo test 'x;touch pwned' | tail -3",
-            "acus ctx \"cargo test 'x;touch pwned'\" --tail 3",
+            "acus run \"cargo test 'x;touch pwned'\" --tail 3",
         ),
         (
             "cargo test | grep \"a;touch pwned\" -A 1",
-            "acus ctx 'cargo test' --grep 'a;touch pwned' -A 1",
+            "acus run 'cargo test' --grep 'a;touch pwned' -A 1",
         ),
     ] {
         assert_eq!(rw(cmd, None).as_deref(), Some(want), "{cmd}");

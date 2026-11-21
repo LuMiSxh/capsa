@@ -149,6 +149,9 @@ fn ${1}_new(
   and last 5 lines with a `… N more lines` marker; `acus patch --json` keeps every line.
 - `acus patch --check` validates and reports what would change; `acus patch --diff` prints a
   unified diff, and `acus patch --check --diff` previews without writing.
+- `acus patch --run 'CMD'` runs CMD after the patch applies, with the condensing, budget and exit
+  code of `acus run CMD`, and prints its output after the patch's; the exit code is CMD's. A
+  patch that fails runs nothing, and `--check` never runs it.
 - `acus patch --fmt` runs the file's formatter (rustfmt, ruff/black, prettier, swift-format,
   gofmt) over the whole file and prints the formatted lines. It also changes lines you did not
   edit, so add it only where the project requires formatted code. `acus patch --no-fmt` skips a
@@ -156,3 +159,19 @@ fn ${1}_new(
 - `acus patch --allow-broken` writes a file that gains syntax errors.
 - Pick a heredoc delimiter that no line of the patch equals (`PATCH`, or `ACUS_END` when editing
   docs or scripts).
+
+Patch, then test, in one call:
+
+```bash
+acus patch --run \
+  'cargo test -p acus-cli' <<'PATCH'
+*** Begin Patch
+*** Update File: src/lib.rs
+<<<<<<< SEARCH
+        let x = 1;
+=======
+        let x = 2;
+>>>>>>> REPLACE
+*** End Patch
+PATCH
+```

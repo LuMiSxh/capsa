@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 /// Progress, status and passing-test lines of common toolchains. Anchored and specific, so
-/// program output and failures stay; `[ctx] drop` in the config adds more.
+/// program output and failures stay; `[run] drop` in the config adds more.
 const NOISE: &[&str] = &[
     // cargo indents its status words; requiring that keeps program output like "Running x".
     r"^\s{2,}(Compiling|Checking|Downloaded|Downloading|Fresh|Blocking|Updating|Locking|Adding|Removing|Finished|Running|Doc-tests|Documenting|Packaging|Verifying|Installing|Installed|Replacing|Replaced) ",
@@ -75,7 +75,7 @@ pub(super) fn save_log(cwd: &Path, command: &str, text: &str) -> Option<PathBuf>
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     (cwd, command).hash(&mut h);
-    let dir = std::env::temp_dir().join("acus-ctx");
+    let dir = std::env::temp_dir().join("acus-run");
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(format!("{:016x}.log", h.finish()));
     std::fs::write(&path, text).ok()?;

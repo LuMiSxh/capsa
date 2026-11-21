@@ -20,8 +20,8 @@ pub(crate) const FILTERS: &[&str] = &[
 /// Returns the last stage of the filter chain after the build at `i`. Each stage reads the one
 /// before it and is a filter, or a `sort` or `uniq`; a chain with one of the latter runs as
 /// written.
-/// Returns the refusal of an acus ctx pipe whose filter is followed by more stages. A command is
-/// named only when every stage maps to a ctx flag: any other command would drop the stages after
+/// Returns the refusal of an acus run pipe whose filter is followed by more stages. A command is
+/// named only when every stage maps to a run flag: any other command would drop the stages after
 /// the pair.
 pub(crate) fn chain_ctx_reason(cmd: &str, stages: &[&str], filter: &str, open: bool) -> String {
     let send = if open {
@@ -31,10 +31,10 @@ pub(crate) fn chain_ctx_reason(cmd: &str, stages: &[&str], filter: &str, open: b
     };
     match send {
         Some(send) => format!(
-            "Use `{send}` instead of piping acus ctx into {filter}: every filter after it maps to a ctx flag, so no failure is cut away. {ESCAPE}\nSend instead: {send}"
+            "Use `{send}` instead of piping acus run into {filter}: every filter after it maps to a run flag, so no failure is cut away. {ESCAPE}\nSend instead: {send}"
         ),
         None => format!(
-            "Use acus ctx's own flags instead of piping it into {filter}: {}, so no command is suggested. {ESCAPE}",
+            "Use acus run's own flags instead of piping it into {filter}: {}, so no command is suggested. {ESCAPE}",
             blockers(stages)
         ),
     }
@@ -56,7 +56,7 @@ pub(crate) fn chain_build_reason(
     };
     match send {
         Some(send) => format!(
-            "Use `{send}` instead of piping {build} into {filter}: every filter after it maps to a ctx flag, so the build runs once and no failure is cut away. {ESCAPE}\nSend instead: {send}"
+            "Use `{send}` instead of piping {build} into {filter}: every filter after it maps to a run flag, so the build runs once and no failure is cut away. {ESCAPE}\nSend instead: {send}"
         ),
         None => format!(
             "Use acus instead of piping {build} into {filter}: {}, so no command is suggested. {ESCAPE}",
@@ -88,17 +88,17 @@ pub(crate) fn cut_last<'a>(stages: &[&'a str]) -> Vec<&'a str> {
     out
 }
 
-/// Returns what blocks a chain's ctx form, for a refusal that suggests no command.
+/// Returns what blocks a chain's run form, for a refusal that suggests no command.
 pub(crate) fn blockers(stages: &[&str]) -> String {
     let names = blocking_names(stages);
     if names.is_empty() {
-        return "the chain has no exact ctx form".to_owned();
+        return "the chain has no exact run form".to_owned();
     }
     let list: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
-    format!("no ctx flag does {}", list.join(", "))
+    format!("no run flag does {}", list.join(", "))
 }
 
-/// Returns the filters of a chain that no ctx flag does, each once and in order. A trailing
+/// Returns the filters of a chain that no run flag does, each once and in order. A trailing
 /// `cut` is left out: it stays behind the rewritten command.
 pub(crate) fn blocking_names(stages: &[&str]) -> Vec<String> {
     let (filters, _) = split_cut(stages);
@@ -117,7 +117,7 @@ pub(crate) fn blocking_names(stages: &[&str]) -> Vec<String> {
     names
 }
 
-/// Returns the `--tail N` count of an acus ctx command.
+/// Returns the `--tail N` count of an acus run command.
 pub(crate) fn ctx_tail(ctx: &str) -> Option<usize> {
     let words = split_words(ctx);
     let at = words.iter().position(|w| *w == "--tail")?;
@@ -136,7 +136,7 @@ pub(crate) fn tail_or_head(stage: &str) -> Option<Window> {
 }
 
 /// Returns the filters without each `head -N` that keeps every line the stage before it kept.
-/// `tail` is the `--tail T` of the ctx command or a `tail -T` stage, and with N >= T the head
+/// `tail` is the `--tail T` of the run command or a `tail -T` stage, and with N >= T the head
 /// changes nothing.
 pub(crate) fn noop_heads_dropped<'a>(mut tail: Option<usize>, filters: &[&'a str]) -> Vec<&'a str> {
     let mut kept = Vec::new();
@@ -154,14 +154,14 @@ pub(crate) fn noop_heads_dropped<'a>(mut tail: Option<usize>, filters: &[&'a str
     kept
 }
 
-/// Reports whether a stage is a `sort` or `uniq`, which ctx cannot fold: it dedupes or reorders
+/// Reports whether a stage is a `sort` or `uniq`, which run cannot fold: it dedupes or reorders
 /// whole lines.
 pub(crate) fn is_sort_or_uniq(stage: &str) -> bool {
     filter_name(stage).is_some_and(|f| matches!(f.as_str(), "sort" | "uniq"))
 }
 
 /// Reports whether every stage is a `grep` or `egrep` without context lines: stacked like that,
-/// no single ctx flag set expresses them. A context window keeps its refusal, since before a
+/// no single run flag set expresses them. A context window keeps its refusal, since before a
 /// `grep -v` it reads other lines.
 pub(crate) fn stacked_greps(stages: &[&str]) -> bool {
     stages.iter().copied().all(|stage| {

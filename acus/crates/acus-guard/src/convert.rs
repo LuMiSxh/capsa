@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Owns the translation of grep patterns for the guard's rewrites: what `grep` reads as a POSIX
 //! basic or extended regular expression becomes the Rust regex that `acus find` and
-//! `acus ctx --grep` take. Only the constructs that mean the same in both are translated; anything
+//! `acus run --grep` take. Only the constructs that mean the same in both are translated; anything
 //! else gives `None`, so the command is not rewritten instead of searching for something else.
 
 /// Translates `pat` into a Rust regex: grep's basic syntax (`ere` false: `\|`, `\(`, `\{` and `\+`

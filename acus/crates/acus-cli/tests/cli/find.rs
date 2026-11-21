@@ -351,15 +351,9 @@ fn find_accepts_recursive_grep_habits_and_explains_the_rest() {
         );
         assert!(err.contains("`acus find --help`"), "{flag}: {err}");
     }
-    // Other commands keep clap's plain error, and `run` carries the hint into its entry.
+    // Other commands keep clap's plain error.
     let (_, _, err) = acus(&["outline", "src", "-c"]);
     assert!(!err.contains("hint:"), "{err}");
-    let (_, out, _) = acus_in(
-        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj")),
-        &["run"],
-        "[[\"find\", \"needle\", \"--files-without-match\"]]",
-    );
-    assert!(out.contains("hint: `acus find -l PAT`"), "{out}");
 }
 
 #[test]
@@ -776,6 +770,4 @@ fn long_lines_and_decorators() {
     assert_eq!(out, "min.js 1\n");
     let (_, out, _) = acus_in(d.path(), &["show", "s.py#f"], "");
     assert_eq!(out, "== s.py#f 4-6\n4\t@cache\n5\tdef f():\n6\t    pass\n");
-    let (_, out, _) = acus_in(d.path(), &["run", "--json"], "find zzz\nshow s.py:1\n");
-    assert_eq!(out.lines().next(), Some("null"));
 }
