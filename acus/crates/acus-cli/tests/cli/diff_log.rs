@@ -37,11 +37,6 @@ fn diff_groups_changes_by_symbol() {
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["header"]["branch"], "main");
     assert_eq!(v["files"], serde_json::json!([]));
-    let (code, out, err) = acus_in(d.path(), &["run", "--json"], r#"[["diff"]]"#);
-    assert_eq!((code, err.as_str()), (0, ""));
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["header"]["branch"], "main");
-    assert_eq!(v["files"], serde_json::json!([]));
 }
 
 #[test]

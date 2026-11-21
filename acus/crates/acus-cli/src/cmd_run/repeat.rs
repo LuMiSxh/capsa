@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Counts identical failures of one command in one session, so `acus ctx` can tell an agent that
+//! Counts identical failures of one command in one session, so `acus run` can tell an agent that
 //! the same build keeps failing the same way.
 
 use crate::out::clip;
@@ -45,6 +45,7 @@ struct Run {
 }
 
 /// A failure that repeated `count` times in a row, and its key line.
+#[derive(Debug, Serialize)]
 pub(super) struct Streak {
     pub(super) count: u32,
     pub(super) key: String,
@@ -154,7 +155,7 @@ fn session_file() -> PathBuf {
         .ok()
         .filter(|id| valid_id(id))
         .unwrap_or_else(|| "shared".to_owned());
-    state_dir("acus").join("ctx").join(format!("{id}.json"))
+    state_dir("acus").join("run").join(format!("{id}.json"))
 }
 
 /// A session id is a UUID; anything else is not used in a file name.

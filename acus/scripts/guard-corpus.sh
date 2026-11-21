@@ -189,7 +189,7 @@ HAND = [
     "git diff HEAD~1 -- src/lib.rs",
     "git log --oneline -5",
     "cargo test | tail -n 20",
-    "acus ctx 'cargo test' | tail -n 5",
+    "acus run 'cargo test' | tail -n 5",
     "cat ~/.claude/settings.json",
     "cat $HOME/.config/x.md",
     "echo hello",

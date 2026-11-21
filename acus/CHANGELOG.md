@@ -2,6 +2,62 @@
 
 ## [Unreleased]
 
+## [0.24.0]
+
+### Added
+
+- `acus script` imports MCP servers from Claude Code's settings: `import gh from "mcp:github"`
+  gives an object whose methods are the server's tools (results as `structuredContent`, else text,
+  else the raw content; a tool error throws), and `tools` lists them. It is opt-in per server with
+  `[script] mcp = ["github"]` in the acus config; `permissions.deny` and `permissions.ask` rules for
+  `mcp__SERVER[__TOOL]` refuse a tool. Stdio servers only, started at the first import, killed with
+  their process group at the end of the run or at the deadline. The client is the new crate
+  `acus-mcp`, linked only with the `script` feature. Leading `import` lines now work in inline
+  programs, and `[script] timeout` sets the script time limit (default 120 s).
+- `acus patch --run 'CMD'` runs the command after the patch applies, prints its condensed output
+  after the patch's and exits with the command's code. A failed patch runs nothing, and neither
+  does `--check`. With `--json` the result is one object with `patch` and `run` keys.
+- `acus script` runs a JavaScript program (`-e CODE` or stdin) on an embedded QuickJS engine with
+  `find`, `show`, `outline`, `files`, `follow`, `diff`, `log`, `blame`, `patch`, `run` and `read`
+  as functions that return structured results, so one call replaces a chain of lookups. Options
+  are parsed by each command's own flags; `run()` applies the guard's decision; `patch` is the
+  only write. Limits: 120 s, 256 MB memory, 1 MB stack. `--topic script` prints the reference.
+- Script functions return promises and run on worker threads, at most 8 or the core count at a
+  time, so `await Promise.all([find(a), find(b), run('cargo test')])` runs its calls together.
+  Calls start in program order; `patch` waits for every call before it and holds back every call
+  after it. Benchmark: `Promise.all` of three `run('sleep 1')` through the debug binary takes
+  1.04 s, against 3.18 s for three awaits in a row (the same calls one after the other took
+  that long before). A script without `await` on a function now gets a promise, not a value.
+  At the script deadline, calls not yet started are dropped and each `run()` timeout is cut to
+  the time left, so its command is killed and the script exits 2 within about 2 s. A call the
+  script never awaits still finishes before the script ends. No tokio: plain threads and a
+  channel, so the `acus hook` path is unchanged.
+- `acus script save NAME --note TEXT [--global]` saves a script (an ES module with `description`,
+  `params` and a default function) as an immutable version; `acus script NAME[@V] key=value…`
+  runs it, and `list`, `show` and `log` report on it. Repo scripts live in `.acus/scripts/` with
+  a `.gitignore` of their own, global ones beside the config file; a repo script overrides a
+  global one. Scripts import each other as `repo:name@2` or `user:name`. Runs are logged to
+  `script.jsonl`. SessionStart adds `acus scripts here: a, b, c` for a repo that has saved
+  scripts, from files only; a script unused for 30 days is left out.
+
+### Changed
+
+- The guard adds no context note when it folds a pipe into a flag (`acus find X | head -30` runs as
+  `acus find X --head 30`): pipes are accepted syntax. The rewrite and its `rewrite` log entry are
+  unchanged, other rewrites keep their notes, and the skill no longer calls piping a mistake.
+- `acus ctx` is renamed `acus run`, with no alias: the guard rewrites builds and tests into
+  `acus run '…'`, `--topic run` prints its reference, and the config section `[ctx]` is `[run]`,
+  so a config file that still has `[ctx]` fails to load until it is renamed. The repeat-failure
+  state moves from `acus/ctx/` to `acus/run/`. Guard rule names (`ctx-pipe`, `build-pipe`) and the
+  `guard.jsonl` fields are unchanged. The batch `acus run`, which read several commands from stdin,
+  is removed with its skill section.
+- The skill is shorter: `SKILL.md` 1146 → 1021 words, with flag detail moved to the references,
+  and `CORE.md` (297 words) gains the `acus script` row and example. Evals (`no-hooks`, Haiku,
+  one run each) before → after: trigger recall 4/12 → 6/14, near-miss specificity 12/12 → 12/12,
+  tasks 1/6 → 1/9; the 28 shared cases differ in two, one each way. A rewritten description
+  (invoke first, trigger phrasings with their commands) and an exact-forms table in `SKILL.md`
+  then raise it (repeat 2) to trigger recall 28/28, near-miss specificity 23/24, tasks 13/18.
+
 ## [0.23.0]
 
 ### Added

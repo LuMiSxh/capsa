@@ -62,6 +62,8 @@ enum Pattern {
     Any,
     /// The first argument is this subcommand.
     Subcommand(&'static str),
+    /// The first argument is this subcommand and a positional word follows it.
+    SubcommandOperand(&'static str),
     /// The stage is first in its pipeline, or the operand of `xargs`.
     First,
     /// The stage is first, and an argument contains this text.
@@ -84,6 +86,9 @@ impl Pattern {
         match self {
             Self::Any => true,
             Self::Subcommand(sub) => args.first().is_some_and(|a| a.as_str() == sub),
+            Self::SubcommandOperand(sub) => {
+                args.first().is_some_and(|a| a.as_str() == sub) && has_operand(&args[1..])
+            }
             Self::First => first,
             Self::FirstWith(text) => first && args.iter().any(|a| a.contains(text)),
             Self::FirstFlag(c) => first && has_short_flag(args, c),
@@ -97,6 +102,44 @@ impl Pattern {
     }
 }
 
+/// Flags whose value is the next word, so it is not a positional command.
+const RUN_VALUE_FLAGS: [&str; 16] = [
+    "--max-output",
+    "--max-refs",
+    "--max-lines",
+    "--context",
+    "--drop",
+    "--tail",
+    "--grep",
+    "-A",
+    "--after-context",
+    "-B",
+    "--before-context",
+    "-C",
+    "--timeout",
+    "--log",
+    "--cut",
+    "--head",
+];
+
+/// Whether the arguments hold a positional word: `acus run 'cargo test'` does, a batch read from
+/// a heredoc or stdin does not.
+fn has_operand(args: &[String]) -> bool {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "<" || a == "<<<" {
+            return false;
+        }
+        if !a.starts_with('-') {
+            return true;
+        }
+        if RUN_VALUE_FLAGS.contains(&a.as_str()) {
+            it.next();
+        }
+    }
+    false
+}
+
 /// Program, pattern and category of each classification row. The first matching row wins, so
 /// stricter rows come before the looser ones for the same program.
 const RULES: &[(&str, Pattern, &str)] = &[
@@ -104,9 +147,10 @@ const RULES: &[(&str, Pattern, &str)] = &[
     ("acus", Pattern::Subcommand("outline"), "acus:outline"),
     ("acus", Pattern::Subcommand("show"), "acus:show"),
     ("acus", Pattern::Subcommand("patch"), "acus:patch"),
-    ("acus", Pattern::Subcommand("ctx"), "acus:ctx"),
+    ("acus", Pattern::Subcommand("ctx"), "acus:run"),
     ("acus", Pattern::Subcommand("diff"), "acus:diff"),
-    ("acus", Pattern::Subcommand("run"), "acus:run"),
+    ("acus", Pattern::SubcommandOperand("run"), "acus:run"),
+    ("acus", Pattern::Subcommand("run"), "acus:batch"),
     ("acus", Pattern::Any, "acus:other"),
     ("grep", Pattern::First, "search"),
     ("egrep", Pattern::First, "search"),

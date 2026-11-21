@@ -12,6 +12,7 @@ mod context;
 mod guard;
 mod limits;
 mod prune;
+mod scripts;
 mod self_cmd;
 mod statusline;
 mod thresholds;

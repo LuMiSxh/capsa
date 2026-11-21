@@ -23,7 +23,7 @@ fn names_the_refused_segment_and_its_replacement_in_compound_commands() {
 
     let (_, r) = deny(check("cd app && cargo test -q | tail -5 && echo done"));
     assert!(r.contains("because of `cargo test -q | tail -5`"), "{r}");
-    assert!(r.contains("acus ctx 'cargo test -q'"), "{r}");
+    assert!(r.contains("acus run 'cargo test -q'"), "{r}");
 
     let (_, r) = deny(check("cd a && head -n 20 src/a.rs"));
     assert!(r.contains("`acus show 'src/a.rs:1-20'`"), "{r}");
@@ -343,7 +343,7 @@ fn allows_filters_data_and_escapes() {
     for cmd in [
         "cargo tree | grep serde",
         "cargo test 2>&1 | tee test.log",
-        "acus ctx 'cargo test | tail'",
+        "acus run 'cargo test | tail'",
         "npm install | tail -3",
         "git commit -m \"fix; grep foo\"",
         "cat > notes.md <<'EOF'\ngrep foo bar\nEOF",

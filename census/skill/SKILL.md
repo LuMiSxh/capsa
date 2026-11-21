@@ -21,6 +21,7 @@ subagents cost. For the main agent only; subagents do not run it.
 | Spawns per role, models, cache hit rate, cache rewrites                                       | `census usage --agents`                 |
 | How agents search, read, edit and build, and what the acus guard misses                       | `census usage --tools --misses`         |
 | acus guard decisions per rule with follow rates, per project with `--by-project`, and escapes | `census usage --guard`                  |
+| Runs of saved acus scripts: runs, failures, median duration, last use, repo                    | `census usage --scripts`                |
 | Senior-worker hand-backs per week, and per role with the median minutes to hand back          | `census usage --handbacks`              |
 | Requests before and after a UTC date, with the change                                         | `census usage --compare 2026-10-01`     |
 | Expected cost by weekday, hour or reset cycle                                                 | `census usage --by weekday`             |

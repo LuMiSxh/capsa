@@ -5,7 +5,6 @@
 mod out;
 
 mod cmd_blame;
-mod cmd_ctx;
 mod cmd_diff;
 mod cmd_doctor;
 mod cmd_files;
@@ -18,6 +17,8 @@ mod cmd_map;
 mod cmd_outline;
 mod cmd_patch;
 mod cmd_run;
+#[cfg(feature = "script")]
+mod cmd_script;
 mod cmd_self;
 mod cmd_setup;
 mod cmd_show;
@@ -30,9 +31,10 @@ mod follow;
 mod git;
 mod globs;
 mod guard_log;
+
 mod source;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use capsa_core::cli::{App, FormatArgs};
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
@@ -85,13 +87,17 @@ enum Cmd {
     /// `*** Delete Symbol`, `*** Move Symbol` and `*** Replace All` (`acus patch --help` has the syntax).
     Patch(cmd_patch::Args),
     /// Run a shell command; print its output plus the code its `path:line` references point at.
-    Ctx(cmd_ctx::Args),
+    Run(cmd_run::Args),
     /// Uncommitted (or `REV`, `A..B`) changes grouped by enclosing symbol; `-p` adds the lines.
     Diff(cmd_diff::Args),
     /// Recent commits, one line each with date, author and changed lines.
     Log(cmd_log::Args),
-    /// Run several commands from stdin, one per line, or as a JSON array of argument lists.
-    Run(cmd_run::Args),
+
+    /// JavaScript run in-process with acus's commands bound as functions (`find`, `show`, `patch`,
+    /// `run`, ...); what the program prints and returns is the result. The program comes from
+    /// `-e CODE` or stdin. `script save|list|show|log` keep saved scripts; `script NAME` runs one.
+    #[cfg(feature = "script")]
+    Script(cmd_script::Args),
     /// Claude Code hook: `SessionStart` prints the skill; `PreToolUse` rewrites Bash, PowerShell,
     /// Read, Grep and Glob calls into the acus command that does the same work, or names it.
     Hook(cmd_hook::Args),
@@ -111,9 +117,10 @@ impl Cmd {
             Cmd::Blame(_) => "blame",
             Cmd::Follow(_) => "follow",
             Cmd::Patch(_) => "patch",
-
             Cmd::Run(_) => "run",
-            Cmd::Ctx(_) => "ctx",
+            #[cfg(feature = "script")]
+            Cmd::Script(_) => "script",
+
             Cmd::Diff(_) => "diff",
             Cmd::Log(_) => "log",
             Cmd::Hook(_) => "hook",
@@ -140,8 +147,8 @@ impl App for Cli {
     }
 }
 
-/// Runs one parsed command line in `format`; `run` calls this for every batch entry.
-pub fn execute(cli: Cli, format: Format, nested: bool) -> Result<Outcome> {
+/// Runs one parsed command line in `format`.
+pub fn execute(cli: Cli, format: Format) -> Result<Outcome> {
     // A broken config file must not stop the hook, which answers every tool call: it runs with the
     // defaults and reports the problem to the agent.
     // `self doctor` reports a broken config itself, so it gets the same lenient load.
@@ -171,16 +178,17 @@ pub fn execute(cli: Cli, format: Format, nested: bool) -> Result<Outcome> {
         Cmd::Show(a) => cmd_show::run(a, &out),
         Cmd::Blame(a) => cmd_blame::run(&a, &out),
         Cmd::Follow(a) => cmd_follow::run(&a, &out),
-        Cmd::Patch(a) => cmd_patch::run(&a, &out, nested, &cfg),
-        Cmd::Run(_) if nested => bail!("`run` cannot be nested"),
-        Cmd::Run(a) => cmd_run::run(&a, &out),
-        Cmd::Ctx(a) => cmd_ctx::run(&a, &out, &cfg),
+        Cmd::Patch(a) => cmd_patch::run(&a, &out, &cfg),
+        Cmd::Run(a) => cmd_run::run(&a, &out, &cfg),
+        #[cfg(feature = "script")]
+        Cmd::Script(a) => cmd_script::run(a, cfg, format),
+
         Cmd::Diff(a) => cmd_diff::run(&a, &out),
         Cmd::Log(a) => cmd_log::run(&a, &out),
         Cmd::Hook(a) => cmd_hook::run(&a, &cfg, config_problem.as_deref()),
         Cmd::Itself(a) => cmd_self::run(a, format),
     }?;
-    if !nested && out.format == Format::Json && null_on.is_some_and(|o| o == result) {
+    if out.format == Format::Json && null_on.is_some_and(|o| o == result) {
         println!("null");
     }
     Ok(result)
@@ -230,5 +238,5 @@ pub fn parse_error(e: &clap::Error, args: &[String]) -> anyhow::Error {
 
 /// Runs acus: the shared skeleton parses the command line, then `execute` runs it.
 fn main() -> ExitCode {
-    capsa_core::cli::main::<Cli>(|cli, format| execute(cli, format, false))
+    capsa_core::cli::main::<Cli>(execute)
 }

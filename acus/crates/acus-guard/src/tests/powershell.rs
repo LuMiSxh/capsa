@@ -145,21 +145,21 @@ fn names_the_ctx_flag_for_powershell_filters() {
     for (cmd, want) in [
         (
             "cargo build 2>&1 | Select-Object -Last 30",
-            "`acus ctx 'cargo build' --tail 30`",
+            "`acus run 'cargo build' --tail 30`",
         ),
         (
             "cargo build | select -First 20",
-            "`acus ctx 'cargo build' --max-output 20`",
+            "`acus run 'cargo build' --max-output 20`",
         ),
         (
             "cargo test | Select-String Error",
-            "`acus ctx 'cargo test' --grep '(?i)Error'`",
+            "`acus run 'cargo test' --grep '(?i)Error'`",
         ),
         (
             "cargo test | sls -Pattern 'FAILED|panicked'",
-            "`acus ctx 'cargo test' --grep '(?i)FAILED|panicked'`",
+            "`acus run 'cargo test' --grep '(?i)FAILED|panicked'`",
         ),
-        ("acus ctx | Select-Object -Last 5", "`acus ctx --tail 5`"),
+        ("acus run | Select-Object -Last 5", "`acus run --tail 5`"),
     ] {
         let (_, r) = deny(check_ps(cmd, None));
         assert!(

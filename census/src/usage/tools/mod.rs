@@ -82,7 +82,7 @@ pub fn group(category: &str) -> &'static str {
     match category {
         "acus:find" | "acus:outline" | "acus:show" | "search" | "read" => "explore",
         "acus:patch" | "edit-sed" | "edit-python" | "edit-builtin" | "edit-shell" => "edit",
-        "acus:ctx" | "build-filtered" | "build-unfiltered" => "build",
+        "acus:run" | "build-filtered" | "build-unfiltered" => "build",
         "acus:diff" | "diff" => "diff",
         _ => "other",
     }

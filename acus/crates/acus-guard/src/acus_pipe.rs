@@ -107,6 +107,19 @@ mod tests {
     }
 
     #[test]
+    fn a_pipe_fold_adds_no_note_but_other_rewrites_still_do() {
+        let r = crate::rewrite::rewrite("acus find 'fn x' src | head -30", None).unwrap();
+        assert_eq!(r.command, "acus find 'fn x' src --head 30");
+        assert!(r.note.is_empty(), "{}", r.note);
+        let r = crate::rewrite::rewrite("acus show a.rs | head -5; cat b.rs", None).unwrap();
+        assert_eq!(r.command, "acus show a.rs --head 5; acus show 'b.rs'");
+        assert_eq!(
+            r.note,
+            "acus guard: ran `acus show 'b.rs'` instead of `cat b.rs`. The command was rewritten, not refused; use acus directly next time."
+        );
+    }
+
+    #[test]
     fn leaves_other_pipes_alone() {
         for cmd in [
             "acus show a.rs --json | head -5",

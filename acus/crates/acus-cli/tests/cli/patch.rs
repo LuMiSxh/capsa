@@ -59,6 +59,33 @@ fn patch_replace_symbol_echoes_the_edges_of_a_long_body() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn patch_run_prints_the_command_output_and_exits_with_its_code() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.rs"), "fn f() {\n    1\n}\n").unwrap();
+    let p = "*** Begin Patch\n*** Update File: a.rs\n<<<<<<< SEARCH\n    1\n=======\n    2\n>>>>>>> REPLACE\n*** End Patch\n";
+    let (code, out, err) = acus_in(d.path(), &["patch", "--run", "echo ok; exit 3"], p);
+    assert_eq!(code, 3, "{err}");
+    assert!(out.starts_with("M a.rs +1 -1\n"), "{out}");
+    assert!(out.ends_with("ok\n== exit 3\n"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(d.path().join("a.rs")).unwrap(),
+        "fn f() {\n    2\n}\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_patch_runs_no_command() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.rs"), "fn f() {}\n").unwrap();
+    let p = "*** Begin Patch\n*** Update File: a.rs\n<<<<<<< SEARCH\nnope\n=======\nyes\n>>>>>>> REPLACE\n*** End Patch\n";
+    let (code, _, err) = acus_in(d.path(), &["patch", "--run", "touch made"], p);
+    assert_eq!(code, 2, "{err}");
+    assert!(!d.path().join("made").exists());
+}
+
 #[test]
 fn patch_from_stdin() {
     let d = tempfile::tempdir().unwrap();

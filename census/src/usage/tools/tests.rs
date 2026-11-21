@@ -22,7 +22,13 @@ fn shape(cmd: &str) -> String {
 #[test]
 fn classifies() {
     let t: &[(&str, &[&str])] = &[
-        ("acus ctx 'cargo test'", &["acus:ctx"]),
+        ("acus ctx 'cargo test'", &["acus:run"]),
+        ("acus run 'cargo test'", &["acus:run"]),
+        ("acus run \"cargo test\"", &["acus:run"]),
+        ("acus run cargo test", &["acus:run"]),
+        ("acus run <<'EOF'\nfind 'x'\nEOF", &["acus:batch"]),
+        ("acus run --head 50 <<'EOF'\nfind 'x'\nEOF", &["acus:batch"]),
+        ("acus run < cmds.txt", &["acus:batch"]),
         ("acus find 'a|b' --block", &["acus:find"]),
         ("acus patch <<'EOF'\ngrep x\nEOF", &["acus:patch"]),
         ("cargo test 2>&1 | tail -20", &["build-filtered"]),

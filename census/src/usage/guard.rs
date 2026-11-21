@@ -110,7 +110,7 @@ pub fn by_project(entries: &[GuardEntry]) -> Vec<ProjectRule> {
     rows
 }
 
-fn project_of(cwd: Option<&str>) -> &str {
+pub(super) fn project_of(cwd: Option<&str>) -> &str {
     cwd.map(Path::new)
         .and_then(Path::file_name)
         .and_then(|s| s.to_str())
@@ -119,14 +119,14 @@ fn project_of(cwd: Option<&str>) -> &str {
 
 /// The time of one guard log line, read without deserializing the rest of it.
 #[derive(Deserialize)]
-struct Stamp {
+pub(super) struct Stamp {
     #[serde(default)]
-    ts: u64,
+    pub(super) ts: u64,
 }
 
 /// The lines of one log file, read on past a line that is not valid UTF-8. The file ends at its
 /// last line or at an I/O error.
-fn log_lines(file: std::fs::File) -> impl Iterator<Item = String> {
+pub(super) fn log_lines(file: std::fs::File) -> impl Iterator<Item = String> {
     let mut reader = std::io::BufReader::new(file);
     std::iter::from_fn(move || {
         loop {

@@ -119,7 +119,7 @@ fn rewrites_the_outer_command_next_to_a_substitution() {
     assert_eq!(
         rw_ast("cargo test $(echo -q) | tail -3"),
         None,
-        "an expansion in a build is not quoted into acus ctx"
+        "an expansion in a build is not quoted into acus run"
     );
 }
 
@@ -139,7 +139,7 @@ fn keeps_what_comes_before_the_command() {
     );
     assert_eq!(
         rw_ast("cd X && cargo build 2>&1 | grep error").as_deref(),
-        Some("cd X && acus ctx 'cargo build' --grep 'error'")
+        Some("cd X && acus run 'cargo build' --grep 'error'")
     );
 }
 

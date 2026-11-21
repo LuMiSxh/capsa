@@ -22,7 +22,7 @@ pub(crate) fn window(cmd: &str, opts: &[&str]) -> Option<Window> {
 }
 
 /// Returns the smallest count `window` accepts. A read needs one line at least; a build filter
-/// (`swift build | head -n 0`) folds to ctx with a count of zero too.
+/// (`swift build | head -n 0`) folds to run with a count of zero too.
 pub(crate) fn window_min(cmd: &str, opts: &[&str], min: usize) -> Option<Window> {
     let tail = match cmd {
         "head" => false,

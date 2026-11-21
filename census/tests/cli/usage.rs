@@ -184,7 +184,7 @@ fn usage_misses_excludes_acus_shaped_commands() {
         .iter()
         .filter_map(|t| t["category"].as_str())
         .collect();
-    for category in ["acus:find", "acus:run", "acus:show"] {
+    for category in ["acus:find", "acus:batch", "acus:show"] {
         assert!(categories.contains(&category), "{categories:?}");
     }
 }

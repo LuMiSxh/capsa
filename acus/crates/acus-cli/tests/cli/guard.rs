@@ -74,7 +74,7 @@ fn guard_answers_hook_calls() {
     assert!(o.get("permissionDecision").is_none(), "{v}");
     assert_eq!(
         o["updatedInput"]["command"],
-        "acus ctx 'cargo test' --tail 3"
+        "acus run 'cargo test' --tail 3"
     );
     assert_eq!(o["updatedInput"]["timeout"], 5000);
     // In-place edits have no exact rewrite.
@@ -471,7 +471,17 @@ fn hook_replies_keep_their_wire_bytes() {
         })),
         format!(
             "{}\n",
-            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"acus ctx 'cargo test' --tail 3","timeout":5000},"additionalContext":"acus guard: ran `acus ctx 'cargo test' --tail 3` instead of `cargo test 2>&1 | tail -3`. The command was rewritten, not refused; use acus directly next time."}}"#
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"acus run 'cargo test' --tail 3","timeout":5000},"additionalContext":"acus guard: ran `acus run 'cargo test' --tail 3` instead of `cargo test 2>&1 | tail -3`. The command was rewritten, not refused; use acus directly next time."}}"#
+        )
+    );
+    assert_eq!(
+        reply(serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": {"command": "acus find 'fn x' src | head -30"},
+        })),
+        format!(
+            "{}\n",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"acus find 'fn x' src --head 30"},"permissionDecision":"allow"}}"#
         )
     );
     assert_eq!(

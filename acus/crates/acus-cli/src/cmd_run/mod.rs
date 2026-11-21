@@ -1,24 +1,22 @@
 // SPDX-License-Identifier: MPL-2.0
-//! `acus ctx`: runs a command, drops build and test noise, keeps the failures and shows the
+//! `acus run`: runs a command, drops build and test noise, keeps the failures and shows the
 //! code their `path:line` references point at.
 
+mod compute;
 mod narrow;
 mod noise;
 mod print;
 mod refs;
 mod repeat;
 
+pub(crate) use compute::{RunReport, compute};
+pub(crate) use print::{json, outcome};
+
 use crate::config::Config;
-use crate::out::{Budget, Out};
+use crate::out::Out;
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
-use capsa_core::format::Format;
 use capsa_core::hint::hinted;
-use capsa_core::render::{Tone, paint};
-use narrow::narrow;
-use noise::{clean, quiet, save_log};
-use print::{print_growing, print_json, print_lines, print_notes, print_snippets};
-use refs::refs;
 use regex::{Regex, RegexSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -28,7 +26,7 @@ use std::time::{Duration, Instant};
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// Shell command, e.g. 'cargo test -q'; stdout and stderr are merged. Default: `[ctx] command`,
+    /// Shell command, e.g. 'cargo test -q'; stdout and stderr are merged. Default: `[run] command`,
     /// else the project's test command (Cargo.toml, Package.swift, go.mod, package.json, pytest).
     command: Option<String>,
     /// Output lines kept (head and tail halves).
@@ -82,6 +80,31 @@ pub struct Args {
     /// Stop after N printed lines, headers and footers included; the rest is counted in a footer.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
     head: Option<u64>,
+}
+
+impl Args {
+    /// Returns the arguments that `acus run COMMAND` parses to with every flag at its default,
+    /// for a caller that already has the command.
+    pub fn for_command(command: String) -> Self {
+        Args {
+            command: Some(command),
+            max_output: 200,
+            max_refs: 8,
+            max_lines: 40,
+            context: 3,
+            raw: false,
+            drop: Vec::new(),
+            tail: None,
+            grep: None,
+            after: Vec::new(),
+            before: Vec::new(),
+            around: Vec::new(),
+            timeout: None,
+            log: None,
+            cut: None,
+            head: None,
+        }
+    }
 }
 
 /// Exit code of a command killed by `--timeout`, as in timeout(1).
@@ -181,104 +204,11 @@ fn capture(cmd: &str, command: &str, timeout: Option<u64>) -> Result<Captured> {
     })
 }
 
-/// Runs a command, prints its output, then the code its `path:line` references point at.
-/// Exit: the command's exit code (2 if it could not start).
+/// Runs a command and prints its filtered output, then the code its `path:line` references
+/// point at. Exit: the command's exit code (2 if it could not start).
 pub fn run(a: &Args, out: &Out, cfg: &Config) -> Result<Outcome> {
-    let (extra, grep, context) = inputs(a, cfg)?;
-    let narrowing = a.tail.is_some() || grep.is_some();
-    let (raw, code, timed_out, command) = source(a, out, cfg)?;
-    let text = if a.raw { raw } else { clean(&raw) };
-    let cwd = std::env::current_dir()?;
-    let all: Vec<&str> = text.lines().collect();
-    let (lines, passed, dropped) = if a.raw {
-        (all.iter().map(|l| l.to_string()).collect(), 0, 0)
-    } else {
-        quiet(&all, &extra)
-    };
-    let streak = command
-        .as_deref()
-        .and_then(|c| repeat::note(&cwd, c, code, &lines));
-    if out.format == Format::Json {
-        let shown = if narrowing {
-            let lines = text.lines().map(str::to_owned).collect();
-            narrow(
-                lines,
-                (a.tail, grep.as_ref(), context),
-                (a.max_output, a.max_lines),
-            )
-            .lines
-            .join("\n")
-        } else {
-            text
-        };
-        return Ok(print_json(a, &cwd, &shown, code, streak.as_ref()));
-    }
-    let nothing_matched = grep
-        .as_ref()
-        .is_some_and(|re| !lines.is_empty() && !lines.iter().any(|l| re.is_match(l)));
-    let narrowed = narrow(
-        lines,
-        (a.tail, grep.as_ref(), context),
-        (a.max_output, a.max_lines),
-    );
-    // Only what is shown decides which code is shown.
-    let refs = if narrowing {
-        refs(&narrowed.lines.join("\n"), &cwd)
-    } else {
-        refs(&text, &cwd)
-    };
-    let mut budget = Budget::new(a.head.map(|n| n as usize));
-    // The repeat line leads what the command printed, so it stays outside the `--head` budget and
-    // that output is cut exactly as without it.
-    if let Some(s) = &streak {
-        outln!("{}", s.lead());
-    }
-    // A saved log opens with its header, before any of its lines, so the first line says what
-    // was read.
-    if let Some(path) = &a.log {
-        budget.emit(&out.header(&format!("== log {} ({} lines)", path.display(), all.len())));
-    }
-    let omitted = print_lines(a, &narrowed.lines, &mut budget);
-    // Whatever is not printed stays readable without running the command again.
-    // Dropped noise matters only when looking into a failure.
-    let keep_log = omitted > 0
-        || narrowed.grep_dropped + narrowed.tail_dropped > 0
-        || timed_out
-        || (dropped > 0 && code != 0);
-    let log = command
-        .as_deref()
-        .filter(|_| keep_log)
-        .and_then(|c| save_log(&cwd, c, &text));
-    let log_note = log.as_deref().map(|p| (p, text.lines().count()));
-    print_notes(
-        out,
-        dropped,
-        passed,
-        narrowed.grep_dropped,
-        nothing_matched,
-        log_note,
-        &mut budget,
-    );
-    if let (true, Some(secs)) = (timed_out, a.timeout) {
-        budget.emit(&paint(
-            &format!(
-                "… killed after {secs}s (--timeout); output above is what it printed until then. Raise --timeout, or --grep/--tail a narrower command"
-            ),
-            Tone::Dim,
-            out.color,
-        ));
-    }
-    if a.log.is_none() {
-        budget.emit(&out.header(&format!("== exit {code}")));
-    }
-    print_snippets(out, a, &refs, &mut budget);
-    if let Some(path) = &a.log {
-        print_growing(out, path, &mut budget);
-    }
-    if let Some(f) = budget.footer() {
-        outln!("{f}");
-    }
-    Ok(Outcome::Code(code.clamp(0, 255) as u8))
+    let report = compute::compute(a, out, cfg)?;
+    Ok(print::print(&report, out))
 }
 
 /// The compiled drop, grep and context inputs of one run.
@@ -293,9 +223,9 @@ fn inputs(a: &Args, cfg: &Config) -> Result<Inputs> {
             "use either a command or --log FILE",
         ));
     }
-    let extra = RegexSet::new(cfg.ctx.drop.iter().chain(&a.drop)).with_context(|| {
+    let extra = RegexSet::new(cfg.run.drop.iter().chain(&a.drop)).with_context(|| {
         format!(
-            "invalid --drop or [ctx] drop regex ({})",
+            "invalid --drop or [run] drop regex ({})",
             cfg.path.display()
         )
     })?;
@@ -309,7 +239,7 @@ fn inputs(a: &Args, cfg: &Config) -> Result<Inputs> {
     if has_context && grep.is_none() {
         return Err(hinted(
             "-A, -B and -C need --grep",
-            "add the pattern, e.g. acus ctx 'cargo build' --grep '^error' -A 4",
+            "add the pattern, e.g. acus run 'cargo build' --grep '^error' -A 4",
         ));
     }
     // The last of repeated flags wins, and -A and -B override -C.
@@ -322,20 +252,37 @@ fn inputs(a: &Args, cfg: &Config) -> Result<Inputs> {
     Ok((extra, grep, context))
 }
 
+/// What the command (or saved log) produced, and the command an agent view announces.
+struct Source {
+    text: String,
+    code: i32,
+    timed_out: bool,
+    /// The command, `None` for a saved log.
+    command: Option<String>,
+    /// The command the user did not pass, which the agent view announces with `$`.
+    announced: Option<String>,
+}
+
 /// The text to narrow with its exit code and timeout flag; the command is `None` for a saved
 /// log.
-fn source(a: &Args, out: &Out, cfg: &Config) -> Result<(String, i32, bool, Option<String>)> {
+fn source(a: &Args, cfg: &Config) -> Result<Source> {
     // A saved log is read, not run, so there is no command to save its output under.
     match &a.log {
         Some(path) => match std::fs::read(path) {
-            Ok(bytes) => Ok((String::from_utf8_lossy(&bytes).into_owned(), 0, false, None)),
+            Ok(bytes) => Ok(Source {
+                text: String::from_utf8_lossy(&bytes).into_owned(),
+                code: 0,
+                timed_out: false,
+                command: None,
+                announced: None,
+            }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 anyhow::bail!("{}: not found", path.display())
             }
             Err(e) => Err(e.into()),
         },
         None => {
-            let command = command_line(a, out, cfg)?;
+            let (command, defaulted) = command_line(a, cfg)?;
             // The redirect must cover the whole command line, not just its last `&&` part.
             let cmd = if cfg!(windows) {
                 format!("({command}) 2>&1")
@@ -343,20 +290,28 @@ fn source(a: &Args, out: &Out, cfg: &Config) -> Result<(String, i32, bool, Optio
                 format!("exec 2>&1\n{command}")
             };
             let res = capture(&cmd, &command, a.timeout)?;
-            let raw = String::from_utf8_lossy(&res.stdout).into_owned();
-            Ok((raw, res.code, res.timed_out, Some(command)))
+            let text = String::from_utf8_lossy(&res.stdout).into_owned();
+            let announced = defaulted.then(|| command.clone());
+            Ok(Source {
+                text,
+                code: res.code,
+                timed_out: res.timed_out,
+                command: Some(command),
+                announced,
+            })
         }
     }
 }
 
-/// The command to run: the argument, else `[ctx] command`, else the detected test command.
-fn command_line(a: &Args, out: &Out, cfg: &Config) -> Result<String> {
+/// The command to run: the argument, else `[run] command`, else the detected test command; the
+/// flag says the user did not pass it.
+fn command_line(a: &Args, cfg: &Config) -> Result<(String, bool)> {
     match &a.command {
-        Some(c) => Ok(c.clone()),
+        Some(c) => Ok((c.clone(), false)),
         None => {
             let cwd = std::env::current_dir()?;
             let c = cfg
-                .ctx
+                .run
                 .command
                 .clone()
                 .or_else(|| detect_command(&cwd))
@@ -364,15 +319,12 @@ fn command_line(a: &Args, out: &Out, cfg: &Config) -> Result<String> {
                     hinted(
                         "no command given and no project detected",
                         format!(
-                            "pass a command, e.g. acus ctx 'cargo test -q', or set [ctx] command in {}",
+                            "pass a command, e.g. acus run 'cargo test -q', or set [run] command in {}",
                             cfg.path.display()
                         ),
                     )
                 })?;
-            if out.format != Format::Json {
-                outln!("{}", paint(&format!("$ {c}"), Tone::Dim, out.color));
-            }
-            Ok(c)
+            Ok((c, true))
         }
     }
 }

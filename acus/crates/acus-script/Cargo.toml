@@ -1,0 +1,17 @@
+[package]
+name = "acus-script"
+description = "Embedded JavaScript engine for acus scripts: limits, prelude and a host trait."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+regex.workspace = true
+rquickjs = { workspace = true, features = ["loader"] }
+serde_json.workspace = true
+thiserror.workspace = true

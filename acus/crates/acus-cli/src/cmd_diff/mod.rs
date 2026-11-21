@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus diff`: changed lines, summarised per enclosing symbol.
 
-mod modes;
+mod added;
+mod conflicts;
+mod groups;
+mod json;
+mod lists;
 mod moves;
-mod new_files;
 mod raw;
-mod render;
+mod report;
 mod status;
+mod text;
 
 use crate::git::git;
 use crate::out::Out;
@@ -15,7 +19,11 @@ use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::hinted;
 use capsa_core::render::{Tone, paint};
+use groups::Derived;
 use raw::parse;
+pub(crate) use report::DiffReport;
+use report::{Changes, FileReport, Staged};
+use serde::Serialize;
 use status::Status;
 use std::path::Path;
 
@@ -68,8 +76,8 @@ pub struct Args {
     conflicts: bool,
 }
 
-#[derive(Default)]
-struct FileDiff {
+#[derive(Debug, Default, Serialize)]
+pub(crate) struct FileDiff {
     /// None for added files.
     old: Option<String>,
     /// None for deleted files.
@@ -85,11 +93,26 @@ struct FileDiff {
 
 /// `git diff` summarised per enclosing symbol, plus untracked files.
 pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
+    let report = compute(a, out.format == Format::Json)?;
+    Ok(print(&report, out, a))
+}
+
+/// Reads git and computes the report of `acus diff`; writes nothing. `json` skips the staged
+/// footer, which JSON does not print.
+pub(crate) fn compute(a: &Args, json: bool) -> Result<DiffReport> {
     // Like git: the first argument is a revision unless it names an existing path.
     let (rev, paths) = match a.args.split_first() {
         Some((r, rest)) if !Path::new(r).exists() => (Some(r.as_str()), rest),
         _ => (None, &a.args[..]),
     };
+    if a.conflicts {
+        return conflicts::compute(paths, rev).map(DiffReport::Conflicts);
+    }
+    changes(a, rev, paths, json).map(DiffReport::Changes)
+}
+
+/// The changed files of `rev` (or the working tree), each with its symbol groups and moves.
+fn changes(a: &Args, rev: Option<&str>, paths: &[String], json: bool) -> Result<Changes> {
     let range = rev.and_then(|r| r.split_once(".."));
     // ponytail: `A...B` compares against A, not the merge base; only the symbol labels of removed
     // lines are affected.
@@ -102,62 +125,81 @@ pub fn run(a: &Args, out: &Out) -> Result<Outcome> {
     let new_rev = range
         .map(|(_, r)| r.trim_start_matches('.'))
         .map(|r| if r.is_empty() { "HEAD" } else { r });
-    // One `git status` feeds the header, the untracked list and the unmerged paths.
-    let status = if rev.is_none() || a.conflicts {
+    // The header and untracked list come from one `git status`, read only for the working tree.
+    let status = if rev.is_none() {
         Some(Status::load(paths)?)
     } else {
         None
     };
-    let header = status.as_ref().filter(|_| rev.is_none());
-    if a.conflicts {
-        let Some(st) = status.as_ref() else {
-            return Ok(Outcome::Empty);
-        };
-        return Ok(modes::conflicts(out, header, st));
-    }
     let files = changed_files(a, rev, paths, range.is_some(), status.as_ref())?;
     // `--stat` and `--name-only` need no outlines or symbol groups.
-    let views = if a.stat || a.name_only {
-        Vec::new()
-    } else {
-        render::views(a, &files, rev, old_rev, new_rev)
-    };
+    let detailed = !(a.stat || a.name_only);
     // The default view is the working tree against the index: staged changes are named in a footer.
-    let staged =
-        if out.format != Format::Json && rev.is_none() && !a.staged && !a.stat && !a.name_only {
-            staged_footer(paths)?
-        } else {
-            None
-        };
-    if files.is_empty() {
-        if out.format == Format::Json {
-            render::print_json(a, header, &files, &views);
-            return Ok(Outcome::Found);
-        }
-        if let Some(h) = header {
+    let staged = if !json && rev.is_none() && !a.staged && detailed {
+        staged_summary(paths)?
+    } else {
+        None
+    };
+    let (moves, derived) = if detailed {
+        groups::derive(a, &files, rev, old_rev, new_rev)
+    } else {
+        (
+            Vec::new(),
+            files.iter().map(|_| Derived::default()).collect(),
+        )
+    };
+    let files: Vec<FileReport> = files
+        .into_iter()
+        .zip(derived)
+        .map(|(diff, d)| FileReport {
+            diff,
+            symbols: d.symbols,
+            text_groups: d.text_groups,
+            new_file: d.new_file,
+        })
+        .collect();
+    Ok(Changes {
+        header: status,
+        rev: rev.map(str::to_owned),
+        staged,
+        files,
+        moves,
+    })
+}
+
+/// Prints a report in the chosen format and returns its exit outcome.
+pub(crate) fn print(report: &DiffReport, out: &Out, a: &Args) -> Outcome {
+    match report {
+        DiffReport::Conflicts(c) => lists::print_conflicts(out, c),
+        DiffReport::Changes(c) => print_changes(c, out, a),
+    }
+}
+
+/// Prints the changed files in the chosen view; an empty diff prints its header and a note.
+fn print_changes(c: &Changes, out: &Out, a: &Args) -> Outcome {
+    if out.format == Format::Json {
+        json::print(a, c);
+        return Outcome::Found;
+    }
+    if c.files.is_empty() {
+        if let Some(h) = &c.header {
             outln!("{}", out.header(&h.header()));
         }
-        if let Some(line) = staged {
-            outln!("{}", paint(&line, Tone::Dim, out.color));
-            return Ok(Outcome::Found);
+        if let Some(s) = &c.staged {
+            outln!("{}", paint(&staged_line(s), Tone::Dim, out.color));
+            return Outcome::Found;
         }
         eprintln!("(no changes)");
-        return Ok(Outcome::Code(0));
-    }
-    if out.format == Format::Json {
-        render::print_json(a, header, &files, &views);
-        return Ok(Outcome::Found);
+        return Outcome::Code(0);
     }
     if a.stat {
-        modes::print_stat(a, out, header, &files);
-        return Ok(Outcome::Found);
+        lists::print_stat(a, out, c);
+    } else if a.name_only {
+        lists::print_name_only(a, out, c);
+    } else {
+        text::print(a, out, c);
     }
-    if a.name_only {
-        modes::print_name_only(a, out, header, &files);
-        return Ok(Outcome::Found);
-    }
-    render::print_text_files(a, out, header, &files, &views, staged, rev);
-    Ok(Outcome::Found)
+    Outcome::Found
 }
 
 /// The changed files of `rev` (or the working tree), plus untracked files unless the diff is
@@ -226,8 +268,8 @@ fn total(f: &FileDiff, add: bool) -> usize {
     f.lines.iter().filter(|l| l.0 == add).count()
 }
 
-/// The staged changes of the default view as a footer line; None when the index matches HEAD.
-fn staged_footer(paths: &[String]) -> Result<Option<String>> {
+/// The staged changes of the default view; None when the index matches HEAD.
+fn staged_summary(paths: &[String]) -> Result<Option<Staged>> {
     let mut cmd = DIFF_FLAGS.to_vec();
     cmd.extend(["--cached", "--"]);
     cmd.extend(paths.iter().map(String::as_str));
@@ -235,16 +277,23 @@ fn staged_footer(paths: &[String]) -> Result<Option<String>> {
     if files.is_empty() {
         return Ok(None);
     }
-    let add = files.iter().flat_map(|f| &f.lines).filter(|l| l.0).count();
-    let del = files.iter().flat_map(|f| &f.lines).filter(|l| !l.0).count();
-    let s = if files.len() == 1 { "" } else { "s" };
-    let mut line = format!("staged: {} file{s}", files.len());
-    let c = counts(add, del);
+    Ok(Some(Staged {
+        files: files.len(),
+        add: files.iter().flat_map(|f| &f.lines).filter(|l| l.0).count(),
+        del: files.iter().flat_map(|f| &f.lines).filter(|l| !l.0).count(),
+    }))
+}
+
+/// The footer line for staged changes: file count, changed lines, then the command for them.
+fn staged_line(s: &Staged) -> String {
+    let plural = if s.files == 1 { "" } else { "s" };
+    let mut line = format!("staged: {} file{plural}", s.files);
+    let c = counts(s.add, s.del);
     if !c.is_empty() {
         line += &format!(" {c}");
     }
     line += " (acus diff --staged)";
-    Ok(Some(line))
+    line
 }
 
 /// The path a file header names: `old -> new` for a rename.

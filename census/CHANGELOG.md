@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.8.0]
+
+### Added
+
+- `census usage --scripts` reports the runs of saved acus scripts from acus's `script.jsonl`: runs,
+  failures, median duration, last use and the most common repository, per script name and scope.
+
+### Changed
+
+- `census usage --tools` follows the acus rename: `acus run 'command'` and the former `acus ctx`
+  are both `acus:run` in the build category, and the retired `acus run` batch read from stdin or a
+  heredoc is `acus:batch`.
+
 ## [0.7.1]
 
 ### Added

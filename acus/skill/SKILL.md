@@ -1,6 +1,6 @@
 ---
 name: acus
-description: Code search, read, patch and git-summary CLI for coding agents. Use it before any Grep, Glob, Read or Edit call and before a Bash grep, rg, find, cat, head, tail, sed, git status, git diff or git log, to find code or usages, list files, read a file, symbol, line range or log file, filter piped output, edit or rename across files, or review what changed on a branch. Also runs builds and tests (cargo test, npm test) and shows only their failures with the code they point at. Results are line-numbered and grouped by enclosing symbol, every truncation names the next command, and patches apply all or nothing.
+description: Code search, read, patch and git-summary CLI for coding agents. Always invoke this skill first, before any Grep, Glob, Read or Edit call and before any Bash grep, rg, find, cat, head, sed -i, git diff, git log or ls. It owns every code lookup and edit, so use it to find usages, callers or definitions (acus find, follow), read lines N-M or a function (acus show), list files with line counts (acus files), see what changed on a branch or versus main (acus diff main -p), read git log for a path (acus log), rename or replace text across files, add, change or delete a method or lines (acus patch), search a log file and keep the last hits, run cargo test or npm test and show only failures (acus run), and chain several dependent lookups into one `acus script` or run a saved script by name. Results are line-numbered and grouped by symbol.
 ---
 
 # acus
@@ -12,24 +12,67 @@ One call replaces search → read: line-numbered, grouped by symbol; every trunc
 | Instead of | Run |
 |---|---|
 | grep, rg, find | `acus find 'PAT' [PATH…]`; `--block` adds code |
-| grep on a range | `acus find 'PAT' PATH:A-B` or `PATH#Sym` |
 | cat, head, tail, sed -n, Read | `acus show PATH#Sym PATH:A-B`; `acus outline PATH` |
-| ls -R, tree | `acus map [DIR…]` |
 | Glob, find -name, ls, fd, git ls-files | `acus files [PATH…] [-g GLOB]`; `--lines` adds counts |
+| ls -R, tree | `acus map [DIR…]` |
 | sed -i, perl -pi, Edit | `acus patch` (below) |
-| cargo test, npm test | `acus ctx 'CMD'`; failures plus their code |
+| cargo test, npm test | `acus run 'CMD'`; failures plus their code |
 | git status, git diff | `acus diff [REV]`; `-p` adds the changed lines |
 | git log | `acus log [-n N] [REV] [PATH…]` |
 | git blame | `acus blame PATH#Sym` |
 | who calls, what it calls | `acus follow PATH#Sym`; `--down` for callees |
+| several dependent lookups, a survey | `acus script <<'JS' … JS` |
+| a script to keep and run again | `acus script save NAME --note TEXT`; `acus script NAME key=value`; `acus script list` |
+| edit, then test or build | `acus patch --run 'CMD'` (below) |
 
-Flags beyond each default: [find](reference/find.md), [read and addresses](reference/read.md),
-[patch](reference/patch.md), [diff and log](reference/git.md), [build output](reference/ctx.md).
-`acus help <command>` lists them too, and `acus self skill --topic <topic>` prints a reference.
+```bash
+acus script <<'JS'
+const hits = await find('fn parse', {glob: '*.rs'});
+return await show(hits.head(2).map((h) => `${h.path}:${h.line}-${h.line + 20}`));
+JS
+```
+
+Use a script when the next call is known before the first one runs; when a step depends on what you read, make single calls. Saved scripts are ES modules with `description`, `params` and a default function; `save` needs `--note`. Details: [script](reference/script.md).
+
+Exact forms:
+
+| Task | Command |
+|---|---|
+| callers, callees | `acus follow src/parser.rs#Parser::parse`, add `--down` for callees |
+| read lines 40-80 | `acus show src/parser.rs:40-80` |
+| branch vs main, changed lines | `acus diff main -p` |
+| rename everywhere under src | `*** Replace All: src` block in `acus patch` |
+| delete lines 40-44 | `*** Delete Lines: src/a.rs:40-44` plus `*** Expect:` in `acus patch` |
+| edit, then run the tests | `acus patch --run 'cargo test' <<'PATCH' … PATCH` |
+| run saved script `fix-imports` | `acus script fix-imports module=./util` |
+| find, then show, then callers | one `acus script`; never chain acus commands with `&&` |
+
+```bash
+acus patch <<'PATCH'
+*** Begin Patch
+*** Replace All: src
+<<<<<<< SEARCH
+old_timeout
+=======
+timeout
+>>>>>>> REPLACE
+*** End Patch
+PATCH
+```
+
+```bash
+acus script <<'JS'
+const hits = await find('fn parse_config', {glob: '*.rs'});
+const addr = hits.head(1).map((h) => `${h.path}#parse_config`);
+return [await show(addr), await follow(addr[0])];
+JS
+```
+
+Flags beyond each default: [find](reference/find.md), [read](reference/read.md), [patch](reference/patch.md), [git](reference/git.md), [run](reference/run.md), [script](reference/script.md). `acus help <command>` lists them too.
 
 ## Patch
 
-Edit with `acus patch`; no prior read, all or nothing.
+Edit with `acus patch`; no prior read needed.
 
 The heredoc is the normal form, also after `cd DIR &&`.
 
@@ -42,70 +85,46 @@ acus patch <<'PATCH'
 =======
         let x = 2;
 >>>>>>> REPLACE
-*** Replace Symbol: src/lib.rs#Parser::reset
-+    fn reset(&mut self) {
-+        self.pos = 0;
-+    }
-*** Add File: notes.md
-+hello
 *** End Patch
 PATCH
 ```
 
-- SEARCH is the exact text without `acus show` line numbers; it must occur once, so add a line when ambiguous. A miss shows nearest lines.
+- SEARCH is the exact text without `acus show` line numbers; it must occur once; add a line when ambiguous. A miss shows nearest lines.
 - All or nothing: reports every failing block; fix all, resend once.
-- Output shows the written lines with new numbers; don't re-read them.
-- One patch holds the whole change set; never write files with `cat >`, `printf >` or Python scripts.
-- `acus patch --check` validates a large patch without writing, and `acus patch --check --diff` shows the result. `acus patch --fmt` formats the written files; add it only where the project requires it.
 - `acus patch -q`: summary only.
-- `*** Append File`, `*** Delete Lines` and `*** Move Lines` (both with `*** Expect:`), `*** Resolve Conflict`, symbol moves and `*** Replace All` are in [patch](reference/patch.md).
+- Output shows the written lines; don't re-read them.
+- One patch holds the whole change set; never write files with `cat >` or Python scripts.
+- `acus patch --check` validates a large patch without writing; `--diff` shows the result.
+- `acus patch --run 'CMD'` runs CMD after the patch applies, with `acus run`'s output and exit code; `--check` runs nothing.
+- `acus patch --fmt` formats the written files; add it only where the project requires it.
+- Symbol edits, `*** Append File`, line directives, `*** Resolve Conflict`, `*** Replace All` and `-q` are in [patch](reference/patch.md).
 
 ## Addresses
 
-An address names code without reading it first. Every command that takes a path accepts one, and addresses printed earlier can be pasted back.
-
-```bash
-acus show src/parser.rs#Parser::parse src/parser.rs:40-80 src/parser.rs:-20 README.md
-acus find 'todo' src/parser.rs:40-80 src/parser.rs#Parser
-acus blame src/parser.rs#Parser::parse
-```
+An address names code without reading it first; every command that takes a path accepts one, and addresses printed earlier can be pasted back.
 
 - `PATH:A-B` is a line range, `PATH:A` one line, `PATH:-N` the last N lines, `PATH:N-` line N to the end, and `PATH#Sym` a symbol. A unique suffix such as `#parse` is enough; an ambiguous one lists the candidates. Config keys nest with `::`: `cfg.yaml#server::port`.
-- Paths are relative to the current directory. `REV:PATH` reads a file as of a commit, branch or tag, counted from the repository root as git does.
-
-## Batch lookups
-
-Batch lookups with `acus run`.
-
-```bash
-acus run <<'EOF'
-find 'fn parse' --block
-show src/a.rs#f src/b.rs:10-30
-outline src/lib.rs
-EOF
-```
-
-`acus run` exits 0 when at least one line succeeded and lists the rest in a `failed: N of M lines` footer; it exits 2 only when every line failed or `--fail-fast` stopped at the first. Output is cut within 24k characters, and each cut names the follow-up with `--head N` (or `acus run --full`).
+- Paths are relative to the current directory, not the repository root, unless the output prints them from there. `REV:PATH` reads a file as of a commit, branch or tag, counted from the repository root as git does.
 
 ## Reading the output
 
-- Exit 0 = results, 1 = nothing found (not a failure), 2 = error with a `hint:` line naming the fix; `ctx` returns the command's own code.
-- `ctx` leads with `3rd identical failure …` after three identical failures of a command in one session. Fix the key line it repeats instead of rerunning the command.
+- Exit 0 = results, 1 = nothing found (not a failure), 2 = error with a `hint:` line naming the fix; `run` returns the command's own code.
+- Limit output with `--head N` (`find`, `show`, `outline`, `diff`) or `acus run --tail N`, `--grep RE`, `--drop RE`.
 - `… N more …` names the follow-up command; run it instead of searching again.
-- `acus show` prints a whole file over 400 lines as its outline, first 60 lines and pointers, and stops a call near 24k characters; `--full` prints everything, `--head N` stops after N printed lines, and `--cut N` clips long lines. The two caps work on `find`, `outline`, `diff` and the other read commands.
+- `run` says `3rd identical failure …` after three identical failures in one session; fix the key line it repeats instead of rerunning.
+- `acus show` on a file over 400 lines prints its outline, and output stops near 24k characters; `--full` prints everything. Details: [read](reference/read.md).
 
 ## Common mistakes
 
-- A SEARCH block that is not found: read every block the error reports, fix them all and resend once. Use `--check` first on a large patch; an error writes nothing.
 - A SEARCH block that differs from the file only in whitespace (tabs vs spaces, extra spaces or blank lines) misses: add `--fuzzy` after the exact forms fail; it still refuses two matches.
 - A pattern that starts with `-` is read as a flag: use `acus find -e '-x' PATH`.
-- Don't pipe: `--head N` (`find`, `show`, `outline`, `diff`); `acus ctx --tail/--grep/--drop`; the guard rewrites it anyway.
-- `-A` and `-C` print grep-style context; `--block` prints the enclosing symbol, which is usually what you want.
+- Pipes: `| head -N` after `find`, `show`, `outline` or `diff` is `--head N`; `acus run --tail`, `--grep` and `--drop` replace `| tail` and `| grep`.
+- `-A` and `-C` print grep-style context; `--block` prints the enclosing symbol, usually what you want.
 - `PATH:A:B` is not a range and fails; the range is `PATH:A-B`.
-- Paths are relative to the current directory, not the repository root, unless the output prints them from there.
 - `*** Add File` refuses an existing file; use `*** Update File`, `*** Append File` or `*** Replace All`.
 - Unquoted globs are expanded by the shell: write `-g '*.ts'`, and `-g '!dist'` to exclude.
 - Patterns are Rust regex, so `foo(` fails; use `-F` for literal text.
+- A script call without `await` returns a promise, not the result: write `await find(...)`.
 - Symbols exist for Rust, Swift, TS/JS, Svelte, Python, Shell, C, CSS, SCSS, HTML, XML/plist, Markdown and TOML/JSON/YAML keys; on other files use `find` and `show PATH:A-B`.
 
-More: `acus self skill --full`, `--topic <topic>`.
+This covers everyday use; invoke the acus skill only for a flag or form not shown here. More: `acus self skill --full`, `--topic <topic>`.

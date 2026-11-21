@@ -3,17 +3,17 @@ source: acus/crates/acus-guard/src/tests/corpus.rs
 expression: out
 ---
 skipped 0 cases (grammar not built)
-0001 rewrite build-pipe ⇒ acus ctx 'pytest -q' --tail 5
-0002 rewrite acus-pipe ⇒ cd C:\repo && acus find 'alpha|beta|__new__|def fn_c' tests/conftest.py tests/unit/test_mod_a.py --head 20; acus ctx 'PYTHONPATH="../pkg_b" uv run pytest tests/unit -q' --tail 3
+0001 rewrite build-pipe ⇒ acus run 'pytest -q' --tail 5
+0002 rewrite acus-pipe ⇒ cd C:\repo && acus find 'alpha|beta|__new__|def fn_c' tests/conftest.py tests/unit/test_mod_a.py --head 20; acus run 'PYTHONPATH="../pkg_b" uv run pytest tests/unit -q' --tail 3
 0003 pass - ⇒
-0004 rewrite build-pipe ⇒ acus ctx 'pnpm run check' --grep '(?i)alpha|COMPLETED|svelte-check found' --max-output 20
-0005 rewrite git-diff ⇒ cd C:\repo && acus diff; git diff package.json pnpm-workspace.yaml; acus ctx 'pnpm run lint' --tail 15; acus ctx 'pnpm run check' --tail 15; acus ctx 'pnpm run build' --tail 8
-0006 rewrite ctx-pipe ⇒ acus ctx 'cargo test --lib -q' --tail 15; acus ctx 'cargo clippy --all-targets -q' --tail 20
+0004 rewrite build-pipe ⇒ acus run 'pnpm run check' --grep '(?i)alpha|COMPLETED|svelte-check found' --max-output 20
+0005 rewrite git-diff ⇒ cd C:\repo && acus diff; git diff package.json pnpm-workspace.yaml; acus run 'pnpm run lint' --tail 15; acus run 'pnpm run check' --tail 15; acus run 'pnpm run build' --tail 8
+0006 rewrite ctx-pipe ⇒ acus run 'cargo test --lib -q' --tail 15; acus run 'cargo clippy --all-targets -q' --tail 20
 0007 pass - ⇒
-0008 rewrite build-pipe ⇒ npx prettier --write src/lib/features/mod_a 2>&1 | grep -v unchanged | tail; acus ctx 'pnpm run lint' --tail 20; acus ctx 'pnpm run check' --tail 20
-0009 rewrite build-pipe ⇒ acus ctx 'pnpm run test' --tail 12; acus ctx 'pnpm run check' --tail 8; npx eslint . 2>&1 | tail -8; acus ctx 'pnpm run build' --tail 6; git status --short | grep -E 'package|pnpm'
+0008 rewrite build-pipe ⇒ npx prettier --write src/lib/features/mod_a 2>&1 | grep -v unchanged | tail; acus run 'pnpm run lint' --tail 20; acus run 'pnpm run check' --tail 20
+0009 rewrite build-pipe ⇒ acus run 'pnpm run test' --tail 12; acus run 'pnpm run check' --tail 8; npx eslint . 2>&1 | tail -8; acus run 'pnpm run build' --tail 6; git status --short | grep -E 'package|pnpm'
 0010 pass - ⇒
-0011 rewrite build-pipe ⇒ cd C:\repo && acus ctx 'uv run --no-sync pytest pkg_a/api/mod_b pkg_a/api/mod_c -q' --tail 25; git status --short | grep uv.lock; acus diff
+0011 rewrite build-pipe ⇒ cd C:\repo && acus run 'uv run --no-sync pytest pkg_a/api/mod_b pkg_a/api/mod_c -q' --tail 25; git status --short | grep uv.lock; acus diff
 0012 rewrite grep ⇒ acus find 'foo' 'src'
 0013 rewrite patch-quiet ⇒ cd C:\Users\user/Temp/an && printf '%s\n' '<<<<<<< SEARCH' "('shell', 'shell_command', 'exec_command')" '=======' "('shell', 'shell_command', 'exec_command', 'exec')" '>>>>>>> REPLACE' | acus patch -q -f /dev/stdin 2>&1; grep -c "'exec')" an.py; python an.py
 0014 pass - ⇒
@@ -21,7 +21,7 @@ skipped 0 cases (grammar not built)
 0016 rewrite grep ⇒ acus outline src/lib/mod_a --depth 1; acus find '^#' 'NOTES.md' --max-hits 80
 0017 pass - ⇒
 0018 rewrite grep ⇒ acus find '^#|ID_A|ID_B|ID_C|ID_D|ID_E|ID_F|ID_G' 'NOTES.md' --max-hits 80; acus show 'src/lib/components/Toast.svelte'; ls src/lib/utils src/lib/actions; cat vitest.config.* vite.config.* 2>/dev/null | head -60
-0019 rewrite ctx-pipe ⇒ acus ctx 'pnpm exec vitest run --project component src/lib/components/Select.test.ts src/lib/components/ActionButton.test.ts src/lib/components/data-table' --tail 80; grep -n "test:component" package.json
+0019 rewrite ctx-pipe ⇒ acus run 'pnpm exec vitest run --project component src/lib/components/Select.test.ts src/lib/components/ActionButton.test.ts src/lib/components/data-table' --tail 80; grep -n "test:component" package.json
 0020 pass - ⇒
 0021 deny grep ⇒
 0022 pass - ⇒
@@ -121,20 +121,20 @@ skipped 0 cases (grammar not built)
 0116 rewrite acus-pipe ⇒ cd C:\repo/pons && acus find 'initialize\(true\)|initialize\(false\)' src -B3 -A12 --head 90; acus find 'fn flood|^fn send|^fn update' examples/mock_agent.rs --block; acus show src/engine/route.rs:1-36
 0117 rewrite acus-pipe ⇒ acus find 'fn a_rate_limit_line_is_forwarded' pons/tests --block --head 60; acus show core/src/paths.rs#state_dir 2>/dev/null || acus find 'fn state_dir' core/src --block
 0118 rewrite acus-pipe ⇒ acus outline core/src/exit.rs core/src/format.rs core/src/hint.rs core/src/paths.rs --head 120; acus show acus/CHANGELOG.md:1-30; acus outline acus/crates/acus-cli/tests/cli/ctx.rs --depth 0 >/dev/null; acus show acus/crates/acus-cli/src/cmd_skill.rs:215-240
-0119 rewrite build-pipe ⇒ acus ctx 'pnpm check' --tail 30; echo "check exit=$?"
-0120 rewrite build-pipe ⇒ uv run ruff format . 2>&1 | tail -3; uv run ruff check . 2>&1 | tail -40; acus ctx 'uv run pytest -q' --tail 40
-0121 rewrite build-pipe ⇒ export KEY_A="$KEY_B" KEY_C=false && acus patch --file 'C:\Users\user\Temp\p2.patch' -q && acus patch --file 'C:\Users\user\Temp\p3.patch' -q && uv run ruff format . | tail -1; uv run ruff check . | tail -30; acus ctx 'uv run pytest -q' --tail 30
-0122 rewrite build-pipe ⇒ acus ctx 'cargo test -p census --test cli limits_and_usage_by_without_data_exit_one' --tail 12; echo "exit $?"; acus ctx 'cargo test -p census --test cli -- --test-threads=1' --grep '^test |test result' --max-output 40
-0123 rewrite build-pipe ⇒ cd C:\repo/.worktrees/pons-bench-base && export CARGO_TARGET_DIR=C:\repo/.worktrees/pons-bench-base/target && acus ctx 'cargo build --profile release-unwind -p pons --examples' --tail 1; for i in 1 2 3; do cargo test --profile release-unwind -p pons --test proxy -- --ignored --nocapture proxy_line_cost 2>&1 | grep -E "proxy,"; done; unset CARGO_TARGET_DIR; cd ../.. && acus ctx 'cargo build --profile release-unwind -p pons --examples' --tail 1; for i in 1 2 3; do cargo test --profile release-unwind -p pons --test proxy -- --ignored --nocapture proxy_line_cost 2>&1 | grep -E "proxy,"; done
-0124 rewrite build-pipe ⇒ timeout 580 bash -c 'until cargo check -p pons --all-targets -q >/dev/null 2>&1; do sleep 45; done'; echo "wait_exit=$?"; acus ctx 'cargo check -p pons --all-targets -q' --max-output 5
-0125 rewrite build-pipe ⇒ acus ctx 'cargo test -p census --test cli --test hook --no-run' --tail 15; echo "exit=$?"
-0126 rewrite build-pipe ⇒ cargo clean -p census 2>&1 | tail -n 3; acus ctx 'cargo test -p census --no-run' --tail 12; echo "exit=$?"
-0127 rewrite build-pipe ⇒ acus ctx 'cargo build -p pons' --tail 2; echo "== human"; target/debug/pons.exe self doctor --human; echo "== exit $?"; echo "== agent"; target/debug/pons.exe self doctor --agent; echo "== exit $?"; echo "== flag on self"; target/debug/pons.exe self --json doctor | head -c 200; echo; echo "== exit $?"
-0128 rewrite build-pipe ⇒ acus ctx 'cargo test -p census' --tail 150; echo "exit=$?"
-0129 rewrite build-pipe ⇒ acus ctx 'cargo build -p census' --tail 2; T=$(cygpath -w "$(mktemp -d)"); B=C:\repo/target/debug/census.exe; run() { env HOME="$T" USERPROFILE="$T" APPDATA="$T\\config" XDG_CONFIG_HOME="$T\\config" LOCALAPPDATA="$T\\state" XDG_STATE_HOME="$T\\state" CLAUDE_CONFIG_DIR="$T\\claude" "$B" "$@"; }; run self setup >/dev/null; echo "setup_exit=$?"; echo "--- human"; run self doctor --human; echo "human_exit=$?"; echo "--- agent"; run self doctor --agent; echo "agent_exit=$?"; echo "T=$T"
-0130 rewrite ctx-pipe ⇒ acus ctx 'cargo test -p acus-guard log::' --tail 40
-0131 rewrite ctx-pipe ⇒ acus ctx 'cargo test -p census -- daily guard_log_reads budget_limits_json projection' --raw --grep '^test |test result|panicked|assert' --max-output 60
-0132 rewrite ctx-pipe ⇒ acus ctx 'cargo test -p census --no-fail-fast' --grep 'test result|Running|panicked' --raw --tail 60
+0119 rewrite build-pipe ⇒ acus run 'pnpm check' --tail 30; echo "check exit=$?"
+0120 rewrite build-pipe ⇒ uv run ruff format . 2>&1 | tail -3; uv run ruff check . 2>&1 | tail -40; acus run 'uv run pytest -q' --tail 40
+0121 rewrite build-pipe ⇒ export KEY_A="$KEY_B" KEY_C=false && acus patch --file 'C:\Users\user\Temp\p2.patch' -q && acus patch --file 'C:\Users\user\Temp\p3.patch' -q && uv run ruff format . | tail -1; uv run ruff check . | tail -30; acus run 'uv run pytest -q' --tail 30
+0122 rewrite build-pipe ⇒ acus run 'cargo test -p census --test cli limits_and_usage_by_without_data_exit_one' --tail 12; echo "exit $?"; acus run 'cargo test -p census --test cli -- --test-threads=1' --grep '^test |test result' --max-output 40
+0123 rewrite build-pipe ⇒ cd C:\repo/.worktrees/pons-bench-base && export CARGO_TARGET_DIR=C:\repo/.worktrees/pons-bench-base/target && acus run 'cargo build --profile release-unwind -p pons --examples' --tail 1; for i in 1 2 3; do cargo test --profile release-unwind -p pons --test proxy -- --ignored --nocapture proxy_line_cost 2>&1 | grep -E "proxy,"; done; unset CARGO_TARGET_DIR; cd ../.. && acus run 'cargo build --profile release-unwind -p pons --examples' --tail 1; for i in 1 2 3; do cargo test --profile release-unwind -p pons --test proxy -- --ignored --nocapture proxy_line_cost 2>&1 | grep -E "proxy,"; done
+0124 rewrite build-pipe ⇒ timeout 580 bash -c 'until cargo check -p pons --all-targets -q >/dev/null 2>&1; do sleep 45; done'; echo "wait_exit=$?"; acus run 'cargo check -p pons --all-targets -q' --max-output 5
+0125 rewrite build-pipe ⇒ acus run 'cargo test -p census --test cli --test hook --no-run' --tail 15; echo "exit=$?"
+0126 rewrite build-pipe ⇒ cargo clean -p census 2>&1 | tail -n 3; acus run 'cargo test -p census --no-run' --tail 12; echo "exit=$?"
+0127 rewrite build-pipe ⇒ acus run 'cargo build -p pons' --tail 2; echo "== human"; target/debug/pons.exe self doctor --human; echo "== exit $?"; echo "== agent"; target/debug/pons.exe self doctor --agent; echo "== exit $?"; echo "== flag on self"; target/debug/pons.exe self --json doctor | head -c 200; echo; echo "== exit $?"
+0128 rewrite build-pipe ⇒ acus run 'cargo test -p census' --tail 150; echo "exit=$?"
+0129 rewrite build-pipe ⇒ acus run 'cargo build -p census' --tail 2; T=$(cygpath -w "$(mktemp -d)"); B=C:\repo/target/debug/census.exe; run() { env HOME="$T" USERPROFILE="$T" APPDATA="$T\\config" XDG_CONFIG_HOME="$T\\config" LOCALAPPDATA="$T\\state" XDG_STATE_HOME="$T\\state" CLAUDE_CONFIG_DIR="$T\\claude" "$B" "$@"; }; run self setup >/dev/null; echo "setup_exit=$?"; echo "--- human"; run self doctor --human; echo "human_exit=$?"; echo "--- agent"; run self doctor --agent; echo "agent_exit=$?"; echo "T=$T"
+0130 rewrite ctx-pipe ⇒ acus run 'cargo test -p acus-guard log::' --tail 40
+0131 rewrite ctx-pipe ⇒ acus run 'cargo test -p census -- daily guard_log_reads budget_limits_json projection' --raw --grep '^test |test result|panicked|assert' --max-output 60
+0132 rewrite ctx-pipe ⇒ acus run 'cargo test -p census --no-fail-fast' --grep 'test result|Running|panicked' --raw --tail 60
 0133 rewrite git-diff ⇒ cd C:\repo && acus outline src --depth 2 2>/dev/null | head -80; acus files -g '*mod_a.py'; acus diff
 0134 rewrite git-diff ⇒ cd C:\repo && acus diff HEAD tests/unit/test_a.py; git diff tests/unit/test_a.py | head -20; git branch -a | head; git remote -v | head -1; ls -d .venv venv 2>/dev/null; git config core.autocrlf
 0135 rewrite git-diff ⇒ cd C:\repo && T="C:\Users\user/AppData/Local/Temp/dir_a" && .venv/Scripts/python.exe "$T/check_a.py" "$T/after.npz" > "$T/after.log" 2>&1; echo "build_exit=$?"; tail -1 "$T/after.log"; .venv/Scripts/python.exe "$T/check_a.py" --compare "$T/baseline.npz" "$T/after.npz"; echo "compare_exit=$?"; .venv/Scripts/ruff.exe check pkg_a tests/unit/test_a.py tests/unit/test_b.py; echo "ruff_check_exit=$?"; .venv/Scripts/ruff.exe format --check pkg_a tests/unit/test_a.py tests/unit/test_b.py; echo "ruff_format_exit=$?"; acus diff

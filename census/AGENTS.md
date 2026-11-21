@@ -14,7 +14,8 @@ at the report commands for usage history. `census self` installs the skill and w
 Paths are relative to `census/`. census depends on `capsa-core` only, never on an `acus-*` crate.
 
 - `src/main.rs`: the clap CLI. One `src/cmd_<name>.rs` per command: `cmd_usage.rs` (`census usage`,
-  including the `--guard` reader for acus's `guard.jsonl` and `--by`), `cmd_context.rs`,
+  including the `--guard` and `--scripts` readers for acus's `guard.jsonl` and `script.jsonl`, and
+  `--by`), `cmd_context.rs`,
   `cmd_session.rs`, `cmd_statusline.rs`, `cmd_prune.rs`, `cmd_limits.rs` (the plan and budget views),
   `cmd_hook.rs` (stdin cap, 150 ms limits deadline, printing), `cmd_self.rs` (`self
   skill|setup|config|doctor|update|uninstall`; update and uninstall need feature `cmd-update`, on by

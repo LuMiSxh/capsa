@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub commands: Commands,
-    pub ctx: Ctx,
+    pub run: Run,
     pub patch: Patch,
+    pub script: Script,
     pub guard: Guard,
     #[serde(skip)]
     pub path: PathBuf,
@@ -23,16 +24,16 @@ pub struct Config {
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct Commands {
-    /// Command names that refuse to run, e.g. `["ctx"]`.
+    /// Command names that refuse to run, e.g. `["run"]`.
     pub disabled: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
-pub struct Ctx {
-    /// Extra regexes; `acus ctx` drops output lines matching any of them.
+pub struct Run {
+    /// Extra regexes; `acus run` drops output lines matching any of them.
     pub drop: Vec<String>,
-    /// Command `acus ctx` runs when none is given; default: detected from the project files.
+    /// Command `acus run` runs when none is given; default: detected from the project files.
     pub command: Option<String>,
 }
 
@@ -43,6 +44,16 @@ pub struct Patch {
     pub fmt: bool,
     /// Match SEARCH blocks that differ only in whitespace, as if `--fuzzy` was given.
     pub fuzzy: bool,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct Script {
+    /// MCP servers from the Claude Code settings that scripts may import as `mcp:NAME`; none by
+    /// default.
+    pub mcp: Vec<String>,
+    /// Seconds a script may run; default 120.
+    pub timeout: Option<u64>,
 }
 
 #[derive(Deserialize)]

@@ -1,0 +1,16 @@
+[package]
+name = "acus-mcp"
+description = "Minimal MCP client for acus scripts: a stdio server, tool listing and tool calls."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+capsa-core = { workspace = true, features = ["process"] }
+serde_json.workspace = true
+thiserror.workspace = true

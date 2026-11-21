@@ -8,13 +8,11 @@ AGENTS.md before working in its directory.
 
 | Directory | Tool | Purpose |
 |-----------|------|---------|
-| `acus/`   | `acus`  | Code search, outline, patch, build output (`ctx`) and the PreToolUse guard |
+| `acus/`   | `acus`  | Code search, outline, patch, build output (`run`) and the PreToolUse guard |
 | `pons/`   | `pons`  | ACP proxy between Zed and the Claude ACP adapter |
 | `census/` | `census` | Usage analytics, limits and context awareness for the main agent |
 | `vicarius/` | `vicarius` | Local proxy that routes `-ds` subagents to DeepSeek while credit lasts |
 | `core/`   | `capsa-core` | Shared library. Modules: `render`, `cli` (feature `clap`), `log`, `skill`, `claude_settings`, `update` (feature `update`), `exit`, `format`, `hint`, `paths`, `pkg`, `which`, `census_snapshot` |
-
-`PLAN.md` holds the current architecture and the open questions.
 
 ## Rules
 
@@ -22,7 +20,8 @@ AGENTS.md before working in its directory.
   tool's crates. `core` depends on no workspace crate.
 - **Shared code moves to `core` when a second tool needs it**, not earlier.
   `core` has no heavy default dependencies; tokio and similar sit behind
-  features, so `acus` stays synchronous and fast to start.
+  features. In acus, async code stays in `acus-script` and off the
+  `acus hook` path, which stays synchronous and fast to start.
 - **CLI shape, every tool:** commands are `<tool> <action>`; actions about the
   tool itself are `<tool> self <action>`. `self` holds installation and
   health: `update` and `uninstall` always; `doctor` and `setup` where a tool
@@ -151,7 +150,7 @@ and the [Agent Skills spec](https://agentskills.io/specification).
   when to use it, trigger words first, at most 1024 characters. All "when to use" text lives
   there, not in the body.
 - **Budget:** every line costs tokens in every session that triggers it. SKILL.md stays under 500
-  lines and about 5k tokens; `CORE.md` stays under 300 words (a test enforces it). Cut what an agent
+  lines and about 5k tokens; `CORE.md` stays under 400 words (a test enforces it). Cut what an agent
   already knows; keep what changes what it does.
 - **Shape of a CLI skill:** a task → command table, then one worked example for each command that
   is easy to get wrong, then "Common mistakes" with the reason for each. One default per task,
@@ -180,7 +179,7 @@ evals: it skips user skills and never reads OAuth.
 
 ## Commands
 
-- Run builds and tests through `acus ctx 'COMMAND'`.
+- Run builds and tests through `acus run 'COMMAND'`.
 - Full check, as in CI: `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
   `cargo test --workspace --all-features`.

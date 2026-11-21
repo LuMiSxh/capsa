@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Turns the filters of a pipe into the `acus ctx` flags that replace them.
+//! Turns the filters of a pipe into the `acus run` flags that replace them.
 
 use super::*;
 
-/// Returns the `acus ctx` flag that does what a `tail`, `head`, `grep` or PowerShell `Select-*`
-/// filter did, or `None` for options ctx has no equivalent of (`grep -v`, `tail -n +5`).
+/// Returns the `acus run` flag that does what a `tail`, `head`, `grep` or PowerShell `Select-*`
+/// filter did, or `None` for options run has no equivalent of (`grep -v`, `tail -n +5`).
 /// Treats cmdlet switches as case-insensitive: `filter` is lowercased, `args` keep their case.
 pub(crate) fn ctx_flag(filter: &str, args: &[&str]) -> Option<(String, String)> {
     match filter {
@@ -150,8 +150,8 @@ pub(crate) fn grep_flag_text(
     Some((flag, what.to_owned()))
 }
 
-/// Returns the `acus ctx` flags for a chain of filters, or `None` if one has no flag or a flag
-/// repeats. A `sort` or `uniq` has none: ctx only drops adjacent repeats, so such a chain runs as
+/// Returns the `acus run` flags for a chain of filters, or `None` if one has no flag or a flag
+/// repeats. A `sort` or `uniq` has none: run only drops adjacent repeats, so such a chain runs as
 /// written.
 pub(crate) fn ctx_flags(filters: &[&str]) -> Option<Vec<String>> {
     let mut flags: Vec<String> = Vec::new();
@@ -165,7 +165,7 @@ pub(crate) fn ctx_flags(filters: &[&str]) -> Option<Vec<String>> {
         }
         let (name, args) = head(f)?;
         let name = name.to_lowercase();
-        // A line count cuts what the flags before it kept, so ctx can only apply it last.
+        // A line count cuts what the flags before it kept, so run can only apply it last.
         if matches!(name.as_str(), "head" | "tail" | "select-object" | "select")
             && i + 1 != filters.len()
         {
@@ -177,7 +177,7 @@ pub(crate) fn ctx_flags(filters: &[&str]) -> Option<Vec<String>> {
         if first != "--drop" && flags.iter().any(|g| g.split(' ').next() == Some(first)) {
             return None;
         }
-        // ctx applies `--drop` before `--grep`, so a context window taken before a `grep -v` would
+        // run applies `--drop` before `--grep`, so a context window taken before a `grep -v` would
         // cover other lines than the pipe does: that order is refused, the reverse one folds.
         if first == "--drop" && windowed {
             return None;
@@ -201,8 +201,8 @@ pub(crate) fn filter_name(seg: &str) -> Option<String> {
     head(seg).map(|(h, _)| h.to_lowercase())
 }
 
-/// Quotes a command as the one argument of `acus ctx`, for the suggestion text: single-quoted, or
-/// double-quoted when it holds `$`. `rewrite_build` never rewrites a `$` command, since ctx's
+/// Quotes a command as the one argument of `acus run`, for the suggestion text: single-quoted, or
+/// double-quoted when it holds `$`. `rewrite_build` never rewrites a `$` command, since run's
 /// shell would expand it a second time. Returns `None` where neither is safe: a double quote,
 /// backslash
 /// or backtick in it, or a `$` in a command that also has a single quote.
@@ -222,11 +222,11 @@ pub(crate) fn counts(args: &[&str]) -> bool {
         .any(|o| matches!(o, GrepOpt::Long("count", _) | GrepOpt::Short('c', _)))
 }
 
-/// Returns the command text that `acus ctx 'TEXT' …` runs: its first word that is not a flag,
+/// Returns the command text that `acus run 'TEXT' …` runs: its first word that is not a flag,
 /// unquoted.
 pub(crate) fn ctx_command(ctx: &str) -> Option<&str> {
     let words = split_words(ctx);
-    let at = words.iter().position(|w| *w == "ctx")?;
+    let at = words.iter().position(|w| *w == "run")?;
     words[at + 1..]
         .iter()
         .find(|w| !w.starts_with('-'))
@@ -234,7 +234,7 @@ pub(crate) fn ctx_command(ctx: &str) -> Option<&str> {
         .map(unquote)
 }
 
-/// Reports whether the ctx command already has a line count (`--tail` or `--max-output`).
+/// Reports whether the run command already has a line count (`--tail` or `--max-output`).
 pub(crate) fn has_line_count(ctx: &str) -> bool {
     split_words(ctx)
         .iter()
@@ -252,16 +252,16 @@ pub(crate) fn split_cut<'a>(filters: &'a [&'a str]) -> (&'a [&'a str], String) {
     }
 }
 
-/// Returns the refusal for a pipe inside the quoted ctx command, as in
-/// `acus ctx 'build | tail -40' | head -60`: the pipe goes and its filter becomes a ctx flag.
+/// Returns the refusal for a pipe inside the quoted run command, as in
+/// `acus run 'build | tail -40' | head -60`: the pipe goes and its filter becomes a run flag.
 pub(crate) fn inner_pipe_reason(inner: &str, filter: &str) -> String {
     let at = unquoted_pipe(inner).unwrap_or(inner.len());
     let build = inner[..at].trim().trim_end_matches("2>&1").trim_end();
     let stage = inner[at..].trim_start_matches('|').trim();
     let (send, how) = if unquoted_pipe(stage).is_some() {
         (
-            "acus ctx 'COMMAND'".to_owned(),
-            "use acus ctx's own flags, `--tail N` or `--grep RE`".to_owned(),
+            "acus run 'COMMAND'".to_owned(),
+            "use acus run's own flags, `--tail N` or `--grep RE`".to_owned(),
         )
     } else {
         let flag = (!stage.contains(['<', '>']))
@@ -273,16 +273,16 @@ pub(crate) fn inner_pipe_reason(inner: &str, filter: &str) -> String {
         let arg = ctx_arg(build).unwrap_or_else(|| "'COMMAND'".to_owned());
         match flag {
             Some((flag, what)) => (
-                format!("acus ctx {arg} {flag}"),
+                format!("acus run {arg} {flag}"),
                 format!("use the flag `{flag}`, which {what}"),
             ),
             None => (
-                format!("acus ctx {arg}"),
-                "use acus ctx's own flags, `--tail N` or `--grep RE`".to_owned(),
+                format!("acus run {arg}"),
+                "use acus run's own flags, `--tail N` or `--grep RE`".to_owned(),
             ),
         }
     };
     format!(
-        "Use `{send}` instead of piping acus ctx into {filter}: drop the pipe `| {stage}` inside the quoted command and {how}. {ESCAPE}\nSend instead: {send}"
+        "Use `{send}` instead of piping acus run into {filter}: drop the pipe `| {stage}` inside the quoted command and {how}. {ESCAPE}\nSend instead: {send}"
     )
 }
