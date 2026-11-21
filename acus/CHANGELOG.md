@@ -30,8 +30,9 @@
   that long before). A script without `await` on a function now gets a promise, not a value.
   At the script deadline, calls not yet started are dropped and each `run()` timeout is cut to
   the time left, so its command is killed and the script exits 2 within about 2 s. A call the
-  script never awaits still finishes before the script ends. No tokio: plain threads and a
-  channel, so the `acus hook` path is unchanged.
+  script never awaits still finishes before the script ends. A script that finishes after the
+  deadline always exits 2, even when a late call result let it complete. No tokio: plain threads
+  and a channel, so the `acus hook` path is unchanged.
 - `acus script save NAME --note TEXT [--global]` saves a script (an ES module with `description`,
   `params` and a default function) as an immutable version; `acus script NAME[@V] key=value…`
   runs it, and `list`, `show` and `log` report on it. Repo scripts live in `.acus/scripts/` with

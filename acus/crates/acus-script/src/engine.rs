@@ -82,6 +82,11 @@ pub(crate) fn execute<H: Host>(
                 finished = Err(Error::WouldBlock);
             }
         }
+        // A result read after the deadline, by a late thread, never lets the program succeed.
+        if finished.is_ok() && Instant::now() > sandbox.deadline {
+            sandbox.expire(&calls);
+            finished = Err(Error::WouldBlock);
+        }
         finished.map_err(|e| sandbox.fail(&ctx, e, offset, limits))
     })?;
     // The document the prelude's `__finish` builds: `prints`, `defined` and `result`.
