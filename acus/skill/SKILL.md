@@ -127,4 +127,4 @@ An address names code without reading it first; every command that takes a path 
 - A script call without `await` returns a promise, not the result: write `await find(...)`.
 - Symbols exist for Rust, Swift, TS/JS, Svelte, Python, Shell, C, CSS, SCSS, HTML, XML/plist, Markdown and TOML/JSON/YAML keys; on other files use `find` and `show PATH:A-B`.
 
-More: `acus self skill --full`, `--topic <topic>`.
+This covers everyday use; invoke the acus skill only for a flag or form not shown here. More: `acus self skill --full`, `--topic <topic>`.

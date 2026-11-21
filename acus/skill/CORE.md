@@ -44,4 +44,4 @@ PATCH
 - One patch holds the whole change set; never write files with `cat >` or Python scripts.
 - `acus patch -q`: summary only.
 
-More: `acus self skill --full`, `--topic <topic>`.
+This covers everyday use; invoke the acus skill only for a flag or form not shown here. More: `acus self skill --full`, `--topic <topic>`.
