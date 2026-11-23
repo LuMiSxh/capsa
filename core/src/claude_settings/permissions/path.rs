@@ -41,6 +41,9 @@ impl Place {
 /// `..`, and, when it exists or its parent does, the path with symlinks resolved. A rule that
 /// names either one applies.
 pub(super) fn targets(path: &Path, cwd: &Path) -> Vec<String> {
+    // Start from the canonical working directory, as `Place` does, so a short or aliased
+    // cwd (`C:\Users\RUNNER~1\...`) yields the same strings the rule prefixes use.
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     let mut lexical = PathBuf::new();
     for part in cwd.join(path).components() {
         match part {
