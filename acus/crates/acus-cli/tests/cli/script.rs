@@ -239,7 +239,11 @@ fn script_read_refuses_dotdot_outside_symlinks_and_a_missing_repository() {
         (&repo, "ok.txt", None),
         (&repo, "../secret.txt", Some("is outside the allowed roots")),
         (&repo, "link.txt", Some("is outside the allowed roots")),
-        (&plain, "ok.txt", Some("read() needs a git repository")),
+        (
+            &plain,
+            "../repo/ok.txt",
+            Some("is outside the allowed roots"),
+        ),
     ];
     for (dir, path, refusal) in cases {
         let (code, out, err) = acus_in(

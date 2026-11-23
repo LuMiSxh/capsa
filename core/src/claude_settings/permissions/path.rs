@@ -42,10 +42,15 @@ impl Place {
 /// names either one applies.
 pub(super) fn targets(path: &Path, cwd: &Path) -> Vec<String> {
     // Start from the canonical working directory, as `Place` does, so a short or aliased
-    // cwd (`C:\Users\RUNNER~1\...`) yields the same strings the rule prefixes use.
-    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    // cwd (`C:\Users\RUNNER~1\...`) yields the same strings the rule prefixes use. A path
+    // given under the working directory as spelled is rebased onto the canonical one.
+    let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let path = match path.strip_prefix(cwd) {
+        Ok(rest) if path.is_absolute() => canonical.join(rest),
+        _ => canonical.join(path),
+    };
     let mut lexical = PathBuf::new();
-    for part in cwd.join(path).components() {
+    for part in path.components() {
         match part {
             Component::CurDir => {}
             Component::ParentDir => {

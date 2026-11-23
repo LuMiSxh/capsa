@@ -30,6 +30,37 @@ impl Sandbox {
     }
 }
 
+/// Makes `link` another name for `target`: a symlink, or a junction on Windows.
+fn alias(target: &Path, link: &Path) -> bool {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, link).is_ok();
+    #[cfg(windows)]
+    return std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .is_ok_and(|o| o.status.success());
+}
+
+#[test]
+fn a_working_directory_under_another_name_still_counts_as_local() {
+    let sandbox = Sandbox::new("{}");
+    let link = sandbox.dir.path().join("alias");
+    if !alias(&sandbox.root(), &link) {
+        return;
+    }
+    let p = Permissions::with_files(Vec::new(), link.clone(), link.clone(), None)
+        .with_mode(Some(Mode::AcceptEdits))
+        .with_strict(true);
+    for file in [link.join("new.txt"), link.join("src/deep/new.txt")] {
+        assert_eq!(message(p.check_edit(&file)), None, "{}", file.display());
+    }
+    let outside = sandbox.dir.path().join("outside.txt");
+    assert!(p.check_edit(&outside).is_err());
+    assert!(p.check_edit(&link.join("../outside.txt")).is_err());
+}
+
 fn message(result: Result<(), Refusal>) -> Option<String> {
     result.err().map(|e| e.message)
 }
