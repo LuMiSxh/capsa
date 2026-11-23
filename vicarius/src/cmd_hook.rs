@@ -60,6 +60,20 @@ fn read_input() -> Option<String> {
     String::from_utf8(buf).ok()
 }
 
+/// Returns the time the hook waits for one request. Debug builds, which the tests use, read
+/// `VICARIUS_HOOK_TIMEOUT_MS` so a loaded run can wait for a healthy answer; a release build has no
+/// override and keeps `TIMEOUT`.
+fn request_timeout() -> Duration {
+    #[cfg(debug_assertions)]
+    if let Some(ms) = std::env::var("VICARIUS_HOOK_TIMEOUT_MS")
+        .ok()
+        .and_then(|ms| ms.parse::<u64>().ok())
+    {
+        return Duration::from_millis(ms);
+    }
+    TIMEOUT
+}
+
 /// Returns the context line for a `SessionStart` input; `None` for another event or any failure.
 ///
 /// A service that answers but has not finished its first sync is polled until it has, or until
@@ -72,7 +86,7 @@ fn context_line(input: &str) -> Option<String> {
     let config = Config::load_from(&Config::path()).ok()?;
     let clock = SystemClock(Instant::now());
     let status = settled_status(
-        || status_client::fetch(config.port, TIMEOUT).map(|fetched| fetched.status),
+        || status_client::fetch(config.port, request_timeout()).map(|fetched| fetched.status),
         &clock,
         POLL,
         DEADLINE,

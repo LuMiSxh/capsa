@@ -5,10 +5,10 @@
 
 **Routes Claude Code subagents to DeepSeek while credit lasts.** Claude traffic passes through unchanged on the subscription login; `deepseek-*` models go to DeepSeek's Anthropic-compatible API.
 
-[![Rust 1.99+](https://img.shields.io/badge/Rust-1.99%2B-a6d935?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
+[![Rust 1.100+](https://img.shields.io/badge/Rust-1.100%2B-a6d935?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
 ![Platform](https://img.shields.io/badge/platform-macOS-a6d935?style=flat-square&labelColor=23252a)
 [![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-a6d935?style=flat-square&labelColor=23252a)](../LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-a6d935?style=flat-square&labelColor=23252a)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.1-a6d935?style=flat-square&labelColor=23252a)](CHANGELOG.md)
 
 **[capsa](../README.md)** · [Changelog](CHANGELOG.md)
 

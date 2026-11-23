@@ -14,9 +14,10 @@ const CONFIG_FILE: &str = if cfg!(target_os = "macos") {
     "config/vicarius/config.toml"
 };
 
-/// Well above the hook's own deadline and the first process spawn of a test run (about 200 ms on
-/// macOS), well below the 2 s a silent service holds a connection.
-const HOOK_LIMIT: Duration = Duration::from_secs(1);
+/// The most a hook run may take before a test calls it hung. The hook gives up on a silent service
+/// within its own 50 ms request budget, so this bound only absorbs process startup on a loaded
+/// machine, which has measured 1.7 s. A hang holds the run past this bound (see `serve_silent`).
+const HOOK_LIMIT: Duration = Duration::from_secs(10);
 
 const SENIOR: &str = r#"[{ from = "senior-worker", model = "deepseek-flash" }]"#;
 
@@ -51,12 +52,26 @@ fn vicarius(home: &Path, args: &[&str]) -> Output {
     base(home).args(args).output().expect("start vicarius")
 }
 
+fn vicarius_with_input(home: &Path, args: &[&str], input: &[u8]) -> Output {
+    run_with_input(&mut base(home), args, input)
+}
+
+/// Runs the hook for a test whose service must answer. The 50 ms release budget is too tight on a
+/// loaded machine, so the test widens it; the silent-service tests keep the release budget.
+fn hook_with_healthy_service(home: &Path) -> Output {
+    run_with_input(
+        base(home).env("VICARIUS_HOOK_TIMEOUT_MS", "2000"),
+        &["hook"],
+        SESSION_START.as_bytes(),
+    )
+}
+
 #[expect(
     clippy::expect_used,
     reason = "a vicarius binary that cannot run must fail the test"
 )]
-fn vicarius_with_input(home: &Path, args: &[&str], input: &[u8]) -> Output {
-    let mut child = base(home)
+fn run_with_input(command: &mut Command, args: &[&str], input: &[u8]) -> Output {
+    let mut child = command
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -130,7 +145,8 @@ fn serve(routes: Vec<(&'static str, u16, String)>) -> u16 {
 }
 
 /// Listens on 127.0.0.1 and accepts connections but never answers; returns the port. The thread
-/// holds each connection for far longer than the hook's deadline and ends with the test process.
+/// holds each connection for three times `HOOK_LIMIT`, so a hook that waited for the service would
+/// exceed the limit, and ends with the test process.
 #[expect(
     clippy::unwrap_used,
     reason = "a socket that cannot be bound must fail the test"
@@ -140,7 +156,7 @@ fn serve_silent() -> u16 {
     let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            thread::sleep(Duration::from_secs(2));
+            thread::sleep(3 * HOOK_LIMIT);
             drop(stream);
         }
     });
@@ -166,7 +182,7 @@ fn hook_prints_the_exact_context_line_for_one_available_agent() {
     let home = tempfile::tempdir().unwrap();
     let port = serve(status_route(OPEN));
     write_config(home.path(), port, SENIOR);
-    let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
+    let out = hook_with_healthy_service(home.path());
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(text(&out.stdout), format!("{ONE_AGENT_LINE}\n"));
 }
@@ -181,7 +197,7 @@ fn hook_lists_two_agents_comma_separated() {
     let port = serve(status_route(&body));
     let agents = r#"[{ from = "senior-worker", model = "deepseek-flash" }, { from = "consultant", model = "deepseek-v4-pro" }]"#;
     write_config(home.path(), port, agents);
-    let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
+    let out = hook_with_healthy_service(home.path());
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let line = text(&out.stdout);
     assert!(
@@ -223,7 +239,7 @@ fn hook_answers_when_the_service_is_up() {
     let home = tempfile::tempdir().unwrap();
     let port = serve(status_route(OPEN));
     write_config(home.path(), port, SENIOR);
-    let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
+    let out = hook_with_healthy_service(home.path());
     assert_eq!(text(&out.stdout), format!("{ONE_AGENT_LINE}\n"));
 }
 
