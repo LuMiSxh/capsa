@@ -3,7 +3,7 @@
 
 use crate::module::{HostModules, Imports};
 use crate::pool::Calls;
-use crate::{Host, HostError, Limits, ScriptError};
+use crate::{Host, HostError, Limits, Partial, ScriptError};
 use regex::Regex;
 use rquickjs::{Context, Ctx, Error, Exception, Function, Object, Promise, Runtime};
 use serde_json::{Value, json};
@@ -46,7 +46,7 @@ pub fn run<H: Host>(code: &str, host: H, limits: &Limits) -> Result<Outcome, Scr
     let offset = head.matches('\n').count();
     let source = format!(
         "{head}{}\n}})().then(__finish)",
-        crate::imports::dynamic(code)
+        crate::source::implicit_return(&crate::imports::dynamic(code))
     );
 
     execute(&source, offset, host, limits)
@@ -65,30 +65,33 @@ pub(crate) fn execute<H: Host>(
         Arc::clone(&host),
         sandbox.deadline,
     )));
-    let result = sandbox.context.with(|ctx| {
-        let submit = Rc::clone(&calls);
-        let start = Function::new(ctx.clone(), move |id: u32, name: String, args: String| {
-            submit.borrow_mut().submit(id, name, args);
-        })
-        .map_err(|e| engine(&e))?;
-        ctx.globals().set("__host", start).map_err(|e| engine(&e))?;
-        let mut finished = ctx
-            .eval::<Promise, _>(source)
-            .and_then(|promise| drive(&ctx, &promise, &calls, &sandbox));
-        if !sandbox.expired() {
-            // A call the program never awaited still runs to its end, as a patch must.
-            sandbox.drain(&calls);
-            if sandbox.expired() {
+    let result = sandbox
+        .context
+        .with(|ctx| {
+            let submit = Rc::clone(&calls);
+            let start = Function::new(ctx.clone(), move |id: u32, name: String, args: String| {
+                submit.borrow_mut().submit(id, name, args);
+            })
+            .map_err(|e| engine(&e))?;
+            ctx.globals().set("__host", start).map_err(|e| engine(&e))?;
+            let mut finished = ctx
+                .eval::<Promise, _>(source)
+                .and_then(|promise| drive(&ctx, &promise, &calls, &sandbox));
+            if !sandbox.expired() {
+                // A call the program never awaited still runs to its end, as a patch must.
+                sandbox.drain(&calls);
+                if sandbox.expired() {
+                    finished = Err(Error::WouldBlock);
+                }
+            }
+            // A result read after the deadline, by a late thread, never lets the program succeed.
+            if finished.is_ok() && Instant::now() > sandbox.deadline {
+                sandbox.expire(&calls);
                 finished = Err(Error::WouldBlock);
             }
-        }
-        // A result read after the deadline, by a late thread, never lets the program succeed.
-        if finished.is_ok() && Instant::now() > sandbox.deadline {
-            sandbox.expire(&calls);
-            finished = Err(Error::WouldBlock);
-        }
-        finished.map_err(|e| sandbox.fail(&ctx, e, offset, limits))
-    })?;
+            finished.map_err(|e| sandbox.fail(&ctx, e, offset, limits))
+        })
+        .map_err(|error| with_output(&sandbox, &calls, error))?;
     // The document the prelude's `__finish` builds: `prints`, `defined` and `result`.
     let mut done: Value = serde_json::from_str(&result)
         .map_err(|e| ScriptError::Engine(format!("the program's result is not JSON: {e}")))?;
@@ -137,7 +140,7 @@ fn drive<'js, H: Host>(
 
 /// A QuickJS runtime and context bounded by [`Limits`], with modules loaded through the host.
 pub(crate) struct Sandbox {
-    _runtime: Runtime,
+    runtime: Runtime,
     pub(crate) context: Context,
     expired: Arc<AtomicBool>,
     deadline: Instant,
@@ -161,7 +164,7 @@ impl Sandbox {
         })));
         let context = Context::full(&runtime).map_err(|e| engine(&e))?;
         Ok(Sandbox {
-            _runtime: runtime,
+            runtime,
             context,
             expired,
             deadline,
@@ -175,7 +178,7 @@ impl Sandbox {
     /// Waits for every queued and running call to end, or for the deadline.
     fn drain<H: Host>(&self, calls: &RefCell<Calls<H>>) {
         while !calls.borrow().idle() {
-            if calls.borrow_mut().wait(self.deadline).is_none() {
+            if !absorb(calls, self.deadline) {
                 self.expire(calls);
                 return;
             }
@@ -190,7 +193,7 @@ impl Sandbox {
         calls.borrow_mut().drop_queued();
         let until = Instant::now() + EXPIRY_GRACE;
         while !calls.borrow().idle() {
-            if calls.borrow_mut().wait(until).is_none() {
+            if !absorb(calls, until) {
                 return;
             }
         }
@@ -207,10 +210,45 @@ impl Sandbox {
         if self.expired() {
             return ScriptError::Timeout {
                 secs: limits.deadline.as_secs(),
+                partial: Partial::default(),
             };
         }
         describe(ctx, error, offset, limits)
     }
+}
+
+/// Waits for the next call to finish and keeps its value; `false` when `until` passes first.
+fn absorb<H: Host>(calls: &RefCell<Calls<H>>, until: Instant) -> bool {
+    let Some(done) = calls.borrow_mut().wait(until) else {
+        return false;
+    };
+    calls.borrow_mut().keep(done);
+    true
+}
+
+/// Attaches what the program printed and what unawaited calls completed to a failed run.
+fn with_output<H: Host>(
+    sandbox: &Sandbox,
+    calls: &RefCell<Calls<H>>,
+    error: ScriptError,
+) -> ScriptError {
+    // The interrupt handler stops every run of JavaScript once the deadline has passed.
+    sandbox.runtime.set_interrupt_handler(None);
+    let partial = sandbox.context.with(|ctx| Partial {
+        prints: printed(&ctx),
+        completed: calls.borrow_mut().take_unawaited(),
+    });
+    error.with_partial(partial)
+}
+
+/// Returns the values the program has printed so far, read after the interrupt handler is gone.
+fn printed(ctx: &Ctx<'_>) -> Vec<Value> {
+    ctx.eval::<String, _>(
+        "JSON.stringify(typeof __prints === 'undefined' ? [] : __prints.map(__ser))",
+    )
+    .ok()
+    .and_then(|text| serde_json::from_str(&text).ok())
+    .unwrap_or_default()
 }
 
 pub(crate) fn throw(ctx: &Ctx<'_>, error: &HostError) -> Error {
@@ -233,6 +271,7 @@ pub(crate) fn engine(error: &Error) -> ScriptError {
 fn describe(ctx: &Ctx<'_>, error: Error, offset: usize, limits: &Limits) -> ScriptError {
     let memory = ScriptError::Memory {
         mib: limits.memory >> 20,
+        partial: Partial::default(),
     };
     match error {
         Error::Allocation => memory,
@@ -257,6 +296,7 @@ fn uncaught(ctx: &Ctx<'_>, offset: usize) -> Option<ScriptError> {
             line: None,
             message: format!("uncaught {}", shown.unwrap_or_default()),
             hint: None,
+            partial: Partial::default(),
         });
     };
     let message = property(error, "message").unwrap_or_default();
@@ -272,6 +312,7 @@ fn uncaught(ctx: &Ctx<'_>, offset: usize) -> Option<ScriptError> {
             format!("{name}: {message}")
         },
         hint: property(error, "hint"),
+        partial: Partial::default(),
     })
 }
 

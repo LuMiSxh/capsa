@@ -15,7 +15,10 @@
     "Add a reset method to Parser right after parse.",
     "Search app.log for ERROR and keep the last 30 hits.",
     "Find where load_config is defined, then show its body and every caller in one pass.",
-    "Find every file that imports ./util, then show the function around each hit, in one go."
+    "Find every file that imports ./util, then show the function around each hit, in one go.",
+    "Outline src/a.rs and src/b.rs and show lines 1 to 20 of src/c.rs, all in one call.",
+    "Run the Rust tests and list the Rust files under src with their line counts, as independent checks in one call.",
+    "Show the diff against main and the last five commits, together."
   ],
   "near_miss": [
     "Explain how the Rust borrow checker works.",

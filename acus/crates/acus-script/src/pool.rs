@@ -42,6 +42,7 @@ pub(crate) struct Calls<H> {
     deadline: Instant,
     tx: Sender<Done>,
     rx: Receiver<Done>,
+    unawaited: Vec<Value>,
 }
 
 impl<H: Host> Calls<H> {
@@ -57,6 +58,7 @@ impl<H: Host> Calls<H> {
             deadline,
             tx,
             rx,
+            unawaited: Vec::new(),
         }
     }
 
@@ -78,6 +80,20 @@ impl<H: Host> Calls<H> {
     /// Forgets the calls that have not started.
     pub(crate) fn drop_queued(&mut self) {
         self.queue.clear();
+    }
+
+    /// Keeps the value of a finished call whose result the program never received.
+    pub(crate) fn keep(&mut self, done: Done) {
+        if let Ok(text) = done.result
+            && let Ok(value) = serde_json::from_str(&text)
+        {
+            self.unawaited.push(value);
+        }
+    }
+
+    /// Returns the values kept by [`Calls::keep`], in the order the calls finished.
+    pub(crate) fn take_unawaited(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.unawaited)
     }
 
     /// Starts what may start before the deadline, then waits for a call to finish; `None` when

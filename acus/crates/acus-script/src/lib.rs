@@ -9,9 +9,10 @@ mod imports;
 mod limits;
 mod module;
 mod pool;
+mod source;
 
 pub use engine::{Outcome, run};
-pub use error::ScriptError;
+pub use error::{Partial, ScriptError};
 pub use host::{Host, HostError};
 pub use limits::Limits;
 pub use module::{ModuleInfo, check_module, run_module};

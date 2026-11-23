@@ -57,6 +57,24 @@
         "acus patch <<'PATCH'\n*** Begin Patch\n*** Delete Lines: src/a.rs:40-44\n*** Expect: <the exact text of line 40>\n*** End Patch\nPATCH",
         "acus patch <<'PATCH'\n*** Begin Patch\n*** Update File: src/a.rs\n<<<<<<< SEARCH\n<the lines to delete>\n=======\n>>>>>>> REPLACE\n*** End Patch\nPATCH"
       ]
+    },
+    {
+      "prompt": "Outline src/parser.rs, show Parser::parse and list its callers, in one go.",
+      "expected": [
+        "acus script\nfollow("
+      ]
+    },
+    {
+      "prompt": "Run the Rust tests, and list the Rust files under src with their line counts, as independent checks in one call.",
+      "expected": [
+        "acus batch\nrun 'cargo test'"
+      ]
+    },
+    {
+      "prompt": "Show lines 40 to 80 of src/parser.rs.",
+      "expected": [
+        "acus show src/parser.rs:40-80"
+      ]
     }
   ]
 }

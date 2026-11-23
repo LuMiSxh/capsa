@@ -139,7 +139,13 @@ fn doctor_fix_repairs_missing_hooks_and_then_has_nothing_to_fix() {
         .collect();
     assert_eq!(
         fixed,
-        ["hook SessionStart", "hook PreToolUse", "hook SubagentStart"]
+        [
+            "hook SessionStart",
+            "hook PreToolUse",
+            "hook SubagentStart",
+            "hook UserPromptSubmit",
+            "hook PostToolUse"
+        ]
     );
     assert!(
         std::fs::read_to_string(&settings)

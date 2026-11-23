@@ -4,15 +4,15 @@
 //! config lists it under `[script] mcp`, and the Claude permission rules apply to its tools.
 
 mod discover;
-mod permissions;
 
 use acus_mcp::{Client, Killer, McpError, Tool};
 use acus_script::HostError;
+use capsa_core::claude_settings::permissions::Permissions;
 use discover::Definition;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 /// The global function a generated module's methods call.
@@ -26,7 +26,7 @@ pub(super) struct Mcp {
     cwd: PathBuf,
     root: PathBuf,
     deadline: Instant,
-    rules: OnceLock<Result<Vec<permissions::Rule>, String>>,
+    permissions: Arc<Permissions>,
     servers: Mutex<HashMap<String, Server>>,
 }
 
@@ -44,19 +44,16 @@ impl Mcp {
         config: PathBuf,
         cwd: PathBuf,
         deadline: Instant,
+        permissions: Arc<Permissions>,
     ) -> Self {
-        let root = cwd
-            .ancestors()
-            .find(|dir| dir.join(".git").exists())
-            .unwrap_or(&cwd)
-            .to_path_buf();
+        let root = permissions.root().to_path_buf();
         Mcp {
             allowed,
             config,
             cwd,
             root,
             deadline,
-            rules: OnceLock::new(),
+            permissions,
             servers: Mutex::new(HashMap::new()),
         }
     }
@@ -167,15 +164,9 @@ impl Mcp {
     }
 
     fn check_rules(&self, server: &str, tool: Option<&str>) -> Result<(), HostError> {
-        let rules = self
-            .rules
-            .get_or_init(|| permissions::load(&self.root).map_err(|e| e.message));
-        match rules {
-            Ok(rules) => permissions::refuse(rules, server, tool),
-            Err(message) => Err(HostError::new(message.clone()).with_hint(
-                "fix the settings file; scripts refuse MCP tools while it cannot be read",
-            )),
-        }
+        self.permissions
+            .check_mcp(server, tool)
+            .map_err(super::refused)
     }
 }
 

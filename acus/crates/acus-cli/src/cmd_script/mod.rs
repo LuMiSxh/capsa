@@ -4,8 +4,14 @@
 
 mod argv;
 mod bindings;
+mod cap;
+mod editing;
+mod host;
 mod manage;
 mod mcp;
+mod memo;
+mod net;
+mod reads;
 mod recommend;
 mod result;
 mod shapes;
@@ -13,15 +19,27 @@ mod store;
 mod usage;
 
 use crate::config::Config;
-use acus_script::{Limits, ScriptError};
+use acus_script::{HostError, Limits, ScriptError};
 use anyhow::{Context, Result};
+use cap::Cap;
+use capsa_core::claude_settings::permissions::Refusal;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::hinted;
 use capsa_core::render;
 use serde_json::{Map, Value};
 use std::io::Read;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
+
+/// Returns the script error for a call that the permission rules refuse.
+fn refused(refusal: Refusal) -> HostError {
+    let error = HostError::new(refusal.message);
+    match refusal.hint {
+        Some(hint) => error.with_hint(hint),
+        None => error,
+    }
+}
 
 /// Returns the SessionStart line that names the repo's saved scripts; see
 /// [`recommend::scripts_here`].
@@ -39,6 +57,10 @@ pub struct Args {
     /// level, and the returned value is the result. Default: read it from stdin.
     #[arg(short = 'e', long = "eval", value_name = "CODE")]
     code: Option<String>,
+    /// Output lines shown, prints then the return value; the return value keeps half. Default:
+    /// `[script] output` in the config (400). The byte limit scales with it. `--json` is not capped.
+    #[arg(long, value_name = "N")]
+    max_output: Option<usize>,
     #[command(subcommand)]
     saved: Option<Saved>,
 }
@@ -63,16 +85,21 @@ enum Saved {
 pub fn run(a: Args, cfg: Config, format: Format) -> Result<Outcome> {
     let cwd = || std::env::current_dir().context("cannot read the current directory");
     match a.saved {
-        None => run_inline(a.code, cfg, format),
+        None => run_inline(a.code, a.max_output, cfg, format),
         Some(Saved::Save(s)) => render::emit(&manage::save(&s, cfg)?, format),
         Some(Saved::List) => render::emit(&manage::list(&cfg, &cwd()?), format),
         Some(Saved::Show(s)) => render::emit(&manage::show(&s, &cfg, &cwd()?)?, format),
         Some(Saved::Log(l)) => render::emit(&manage::history(&l, &cfg, &cwd()?)?, format),
-        Some(Saved::Run(words)) => run_saved(&words, cfg, format),
+        Some(Saved::Run(words)) => run_saved(&words, a.max_output, cfg, format),
     }
 }
 
-fn run_inline(code: Option<String>, cfg: Config, format: Format) -> Result<Outcome> {
+fn run_inline(
+    code: Option<String>,
+    max_output: Option<usize>,
+    cfg: Config,
+    format: Format,
+) -> Result<Outcome> {
     let code = match code {
         Some(code) => code,
         None => {
@@ -90,16 +117,35 @@ fn run_inline(code: Option<String>, cfg: Config, format: Format) -> Result<Outco
         ));
     }
     let limits = limits(&cfg);
+    let cap = cap(&cfg, max_output);
+    let log = usage::path(&cfg);
+    let cwd = std::env::current_dir().context("cannot read the current directory")?;
     let host = bindings::Bindings::new(cfg)?;
     let servers = host.mcp();
+    let calls = host.calls();
+    let started = Instant::now();
     let outcome = acus_script::run(&code, host, &limits);
     servers.shutdown();
-    let outcome = outcome.map_err(failure)?;
-    render::emit(&result::Output::new(outcome), format)
+    usage::record(
+        &log,
+        &usage::Inline {
+            inline: true,
+            cwd: logged_cwd(&cwd),
+            ms: millis(started),
+            ok: outcome.is_ok(),
+            calls: calls.load(Ordering::Relaxed),
+        },
+    );
+    finish(outcome, cap, format)
 }
 
 /// Runs `NAME[@V]` with the `key=value` words as `args`, and logs the run.
-fn run_saved(words: &[String], cfg: Config, format: Format) -> Result<Outcome> {
+fn run_saved(
+    words: &[String],
+    max_output: Option<usize>,
+    cfg: Config,
+    format: Format,
+) -> Result<Outcome> {
     let (spec, rest) = words.split_first().context("no script name given")?;
     let (name, version) = store::parse_spec(spec)?;
     let cwd = std::env::current_dir().context("cannot read the current directory")?;
@@ -108,6 +154,7 @@ fn run_saved(words: &[String], cfg: Config, format: Format) -> Result<Outcome> {
     let entry = format!("{}:{name}@{}", found.scope.as_str(), found.version);
     let log = usage::path(&cfg);
     let limits = limits(&cfg);
+    let cap = cap(&cfg, max_output);
     let host = bindings::Bindings::new(cfg)?;
     let servers = host.mcp();
     let started = Instant::now();
@@ -120,11 +167,11 @@ fn run_saved(words: &[String], cfg: Config, format: Format) -> Result<Outcome> {
             version: found.version,
             scope: found.scope,
             cwd: logged_cwd(&cwd),
-            ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            ms: millis(started),
             ok: outcome.is_ok(),
         },
     );
-    render::emit(&result::Output::new(outcome.map_err(failure)?), format)
+    finish(outcome, cap, format)
 }
 
 /// Returns `cwd` resolved the way `recommend` resolves the directories it compares against, so
@@ -136,6 +183,11 @@ fn logged_cwd(cwd: &std::path::Path) -> String {
         .into_owned()
 }
 
+/// Returns the milliseconds since `started`, saturating at `u64::MAX`.
+fn millis(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
 /// Returns the run's limits: the defaults, with the configured time limit.
 fn limits(cfg: &Config) -> Limits {
     let mut limits = Limits::default();
@@ -143,6 +195,22 @@ fn limits(cfg: &Config) -> Limits {
         limits.deadline = std::time::Duration::from_secs(secs);
     }
     limits
+}
+
+/// Returns the output cap: the configured one, or `--max-output` lines with the bytes scaled to
+/// match.
+fn cap(cfg: &Config, max_output: Option<usize>) -> Cap {
+    let set = &cfg.script.output;
+    match max_output {
+        None => Cap {
+            lines: set.lines,
+            bytes: set.bytes,
+        },
+        Some(lines) => Cap {
+            lines,
+            bytes: set.bytes / set.lines.max(1) * lines.max(1),
+        },
+    }
 }
 
 /// Builds the `args` object from `key=value` words; a repeated key makes an array.
@@ -168,6 +236,33 @@ fn script_args(words: &[String]) -> Result<Value> {
         }
     }
     Ok(Value::Object(args))
+}
+
+/// Renders a finished run. A failed run renders what it printed and what completed unawaited
+/// first, in the same form as a result, then returns its error for `exit` to print.
+fn finish(
+    outcome: Result<acus_script::Outcome, ScriptError>,
+    cap: Cap,
+    format: Format,
+) -> Result<Outcome> {
+    let error = match outcome {
+        Ok(done) => {
+            let shown = result::Output::new(done.prints, Vec::new(), done.value, cap, format);
+            return render::emit(&shown, format);
+        }
+        Err(error) => error,
+    };
+    if let Some(partial) = error.partial() {
+        let shown = result::Output::new(
+            partial.prints.clone(),
+            partial.completed.clone(),
+            None,
+            cap,
+            format,
+        );
+        render::emit(&shown, format)?;
+    }
+    Err(failure(error))
 }
 
 /// Turns a failed run into the error `exit` prints, keeping a thrown host error's hint.

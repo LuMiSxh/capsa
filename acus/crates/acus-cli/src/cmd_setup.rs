@@ -31,8 +31,10 @@ pub struct Args {
 const HOOK: &str = "acus hook 2>/dev/null || true";
 
 /// The hooks acus registers. SubagentStart has no matcher, so an entry the user scoped with one,
-/// such as `Explore|Plan`, stays.
-pub const HOOKS: [HookSpec; 3] = [
+/// such as `Explore|Plan`, stays. UserPromptSubmit and PostToolUse only record the permission
+/// mode; PostToolUse is scoped to ExitPlanMode, the one mid-turn mode change, so `acus hook` is
+/// not spawned after every tool call.
+pub const HOOKS: [HookSpec; 5] = [
     HookSpec {
         event: "SessionStart",
         matcher: Some("startup|clear|compact"),
@@ -50,6 +52,20 @@ pub const HOOKS: [HookSpec; 3] = [
     HookSpec {
         event: "SubagentStart",
         matcher: None,
+        command: HOOK,
+        owns: owns_hook,
+        legacy: None,
+    },
+    HookSpec {
+        event: "UserPromptSubmit",
+        matcher: None,
+        command: HOOK,
+        owns: owns_hook,
+        legacy: None,
+    },
+    HookSpec {
+        event: "PostToolUse",
+        matcher: Some("ExitPlanMode"),
         command: HOOK,
         owns: owns_hook,
         legacy: None,

@@ -104,16 +104,31 @@ pub(crate) fn compute(a: &Args, cfg: &Config) -> Result<PatchReport> {
 /// Applies the patch `text`, which the caller already has, as `compute` applies one read from
 /// stdin.
 pub(crate) fn compute_text(a: &Args, text: &str, cfg: &Config) -> Result<PatchReport> {
+    refuse_fmt_with_check(a)?;
+    compute_ops(a, &parse_ops(text)?, cfg)
+}
+
+fn refuse_fmt_with_check(a: &Args) -> Result<()> {
     if a.fmt && a.check {
         return Err(hinted(
             "--fmt cannot be combined with --check, which writes nothing",
             "drop --fmt to preview, or drop --check to format while applying",
         ));
     }
-    let ops = acus_edit::parse(text).hinted()?;
+    Ok(())
+}
+
+/// Parses patch text into the ops `compute_ops` applies.
+pub(crate) fn parse_ops(text: &str) -> Result<Vec<Op>> {
+    acus_edit::parse(text).hinted()
+}
+
+/// Applies ops the caller already has, as `compute_text` applies the ones its text parses to.
+pub(crate) fn compute_ops(a: &Args, ops: &[Op], cfg: &Config) -> Result<PatchReport> {
+    refuse_fmt_with_check(a)?;
     let options = apply_options(a, cfg);
-    let mut applied = acus_edit::apply(&ops, Path::new(""), &options).hinted()?;
-    let long_bodies = long_symbol_bodies(&ops);
+    let mut applied = acus_edit::apply(ops, Path::new(""), &options).hinted()?;
+    let long_bodies = long_symbol_bodies(ops);
     let mut fmt_notes = Vec::new();
     if (a.fmt || cfg.patch.fmt) && !a.no_fmt && !a.check {
         fmt_notes = format_written(&applied.changes, &mut applied.regions, &mut applied.texts);

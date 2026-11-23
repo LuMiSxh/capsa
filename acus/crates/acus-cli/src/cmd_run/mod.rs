@@ -9,7 +9,9 @@ mod print;
 mod refs;
 mod repeat;
 
-pub(crate) use compute::{RunReport, compute};
+#[cfg(feature = "script")]
+pub(crate) use compute::RunReport;
+pub(crate) use compute::compute;
 pub(crate) use print::{json, outcome};
 
 use crate::config::Config;
@@ -104,6 +106,11 @@ impl Args {
             cut: None,
             head: None,
         }
+    }
+
+    /// The shell command `acus run COMMAND` was given, or `None` when it runs the project's tests.
+    pub(crate) fn command(&self) -> Option<&str> {
+        self.command.as_deref()
     }
 }
 
@@ -319,7 +326,7 @@ fn command_line(a: &Args, cfg: &Config) -> Result<(String, bool)> {
                     hinted(
                         "no command given and no project detected",
                         format!(
-                            "pass a command, e.g. acus run 'cargo test -q', or set [run] command in {}",
+                            "pass a command, e.g. acus run 'cargo test -q', or set [run] command in {}; for several commands use acus batch",
                             cfg.path.display()
                         ),
                     )

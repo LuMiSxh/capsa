@@ -4,6 +4,7 @@
 #[macro_use]
 mod out;
 
+mod cmd_batch;
 mod cmd_blame;
 mod cmd_diff;
 mod cmd_doctor;
@@ -31,6 +32,7 @@ mod follow;
 mod git;
 mod globs;
 mod guard_log;
+mod permission_mode;
 
 mod source;
 
@@ -88,6 +90,8 @@ enum Cmd {
     Patch(cmd_patch::Args),
     /// Run a shell command; print its output plus the code its `path:line` references point at.
     Run(cmd_run::Args),
+    /// Several acus commands from stdin, one per line, run in parallel; output in line order.
+    Batch(cmd_batch::Args),
     /// Uncommitted (or `REV`, `A..B`) changes grouped by enclosing symbol; `-p` adds the lines.
     Diff(cmd_diff::Args),
     /// Recent commits, one line each with date, author and changed lines.
@@ -118,6 +122,7 @@ impl Cmd {
             Cmd::Follow(_) => "follow",
             Cmd::Patch(_) => "patch",
             Cmd::Run(_) => "run",
+            Cmd::Batch(_) => "batch",
             #[cfg(feature = "script")]
             Cmd::Script(_) => "script",
 
@@ -180,6 +185,7 @@ pub fn execute(cli: Cli, format: Format) -> Result<Outcome> {
         Cmd::Follow(a) => cmd_follow::run(&a, &out),
         Cmd::Patch(a) => cmd_patch::run(&a, &out, &cfg),
         Cmd::Run(a) => cmd_run::run(&a, &out, &cfg),
+        Cmd::Batch(a) => cmd_batch::run(&a, &cfg),
         #[cfg(feature = "script")]
         Cmd::Script(a) => cmd_script::run(a, cfg, format),
 

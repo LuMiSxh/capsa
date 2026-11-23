@@ -1,41 +1,96 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Renders what a script printed and returned: strings as they are, a command's result as the
-//! lines its agent format uses, anything else as indented JSON.
+//! text its command prints, anything else as compact JSON, all within a cap.
 
-use acus_script::Outcome as Finished;
+use super::cap::{Cap, apply};
 use capsa_core::exit::Outcome;
+use capsa_core::format::Format;
 use capsa_core::render::{Doc, Render};
 use serde::Serialize;
 use serde_json::Value;
 use std::fmt::Write;
 
-/// The values a program printed, then its return value.
+/// Results whose text is the command's own printout, carried in a `text` field by the binding.
+const TEXTED: &[&str] = &["outline", "follow", "diff", "log", "blame"];
+
+/// The values a program printed, then the host calls that finished unawaited, then its return
+/// value.
 #[derive(Serialize)]
 pub(super) struct Output {
     prints: Vec<Value>,
+    /// Values of host calls that finished although the program failed before awaiting them.
+    unawaited: Vec<Value>,
     result: Option<Value>,
+    #[serde(skip)]
+    cap: Option<Cap>,
 }
 
 impl Output {
-    pub(super) fn new(finished: Finished) -> Self {
-        Output {
-            prints: finished.prints,
-            result: finished.value,
+    /// Returns the output of a run; `--json` (`format`) carries every value whole and is not capped.
+    pub(super) fn new(
+        prints: Vec<Value>,
+        unawaited: Vec<Value>,
+        result: Option<Value>,
+        cap: Cap,
+        format: Format,
+    ) -> Self {
+        let mut output = Output {
+            prints,
+            unawaited,
+            result,
+            cap: Some(cap),
+        };
+        if format == Format::Json {
+            output.cap = None;
+            let values = output
+                .prints
+                .iter_mut()
+                .chain(&mut output.unawaited)
+                .chain(&mut output.result);
+            for value in values {
+                if let Some(map) = value.as_object_mut().filter(|m| is_texted(m.get("kind"))) {
+                    map.remove("text");
+                }
+            }
         }
+        output
     }
+
+    fn before(&self) -> impl Iterator<Item = &Value> {
+        self.prints
+            .iter()
+            .chain(&self.unawaited)
+            .filter(|v| !is_empty(v))
+    }
+}
+
+fn is_texted(kind: Option<&Value>) -> bool {
+    kind.and_then(Value::as_str)
+        .is_some_and(|k| TEXTED.contains(&k))
+}
+
+fn lines<'a>(values: impl Iterator<Item = &'a Value>) -> Vec<String> {
+    values
+        .flat_map(|v| text(v).lines().map(str::to_owned).collect::<Vec<_>>())
+        .collect()
 }
 
 impl Render for Output {
     fn doc(&self, doc: &mut Doc) {
-        for value in self.prints.iter().chain(&self.result) {
-            if !is_empty(value) {
-                doc.line(text(value));
-            }
+        let before = lines(self.before());
+        let last = lines(self.result.iter().filter(|v| !is_empty(v)));
+        let all = match self.cap {
+            Some(cap) => apply(&before, &last, cap),
+            None => before.into_iter().chain(last).collect(),
+        };
+        for line in all {
+            doc.line(line);
         }
     }
 
     fn outcome(&self) -> Outcome {
-        let shown = self.prints.iter().chain(&self.result).any(|v| !is_empty(v));
+        let shown =
+            self.before().next().is_some() || self.result.as_ref().is_some_and(|v| !is_empty(v));
         if shown {
             Outcome::Found
         } else {
@@ -62,6 +117,11 @@ fn text(value: &Value) -> String {
     if let Value::String(s) = value {
         return s.clone();
     }
+    if is_texted(value.get("kind"))
+        && let Some(shown) = value["text"].as_str()
+    {
+        return shown.to_owned();
+    }
     let items = value["items"].as_array();
     let lines = match (value["kind"].as_str(), items) {
         (Some("hits"), Some(items)) => items.iter().map(hit).collect(),
@@ -69,7 +129,7 @@ fn text(value: &Value) -> String {
         (Some("views"), Some(items)) => items.iter().map(view).collect(),
         (Some("run"), _) => vec![run(value)],
         (Some("patch"), _) => patch(value),
-        _ => vec![pretty(value)],
+        _ => vec![compact(value)],
     };
     lines.join("\n")
 }
@@ -129,6 +189,6 @@ fn patch(item: &Value) -> Vec<String> {
     lines
 }
 
-fn pretty(value: &Value) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_default()
+fn compact(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_default()
 }

@@ -220,6 +220,45 @@ fn a_failing_saved_script_is_logged_as_not_ok() {
     );
 }
 
+/// The last line of the script log, parsed: the run the call just made.
+fn last_run(sb: &Sandbox) -> serde_json::Value {
+    let log = std::fs::read_to_string(sb.script_log()).unwrap();
+    serde_json::from_str(log.lines().last().unwrap()).unwrap()
+}
+
+#[test]
+fn an_inline_program_is_logged_without_a_name_and_with_its_host_calls() {
+    let sb = Sandbox::new();
+    let code = "await find('needle'); await find('other'); return 1";
+    assert_eq!(
+        sb.acus(&["-e", code], ""),
+        (0, "1\n".to_owned(), String::new())
+    );
+    assert_eq!(sb.acus(&["list"], "").0, 1);
+    let run = last_run(&sb);
+    assert_eq!(run["event"], "run");
+    assert_eq!(run["inline"], true);
+    assert_eq!(
+        (run["ok"].as_bool(), run["calls"].as_u64()),
+        (Some(true), Some(2))
+    );
+    assert!(run.get("name").is_none(), "{run}");
+    assert!(run["cwd"].is_string() && run["ms"].is_u64(), "{run}");
+}
+
+#[test]
+fn a_failing_inline_program_from_stdin_is_logged_as_not_ok() {
+    let sb = Sandbox::new();
+    let (code, _, err) = sb.acus(&[], "throw new Error(\"boom\");");
+    assert_eq!(code, 2, "{err}");
+    let run = last_run(&sb);
+    assert_eq!(
+        (run["ok"].as_bool(), run["calls"].as_u64()),
+        (Some(false), Some(0))
+    );
+    assert!(run.get("name").is_none(), "{run}");
+}
+
 #[test]
 fn the_first_save_makes_acus_ignore_itself_without_touching_the_repo_gitignore() {
     let sb = Sandbox::new();

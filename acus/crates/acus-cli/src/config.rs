@@ -52,8 +52,33 @@ pub struct Script {
     /// MCP servers from the Claude Code settings that scripts may import as `mcp:NAME`; none by
     /// default.
     pub mcp: Vec<String>,
+    /// Hosts `fetch()` refuses: `host` exactly, or `*.host` for its subdomains; none by default.
+    pub fetch_deny: Vec<String>,
     /// Seconds a script may run; default 120.
     pub timeout: Option<u64>,
+    /// How much a script shows: printed values then the return value, which keeps half.
+    pub output: ScriptOutput,
+    /// Refuse, in `script` and `batch`, every command, edit, fetch and MCP call that no allow rule
+    /// covers in the modes where Claude Code would prompt for it; default false.
+    pub strict: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ScriptOutput {
+    /// Lines shown; default 400.
+    pub lines: usize,
+    /// Bytes shown; default 24000.
+    pub bytes: usize,
+}
+
+impl Default for ScriptOutput {
+    fn default() -> Self {
+        ScriptOutput {
+            lines: 400,
+            bytes: 24_000,
+        }
+    }
 }
 
 #[derive(Deserialize)]

@@ -5,10 +5,10 @@
 
 **Code search, outline and editing for coding agents.** Hits are grouped by the function or type they sit in, `--block` prints those bodies, symbols are addressed by name instead of guessed line numbers, and every truncation names the command that shows the rest.
 
-[![Rust 1.99+](https://img.shields.io/badge/Rust-1.99%2B-41c4ad?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
+[![Rust 1.100+](https://img.shields.io/badge/Rust-1.100%2B-41c4ad?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-41c4ad?style=flat-square&labelColor=23252a)
 [![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-41c4ad?style=flat-square&labelColor=23252a)](../LICENSE)
-[![Version](https://img.shields.io/badge/version-0.19.0-41c4ad?style=flat-square&labelColor=23252a)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.25.0-41c4ad?style=flat-square&labelColor=23252a)](CHANGELOG.md)
 
 **[capsa](../README.md)** · [Changelog](CHANGELOG.md)
 
@@ -55,10 +55,11 @@ Everything is top-level except the management commands under `acus self` (see [S
 | `acus follow ADDR`            | Recursive callers (`-d N`, default 2); `--down` lists callees resolved to repo definitions; `--all` lifts the caps; `--head N` and `--cut N` cap the output; `--json`. Syntactic only: calls are matched by name, so dynamic and trait dispatch, function references and implicit calls are missed. A `?` edge is a name match, shown but not followed |
 | `acus patch`                  | Applies a patch from stdin, all or nothing, and prints the written lines; `--check` validates, `--diff` prints a unified diff (see [Patches](#patches))                                                                                                                                      |
 | `acus run ['COMMAND']`        | Runs a build or test; drops progress noise, colour codes, passing tests and library frames, and shows the code behind each `path:line`. Without a command it runs the project's tests (detected from Cargo.toml, Package.swift, go.mod, package.json or pytest files). `--tail N` keeps the last N lines and every failure block; `--grep RE` keeps matching lines (`-A/-B/-C` add context); `--timeout SECS` kills the command, keeps the output so far and exits 124; `--head N` and `--cut N` cap the output. When output is cut, the full log is saved to a temp file and its path printed |
+| `acus batch`                 | Runs several acus commands from stdin, one per line (`acus batch <<'EOF'`), in parallel; each line prints under a `== command` header in line order, and `patch`, `script`, `self` and nested `batch` lines are refused. Exit 2 when any line failed |
 | `acus diff [REV] [PATH...]`   | Uncommitted changes per function or type, with untracked files; `-p` adds the lines, collapses symbols moved elsewhere in the same diff, outlines new files and caps each file at 80 lines (`--full` prints every body line and lifts the cap); `--staged` and `A..B` work as in git; without REV the first line names the branch, upstream position, staged, unstaged and untracked counts, conflicts and any merge, rebase or cherry-pick, and a footer names the staged changes; `--stat` prints `path +A -R` per file with a total, `--name-only` one `STATUS path` line each, and `--conflicts` the unmerged paths with their conflict line ranges (exit 1 when there are none) |
 | `acus log [REV] [PATH...]`    | One line per commit, `hash subject (age)`; `-n` sets the count (default 15); `--head N` and `--cut N` cap the output; `REV` can be `A..B`                                                                                                                                                    |
 | `acus map [DIR...]`           | Directory tree with file and line counts within a token budget (`--budget 400`): the largest directories open first, chains roll up, small directories list their top-level symbols; tests and docs open last. Several paths map as one tree; `--head N` and `--cut N` cap the output |
-| `acus hook`                   | Claude Code hook: `SessionStart` and `SubagentStart` print the skill, and `PreToolUse` (Bash, PowerShell, Read, Grep and Glob) rewrites calls it can convert exactly into acus calls, refuses the rest and names the acus command to use. See [Guard and agent setup](#guard-and-agent-setup) and [docs/guard.md](docs/guard.md) |
+| `acus hook`                   | Claude Code hook: `SessionStart` and `SubagentStart` print the skill, and `PreToolUse` (Bash, PowerShell, Read, Grep and Glob) rewrites calls it can convert exactly into acus calls, refuses the rest and names the acus command to use. `UserPromptSubmit` (each prompt) and `PostToolUse` (`ExitPlanMode` only) record the permission mode for `acus script` and `acus batch`. See [Guard and agent setup](#guard-and-agent-setup) and [docs/guard.md](docs/guard.md) |
 
 `acus log --oneline` is accepted as a no-op.
 
@@ -103,11 +104,12 @@ Output is a compact agent format by default. `--agent`, `--human` and `--json` c
 
 Agents fall back to grep and cat when a skill is only listed by its description. Loading the skill at session start and letting a hook steer the rest fixes most of that.
 
-**Claude Code.** `acus self setup` installs the skill and registers the three hooks in `settings.json` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), keeping a `.bak` of the old file; a rerun changes nothing when they are current. `--target claude|codex|all` picks the skill directories (`codex` is refused, since the hooks are Claude Code's), and `--dry-run` prints what would change.
+**Claude Code.** `acus self setup` installs the skill and registers the five hooks in `settings.json` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), keeping a `.bak` of the old file; a rerun changes nothing when they are current. `--target claude|codex|all` picks the skill directories (`codex` is refused, since the hooks are Claude Code's), and `--dry-run` prints what would change.
 
 - `SessionStart` (`acus hook`) prints the skill at every start, `/clear` and compaction. It has no project map, because [overviews in context files did not help agents find the relevant files and raised cost](https://arxiv.org/abs/2602.11988); agents run `acus map` for the layout.
 - `SubagentStart` (`acus hook`, no matcher, so every subagent) adds the skill to a subagent's context. `acus self setup` installs it; an entry already scoped to agent types, e.g. `Explore|Plan`, is kept as it is.
 - `PreToolUse` runs the guard (`acus hook`) on Bash, PowerShell, Read, Grep and Glob. It rewrites a command into an exact acus call when it can, and otherwise refuses it and names the acus command. Literal `sed -i` edits of one file become `acus patch`, `acus … | head -N` becomes `--head N`, and `cat`, `tail` and `grep` of a background task's output file become `acus run --log FILE`. The rules are in [docs/guard.md](docs/guard.md).
+- `UserPromptSubmit` and `PostToolUse` (`acus hook`) record Claude Code's permission mode for the session, which `acus script` and `acus batch` read to refuse calls the mode forbids. They print nothing. `PostToolUse` is registered for `ExitPlanMode` only, so it records the mode when plan mode ends and `acus hook` does not run after other tool calls.
 
 Escape hatches: a refused command runs anyway with a `command ` prefix (Bash) or a trailing `# acus-skip` comment (both shells). Every decision, escapes included, is logged to `guard.jsonl` in the state directory (`~/.local/state/acus`, or `%LOCALAPPDATA%\acus\state` on Windows); `census usage --guard` counts them per rule. The hook command ends in `|| true`, so calls pass when acus is missing or when `hook` is listed under `[commands] disabled`.
 
@@ -142,7 +144,10 @@ fmt = true                                          # as if every patch had --fm
 
 [script]
 mcp = ["github"]                                    # Claude Code MCP servers a script may import as "mcp:github"; default none
+fetch_deny = []                                     # hosts fetch() refuses: "host", or "*.host" for its subdomains; default none
+strict = false                                      # script and batch refuse run, edit, fetch and MCP calls that no allow rule covers, where Claude Code would prompt
 timeout = 120                                       # seconds a script may run
+output = { lines = 400, bytes = 24000 }             # most a script shows (--max-output N sets the lines); --json is not capped
 
 [guard]
 hint_every = 10                                     # repeated guard hints: 1st, 11th, 21st… call per session and rule; 1 = every time
