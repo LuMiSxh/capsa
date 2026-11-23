@@ -10,6 +10,7 @@ pub use state::{ErrorLine, LOG_LIMIT, error_log, log_error};
 use crate::config::Config;
 use crate::context;
 use crate::limits::{DailyStatus, LimitStatus, MonthStatus};
+use capsa_core::claude_settings;
 use serde::{Deserialize, de::IgnoredAny};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -142,7 +143,7 @@ pub fn run(
         .map(context::transcript_ends)
         .unwrap_or_default();
     // The settings file is read once per call, for the threshold of the context.
-    let settings = context::settings_window(&context::claude_config_dir());
+    let settings = context::settings_window(&claude_settings::config_dir());
     let context = ends
         .context
         .map(|(model, tokens)| context::measure_with(tokens, Some(&model), settings));

@@ -69,20 +69,11 @@ const [text, structured, raw] = await Promise.all([
 ]);
 return {text, structured, raw};
 "#;
-    let expected = r#"{
-  "text": "echo: hi",
-  "structured": {
-    "n": 1
-  },
-  "raw": [
-    {
-      "type": "image",
-      "data": "AA==",
-      "mimeType": "image/png"
-    }
-  ]
-}
-"#;
+    let expected = concat!(
+        r#"{"text":"echo: hi","structured":{"n":1},"#,
+        r#""raw":[{"type":"image","data":"AA==","mimeType":"image/png"}]}"#,
+        "\n"
+    );
     assert_eq!(
         sandbox.script(code),
         (0, expected.to_owned(), String::new())

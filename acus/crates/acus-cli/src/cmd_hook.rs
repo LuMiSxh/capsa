@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `acus hook`: reads one hook event from stdin. `SessionStart` and `SubagentStart` print the
 //! core skill (`SessionStart` also names the repo's saved scripts); `PreToolUse`, and a Codex
-//! payload without an event, runs the guard; another event does nothing.
+//! payload without an event, runs the guard; `UserPromptSubmit` and `PostToolUse` only record the
+//! session's permission mode; another event does nothing. `PreToolUse` records it too when the
+//! event carries one.
 
 use crate::config::Config;
 use crate::guard_log;
+use crate::permission_mode;
 use acus_guard::{BashDecision, GuardConfig, Rewrite, Scope, Verdict};
 use anyhow::Result;
 use capsa_core::exit::Outcome;
@@ -48,6 +51,10 @@ pub fn run(a: &Args, cfg: &Config, config_problem: Option<&str>) -> Result<Outco
         Some("SessionStart") => session_start(&v, cfg),
         Some("SubagentStart") => subagent_start(),
         Some("PreToolUse") | None => answer(v, cfg, config_problem),
+        Some("UserPromptSubmit" | "PostToolUse") => {
+            permission_mode::record(&v);
+            Ok(Outcome::Found)
+        }
         Some(_) => Ok(Outcome::Found),
     }
 }
@@ -142,6 +149,7 @@ fn answer(mut v: Value, cfg: &Config, config_problem: Option<&str>) -> Result<Ou
     if blocked {
         acus_guard::blocks::record(&gcfg, v["session_id"].as_str().unwrap_or_default());
     }
+    permission_mode::record(&v);
     Ok(Outcome::Found)
 }
 

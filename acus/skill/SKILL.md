@@ -1,6 +1,6 @@
 ---
 name: acus
-description: Code search, read, patch and git-summary CLI for coding agents. Always invoke this skill first, before any Grep, Glob, Read or Edit call and before any Bash grep, rg, find, cat, head, sed -i, git diff, git log or ls. It owns every code lookup and edit, so use it to find usages, callers or definitions (acus find, follow), read lines N-M or a function (acus show), list files with line counts (acus files), see what changed on a branch or versus main (acus diff main -p), read git log for a path (acus log), rename or replace text across files, add, change or delete a method or lines (acus patch), search a log file and keep the last hits, run cargo test or npm test and show only failures (acus run), and chain several dependent lookups into one `acus script` or run a saved script by name. Results are line-numbered and grouped by symbol.
+description: Code search, read, patch and git-summary CLI for coding agents. Always invoke this skill first, before any Grep, Glob, Read, Edit or WebFetch call and before any Bash grep, rg, find, cat, head, sed -i, git diff, git log or ls. It owns every code lookup and edit, so use it to find usages, callers or definitions (acus find, follow), read lines N-M or a function (acus show), list files with line counts (acus files), see what changed on a branch or versus main (acus diff main -p), read git log for a path (acus log), rename or replace text across files, add, change or delete a method or lines (acus patch), search a log file and keep the last hits, run cargo test or npm test and show only failures (acus run), batch 2+ planned calls into one `acus script`, run independent commands with `acus batch`, or run a saved script by name. Results are line-numbered and grouped by symbol.
 ---
 
 # acus
@@ -11,6 +11,8 @@ One call replaces search → read: line-numbered, grouped by symbol; every trunc
 
 | Instead of | Run |
 |---|---|
+| 2+ calls you can plan before seeing results: Read, Grep, Glob, Edit, Bash, WebFetch | one `acus script`; independent calls run in parallel |
+| several independent acus commands, no logic | `acus batch <<'EOF'`: one acus command per line, in parallel, no JS |
 | grep, rg, find | `acus find 'PAT' [PATH…]`; `--block` adds code |
 | cat, head, tail, sed -n, Read | `acus show PATH#Sym PATH:A-B`; `acus outline PATH` |
 | Glob, find -name, ls, fd, git ls-files | `acus files [PATH…] [-g GLOB]`; `--lines` adds counts |
@@ -21,18 +23,27 @@ One call replaces search → read: line-numbered, grouped by symbol; every trunc
 | git log | `acus log [-n N] [REV] [PATH…]` |
 | git blame | `acus blame PATH#Sym` |
 | who calls, what it calls | `acus follow PATH#Sym`; `--down` for callees |
-| several dependent lookups, a survey | `acus script <<'JS' … JS` |
 | a script to keep and run again | `acus script save NAME --note TEXT`; `acus script NAME key=value`; `acus script list` |
 | edit, then test or build | `acus patch --run 'CMD'` (below) |
 
 ```bash
 acus script <<'JS'
-const hits = await find('fn parse', {glob: '*.rs'});
-return await show(hits.head(2).map((h) => `${h.path}:${h.line}-${h.line + 20}`));
+const [o, s, f] = await all([outline('src/parser.rs'), show('src/parser.rs#Parser::parse'), follow('src/parser.rs#Parser::parse')]);
+print(o, s, f);
 JS
 ```
 
-Use a script when the next call is known before the first one runs; when a step depends on what you read, make single calls. Saved scripts are ES modules with `description`, `params` and a default function; `save` needs `--note`. Details: [script](reference/script.md).
+Plan 2+ calls as one script: a later call can take an earlier result with `await`, and the code can branch on it. Keep a step that needs your judgement as its own call. Saved scripts are ES modules with `description`, `params` and a default function; `save` needs `--note`. Details: [script](reference/script.md).
+
+```bash
+acus script <<'JS'
+await edit('src/config.rs', 'timeout = 30', 'timeout = 60');
+await run('cargo test', {tail: 40})
+JS
+```
+
+- The last expression is printed when the script has no `return` or `print`.
+- A script's `read`, `write`, `edit` and `fetch` replace Claude's Read, Write, Edit and WebFetch in a batch, under the same permission rules.
 
 Exact forms:
 
@@ -69,6 +80,18 @@ JS
 ```
 
 Flags beyond each default: [find](reference/find.md), [read](reference/read.md), [patch](reference/patch.md), [git](reference/git.md), [run](reference/run.md), [script](reference/script.md). `acus help <command>` lists them too.
+
+## Batch
+
+```bash
+acus batch <<'EOF'
+find 'fn parse' --block
+show src/parser.rs:40-80
+run 'cargo test' --tail 30
+EOF
+```
+
+One acus command per line, without the `acus` prefix. Each line runs as its own process, in parallel, and prints under a `== command` header in line order. `--head N` caps each line's output and `--cut N` clips each printed line, unless the line sets its own. A line that is `patch`, `script` or `batch`, or a `self` command, is refused and the other lines still run. A `run` line obeys the Bash rules, as in a script. Details: [script](reference/script.md#batch).
 
 ## Patch
 
@@ -125,6 +148,8 @@ An address names code without reading it first; every command that takes a path 
 - Unquoted globs are expanded by the shell: write `-g '*.ts'`, and `-g '!dist'` to exclude.
 - Patterns are Rust regex, so `foo(` fails; use `-F` for literal text.
 - A script call without `await` returns a promise, not the result: write `await find(...)`.
+- A `return` or `print` anywhere in a script turns off the implicit result: the last expression then prints nothing.
+- `acus run <<'EOF'` is not a batch: `run` takes one command and never reads stdin, so the heredoc is ignored and the project's test command runs. Use `acus batch`.
 - Symbols exist for Rust, Swift, TS/JS, Svelte, Python, Shell, C, CSS, SCSS, HTML, XML/plist, Markdown and TOML/JSON/YAML keys; on other files use `find` and `show PATH:A-B`.
 
 This covers everyday use; invoke the acus skill only for a flag or form not shown here. More: `acus self skill --full`, `--topic <topic>`.

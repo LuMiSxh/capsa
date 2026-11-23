@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Owns `script.jsonl`, the log of saved-script runs beside `guard.jsonl`.
+//! Owns `script.jsonl`, the log of script runs, saved and inline, beside `guard.jsonl`.
 
 use super::store::Scope;
 use crate::config::Config;
@@ -22,12 +22,23 @@ pub(super) struct Run {
     pub(super) ok: bool,
 }
 
+/// One run of an inline program from `-e` or stdin. It has no saved name, so it does not parse as
+/// a `Run`, and the census reads it apart by `inline`.
+#[derive(Serialize)]
+pub(super) struct Inline {
+    pub(super) inline: bool,
+    pub(super) cwd: String,
+    pub(super) ms: u64,
+    pub(super) ok: bool,
+    pub(super) calls: u64,
+}
+
 pub(super) fn path(cfg: &Config) -> PathBuf {
     capsa_core::paths::log_file("acus", NAME).unwrap_or_else(|| cfg.path.with_file_name(NAME))
 }
 
-/// Appends one run; a log that cannot be written never fails the script.
-pub(super) fn record(log: &Path, run: &Run) {
+/// Appends one run, saved or inline; a log that cannot be written never fails the script.
+pub(super) fn record<T: Serialize>(log: &Path, run: &T) {
     let _ = log::append(log, MAX_BYTES, Level::Info, EVENT, run);
 }
 

@@ -28,7 +28,8 @@ pub use prices::{
     refresh as refresh_prices,
 };
 pub use script::{
-    ScriptEntry, ScriptStat, by_script, log_path as script_log_path, read_log as read_script_log,
+    InlineStat, ScriptEntry, ScriptStat, by_script, inline_stat, log_path as script_log_path,
+    read_log as read_script_log,
 };
 pub use time::{parse_date, parse_ts};
 pub use tools::group;

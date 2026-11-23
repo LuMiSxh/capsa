@@ -5,7 +5,12 @@
 use capsa_core::format::{Format, Stream, color};
 use capsa_core::render::{Doc, Profile, bold};
 
+use std::cell::RefCell;
 use std::io;
+
+thread_local! {
+    static CAPTURE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
 
 /// Prints one line through `out::write`.
 macro_rules! outln {
@@ -26,11 +31,27 @@ mod budget;
 mod clip;
 
 pub use budget::Budget;
-pub use clip::{CUT, clip, fit_line, hit_text, more_lines};
+pub use clip::{CUT, clip, clip_lines, fit_line, fit_lines, hit_text, more_lines};
 
-/// Writes `s` to stdout.
+/// Writes `s` to stdout, or to the buffer of the running [`capture`] on this thread.
 pub fn write(s: &str) {
-    print!("{s}");
+    let kept = CAPTURE.with(|c| {
+        c.borrow_mut()
+            .as_mut()
+            .map(|buffer| buffer.push_str(s))
+            .is_some()
+    });
+    if !kept {
+        print!("{s}");
+    }
+}
+
+/// Runs `print` and returns what it wrote through [`write`] instead of printing it.
+#[cfg(feature = "script")]
+pub fn capture(print: impl FnOnce()) -> String {
+    CAPTURE.with(|c| *c.borrow_mut() = Some(String::new()));
+    print();
+    CAPTURE.with(|c| c.borrow_mut().take()).unwrap_or_default()
 }
 
 /// Printing helpers. Colour follows `capsa_core::format::color`: human output on a terminal

@@ -6,6 +6,7 @@ use crate::config::{Billing, Config};
 use crate::context::{self, ContextUse};
 use crate::transcript::{self, Record};
 use crate::usage::{Cost, Tokens, parse_ts};
+use capsa_core::claude_settings;
 use capsa_core::hint::Hint;
 use serde::Serialize;
 use std::borrow::Cow;
@@ -90,7 +91,7 @@ impl Hint for SessionError {
 /// transcript matches the current directory.
 pub fn resolve_here(flag: Option<&str>) -> Result<Resolved, SessionError> {
     let cwd = std::env::current_dir().map_err(SessionError::Cwd)?;
-    let roots = [context::claude_config_dir().join("projects")];
+    let roots = [claude_settings::config_dir().join("projects")];
     let env = SESSION_ENV.iter().find_map(|key| {
         std::env::var(key)
             .ok()

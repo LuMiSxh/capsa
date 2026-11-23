@@ -4,6 +4,8 @@ One call replaces search → read: line-numbered, grouped by symbol; every trunc
 
 | Instead of | Run |
 |---|---|
+| 2+ calls you can plan before seeing results: Read, Grep, Glob, Edit, Bash, WebFetch | one `acus script`; independent calls run in parallel |
+| several independent acus commands, no logic | `acus batch <<'EOF'`: one acus command per line, in parallel, no JS |
 | grep, rg, find | `acus find 'PAT' [PATH…]`; `--block` adds code |
 | cat, head, tail, sed -n, Read | `acus show PATH#Sym PATH:A-B`; `acus outline PATH` |
 | Glob, find -name, ls, fd, git ls-files | `acus files [PATH…] [-g GLOB]`; `--lines` adds counts |
@@ -12,15 +14,16 @@ One call replaces search → read: line-numbered, grouped by symbol; every trunc
 | git status, git diff | `acus diff [REV]`; `-p` adds the changed lines |
 | git log | `acus log [-n N] [REV] [PATH…]` |
 | who calls, what it calls | `acus follow PATH#Sym`; `--down` for callees |
-| several dependent lookups, a survey | `acus script <<'JS' … JS` |
 
 ```bash
 acus script <<'JS'
-const hits = await find('fn parse', {glob: '*.rs'});
-return await show(hits.head(2).map((h) => `${h.path}:${h.line}-${h.line + 20}`));
+await edit('src/config.rs', 'timeout = 30', 'timeout = 60');
+await run('cargo test', {tail: 40})
 JS
 ```
 
+- The last expression is printed when the script has no `return` or `print`.
+- A script's `read`, `write`, `edit` and `fetch` replace Claude's Read, Write, Edit and WebFetch in a batch, under the same permission rules.
 - Limit output with `--head N` (`find`, `show`, `outline`, `diff`) or `acus run --tail N`, `--grep RE`, `--drop RE`.
 
 Edit with `acus patch`; no prior read needed.

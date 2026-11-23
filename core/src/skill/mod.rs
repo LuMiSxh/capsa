@@ -2,7 +2,7 @@
 //! Installs, checks and removes a tool's agent skill (`SKILL.md`) for Claude Code and Codex.
 
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::hint::Hint;
 
@@ -33,6 +33,8 @@ pub enum Target {
 }
 
 const SKILL_FILE: &str = "SKILL.md";
+/// Lists the files the last install wrote, one relative path per line.
+const MANIFEST_FILE: &str = ".acus-files";
 
 impl Target {
     /// The skill directories of `tool` under `home` that this target covers.
@@ -52,13 +54,15 @@ impl Target {
 pub enum SkillState {
     /// No `SKILL.md` exists in any of the target's directories.
     Missing,
-    /// At least one `SKILL.md` exists and differs from the shipped text, or cannot be read.
+    /// At least one `SKILL.md` exists and differs from the shipped text, cannot be read, or sits
+    /// beside a file an older version shipped.
     Outdated,
     /// Every `SKILL.md` that exists matches the shipped text.
     Current,
 }
 
 /// Writes `skill` into the directories of `target` under `home` and returns the files written.
+/// Files an earlier install wrote that this one no longer ships are removed.
 ///
 /// # Errors
 ///
@@ -71,6 +75,7 @@ pub fn install(home: &Path, skill: &Skill, target: Target) -> Result<Vec<PathBuf
             path: dir.clone(),
             source,
         })?;
+        let stale = stale_files(&dir, skill);
         write(&dir.join(SKILL_FILE), skill.text, &mut written)?;
         for (path, text) in skill.extra {
             let file = dir.join(path);
@@ -82,6 +87,8 @@ pub fn install(home: &Path, skill: &Skill, target: Target) -> Result<Vec<PathBuf
             }
             write(&file, text, &mut written)?;
         }
+        remove_stale(&dir, &stale)?;
+        write_manifest(&dir, skill)?;
     }
     Ok(written)
 }
@@ -95,8 +102,102 @@ fn write(file: &Path, text: &str, written: &mut Vec<PathBuf>) -> Result<(), Skil
     Ok(())
 }
 
-/// Removes the files of `skill` from every skill directory under `home`, and each directory that
-/// is left empty. Returns the files removed or, with `dry_run`, the files that would be.
+fn remove(file: &Path) -> Result<(), SkillError> {
+    std::fs::remove_file(file).map_err(|source| SkillError::Remove {
+        path: file.to_path_buf(),
+        source,
+    })
+}
+
+/// The files `skill` ships below its directory: `SKILL.md`, then the extra files.
+fn shipped(skill: &Skill) -> Vec<&'static str> {
+    std::iter::once(SKILL_FILE)
+        .chain(skill.extra.iter().map(|&(path, _)| path))
+        .collect()
+}
+
+fn write_manifest(dir: &Path, skill: &Skill) -> Result<(), SkillError> {
+    let text: String = shipped(skill)
+        .iter()
+        .map(|file| format!("{file}\n"))
+        .collect();
+    let path = dir.join(MANIFEST_FILE);
+    std::fs::write(&path, text).map_err(|source| SkillError::Write { path, source })
+}
+
+/// The files an earlier install left in `dir` that `skill` no longer ships. The manifest lists
+/// them; without one, the `.md` files in the subdirectories `skill` ships in are the candidates.
+fn stale_files(dir: &Path, skill: &Skill) -> Vec<String> {
+    let current = shipped(skill);
+    read_manifest(dir)
+        .unwrap_or_else(|| legacy_files(dir, skill))
+        .into_iter()
+        .filter(|file| !current.contains(&file.as_str()))
+        .collect()
+}
+
+/// The files the manifest in `dir` lists, or `None` when there is none. An entry that is absolute
+/// or climbs out of `dir` is skipped, so a damaged manifest cannot delete files outside it.
+fn read_manifest(dir: &Path) -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(dir.join(MANIFEST_FILE)).ok()?;
+    Some(
+        text.lines()
+            .map(str::trim)
+            .filter(|line| is_relative_file(line))
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+fn is_relative_file(path: &str) -> bool {
+    !path.is_empty()
+        && Path::new(path)
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+}
+
+/// The `.md` files in the subdirectories `skill` ships in, as paths relative to `dir`. An install
+/// from before the manifest recorded no files, so these are the only ones it can have left.
+fn legacy_files(dir: &Path, skill: &Skill) -> Vec<String> {
+    let mut subdirs: Vec<&str> = skill
+        .extra
+        .iter()
+        .filter_map(|&(path, _)| path.rsplit_once('/').map(|(sub, _)| sub))
+        .collect();
+    subdirs.sort_unstable();
+    subdirs.dedup();
+    let mut files = Vec::new();
+    for sub in subdirs {
+        let Ok(entries) = std::fs::read_dir(dir.join(sub)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            if name.ends_with(".md") && entry.path().is_file() {
+                files.push(format!("{sub}/{name}"));
+            }
+        }
+    }
+    files
+}
+
+/// Removes the files a previous install left behind that are still on disk.
+fn remove_stale(dir: &Path, stale: &[String]) -> Result<(), SkillError> {
+    for file in stale {
+        let path = dir.join(file);
+        if path.is_file() {
+            remove(&path)?;
+        }
+    }
+    remove_empty_dirs(dir, stale);
+    Ok(())
+}
+
+/// Removes the files of `skill` and the files its manifest lists from every skill directory under
+/// `home`, the manifest too, and each directory that is left empty. Returns the files removed or,
+/// with `dry_run`, the files that would be.
 ///
 /// # Errors
 ///
@@ -104,38 +205,44 @@ fn write(file: &Path, text: &str, written: &mut Vec<PathBuf>) -> Result<(), Skil
 pub fn uninstall(home: &Path, skill: &Skill, dry_run: bool) -> Result<Vec<PathBuf>, SkillError> {
     let mut files = Vec::new();
     for dir in Target::All.dirs(home, skill.tool) {
-        let mut removed = false;
-        for file in owned_files(&dir, skill) {
-            if !file.is_file() {
-                continue;
+        let owned = owned_files(&dir, skill);
+        for file in &owned {
+            let path = dir.join(file);
+            if path.is_file() {
+                if !dry_run {
+                    remove(&path)?;
+                }
+                files.push(path);
             }
-            if !dry_run {
-                std::fs::remove_file(&file).map_err(|source| SkillError::Remove {
-                    path: file.clone(),
-                    source,
-                })?;
-                removed = true;
-            }
-            files.push(file);
         }
-        if removed {
-            remove_empty_owned_dirs(&dir, skill.extra);
+        if dry_run {
+            continue;
         }
+        let manifest = dir.join(MANIFEST_FILE);
+        if manifest.is_file() {
+            remove(&manifest)?;
+        }
+        remove_empty_dirs(&dir, &owned);
     }
     Ok(files)
 }
 
-fn owned_files(dir: &Path, skill: &Skill) -> Vec<PathBuf> {
-    let mut files = vec![dir.join(SKILL_FILE)];
-    files.extend(skill.extra.iter().map(|(path, _)| dir.join(path)));
+/// The files `skill` owns in `dir`: what it ships, and what the manifest lists from older versions.
+fn owned_files(dir: &Path, skill: &Skill) -> Vec<String> {
+    let mut files: Vec<String> = shipped(skill).into_iter().map(str::to_owned).collect();
+    for file in read_manifest(dir).unwrap_or_default() {
+        if !files.contains(&file) {
+            files.push(file);
+        }
+    }
     files
 }
 
-/// Removes the directories a skill owns below `dir`, deepest first, where they are empty.
-fn remove_empty_owned_dirs(dir: &Path, extra: ExtraFiles) {
-    let mut dirs: Vec<PathBuf> = extra
+/// Removes the directories `files` sit in below `dir`, deepest first, where they are empty.
+fn remove_empty_dirs(dir: &Path, files: &[String]) {
+    let mut dirs: Vec<PathBuf> = files
         .iter()
-        .filter_map(|(path, _)| dir.join(path).parent().map(Path::to_path_buf))
+        .filter_map(|path| dir.join(path).parent().map(Path::to_path_buf))
         .collect();
     dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     dirs.dedup();
@@ -163,6 +270,9 @@ pub fn state(home: &Path, skill: &Skill, target: Target) -> SkillState {
                 Ok(found) if found == *text => {}
                 _ => return SkillState::Outdated,
             }
+        }
+        if !stale_files(&dir, skill).is_empty() {
+            return SkillState::Outdated;
         }
     }
     if present {

@@ -2,6 +2,65 @@
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-23
+
+### Added
+
+- `acus script` logs inline programs, from `-e` or stdin, to `script.jsonl` too. Their records have
+  `"inline": true` and no `name`, and carry `ms`, `ok`, `cwd` and `calls`, the host calls the program
+  made. Saved-script records keep their fields, so existing readers still parse them.
+- `acus batch` runs acus commands from stdin, one per line, in parallel, and prints each under a
+  `== command` header in line order. `--head N` caps each line's output and `--cut N` clips each
+  printed line, and exits 0 when a line found something, 1 when none did and 2 when a line failed. `patch`, `script`, `batch` and `self` lines are refused, and the others still run.
+- `acus script` keeps what a failed program printed, and the host calls that finished unawaited,
+  before its error. `--json` lists the unawaited ones under `unawaited`.
+- `acus script` prints every result kind as its command's text, and other values as compact JSON.
+- `acus script` caps its output at 400 lines and 24000 bytes: `--max-output N` or `[script] output`.
+  Prints come first and the return value keeps half the budget. `--json` is not capped.
+- Script functions `all([...])` (a failed entry becomes `{ok: false, error, hint, call}`),
+  `retry(fn, {times, delayMs})` and `sleep(ms)`. A program without `return` or `print` returns its
+  last expression.
+- `acus script` and `acus batch` follow Claude Code's permission mode. Hooks (`UserPromptSubmit`,
+  `PostToolUse` for `ExitPlanMode` (when plan mode ends), and `PreToolUse` when it carries `permission_mode`) record it per session in
+  `<state dir>/permission-mode/<session id>.json`; `acus self setup` registers them and `self
+  doctor` checks them. In `plan` mode a script refuses `run()` and edits; in `dontAsk` mode it
+  refuses `run()`, edits, `fetch` and MCP calls that no allow rule covers. `[script] strict = true`
+  applies the same to `default`, `auto` and `acceptEdits`. `bypassPermissions` and a mode not
+  known behave as before. An edit of `.git/` or a Claude settings file needs an allow rule in
+  every other mode, and a `Bash(...)` rule sees the `bash -c` body behind options such as `-o
+  pipefail`, `-ec` and `--`.
+- Script calls obey Claude Code's `Bash(...)`, `Read(...)`, `Edit(...)`, `Write(...)`,
+  `WebFetch(...)` and `mcp__` deny and ask rules, and refuse the matching call with a hint. A batch
+  applies the `Bash(...)` rules to its `run` lines.
+- Script functions `write(path, text)`, `edit(path, old, new, {all})` and `patch([{path, old, new,
+  all}])` change files under the Edit rules; the array form applies all or nothing.
+- Read-only script calls (`find`, `show`, `outline`, `files`, `follow`, `diff`, `log`, `blame`,
+  `read`, `stat`, `exists`) are remembered within one run; a write clears them.
+- Script function `fetch(url, {grep, head})` reads an http or https page as markdown. `[script]
+  fetch_deny` lists hosts it refuses, and `[commands] disabled = ["fetch"]` turns it off.
+- Script function `read(path, {offset, limit, numbered})` reads files under the repository and
+  `permissions.additionalDirectories`; an image or binary file returns its metadata.
+- Script functions `stat`, `exists`, `env` (names with `KEY`, `TOKEN`, `SECRET`, `PASS`, `AUTH` or
+  `CREDENTIAL` return `"<set>"`), `textDiff`, `parse.toml` and `parse.yaml`. `parse.yaml` reads the
+  first document of a multi-document file and returns `null` for empty text.
+
+### Changed
+
+- Building needs Rust 1.100 or newer (was 1.99.1).
+- The `script` feature, on by default, adds the `serde_norway` dependency for `parse.yaml`; `htmd`, `ureq`, `url` and `chrono` come with it.
+- `acus` records the Claude Code permission mode on `UserPromptSubmit` and on `PostToolUse` for `ExitPlanMode` (when plan mode ends). After updating, run `acus self setup` to install these two hooks in `settings.json`; `SessionStart`, `PreToolUse` and `SubagentStart` are unchanged.
+- The skill sends 2+ calls that can be planned to one `acus script`, and independent acus commands
+  to `acus batch`, in place of back-to-back Read, Grep, Glob, Edit, Bash and WebFetch calls.
+
+### Fixed
+
+- `acus self update` and `acus self skill --install` remove skill files that an older version
+  shipped, such as `reference/ctx.md` after the `ctx` topic became `run`. Each install lists the
+  files it wrote in `.acus-files` beside `SKILL.md`, and the next install removes the listed files
+  it no longer ships. Without that list, it removes the `.md` files in the subdirectories the skill
+  ships files in and leaves every other file in the skill directory alone. `acus self uninstall`
+  removes the listed files too, and `acus self doctor --fix` repairs a skill that still holds one.
+
 ## [0.24.0]
 
 ### Added

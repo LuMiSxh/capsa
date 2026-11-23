@@ -65,6 +65,7 @@ fn an_uncaught_host_error_names_the_program_line_and_the_hint() {
         line,
         message,
         hint,
+        ..
     } = err
     else {
         panic!("expected an uncaught error");
@@ -72,6 +73,43 @@ fn an_uncaught_host_error_names_the_program_line_and_the_hint() {
     assert_eq!(line, Some(2));
     assert_eq!(message, "no such file");
     assert_eq!(hint.as_deref(), Some("run acus files"));
+}
+
+#[test]
+fn prints_before_an_uncaught_throw_come_back_with_the_error() {
+    let err = run(
+        "print('before');\nthrow new Error('boom');",
+        Fake,
+        &limits(),
+    )
+    .unwrap_err();
+    let ScriptError::Uncaught { partial, .. } = err else {
+        panic!("expected an uncaught error");
+    };
+    assert_eq!(partial.prints, [json!("before")]);
+}
+
+#[test]
+fn prints_before_the_deadline_come_back_with_the_timeout() {
+    let quick = Limits {
+        deadline: Duration::from_millis(200),
+        ..limits()
+    };
+    let err = run("print('before');\nwhile (true) {}", Fake, &quick).unwrap_err();
+    let ScriptError::Timeout { partial, .. } = err else {
+        panic!("expected a timeout");
+    };
+    assert_eq!(partial.prints, [json!("before")]);
+}
+
+#[test]
+fn a_call_nobody_awaited_comes_back_when_the_program_throws() {
+    let err = run("rows(1);\nthrow new Error('boom');", Fake, &limits()).unwrap_err();
+    let ScriptError::Uncaught { partial, .. } = err else {
+        panic!("expected an uncaught error");
+    };
+    assert_eq!(partial.completed.len(), 1);
+    assert_eq!(partial.completed[0]["kind"], "hits");
 }
 
 #[test]
@@ -83,11 +121,11 @@ fn failures_map_to_their_own_variants() {
             |e| matches!(e, ScriptError::Uncaught { message, .. } if message.contains("stack")),
         ),
         ("while (true) {}", |e| {
-            matches!(e, ScriptError::Timeout { secs: 1 })
+            matches!(e, ScriptError::Timeout { secs: 1, .. })
         }),
         (
             "const a = []; while (true) a.push('x'.repeat(1 << 20));",
-            |e| matches!(e, ScriptError::Memory { mib: 32 }),
+            |e| matches!(e, ScriptError::Memory { mib: 32, .. }),
         ),
         (
             "const a = 1;\nconst b = ;",
@@ -338,4 +376,171 @@ fn a_panicking_host_call_becomes_a_script_error() {
     )
     .unwrap();
     assert_eq!(out.value, Some(json!("boom() panicked")));
+}
+
+#[test]
+fn a_host_error_carries_the_function_name_and_its_arguments() {
+    let out = run(
+        "try { await fail(7, 'x'); } catch (e) { return [e.call, e.args]; }",
+        Fake,
+        &limits(),
+    )
+    .unwrap();
+    assert_eq!(out.value, Some(json!(["fail", [7, "x"]])));
+}
+
+#[test]
+fn all_keeps_the_order_and_turns_a_rejected_entry_into_a_failure() {
+    let out = run(
+        "const r = await all([rows(1), fail(7)]); return [r[0].kind, r[1]];",
+        Fake,
+        &limits(),
+    )
+    .unwrap();
+    assert_eq!(
+        out.value,
+        Some(json!([
+            "hits",
+            {"ok": false, "error": "no such file", "hint": "run acus files", "call": "fail"}
+        ]))
+    );
+}
+
+/// Fails its first `fail_for` calls with "busy", then answers "done"; `sleep` naps as the CLI does.
+struct Flaky {
+    calls: Arc<AtomicUsize>,
+    fail_for: usize,
+}
+
+impl Host for Flaky {
+    fn names(&self) -> &[&str] {
+        &["flaky", "sleep"]
+    }
+
+    fn call(&self, name: &str, args: Vec<Value>, _: Instant) -> Result<Value, HostError> {
+        if name == "sleep" {
+            let ms = args.first().and_then(Value::as_u64).unwrap_or(0);
+            std::thread::sleep(Duration::from_millis(ms));
+            return Ok(Value::Null);
+        }
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call < self.fail_for {
+            Err(HostError::new("busy"))
+        } else {
+            Ok(json!("done"))
+        }
+    }
+}
+
+#[test]
+fn retry_succeeds_on_the_second_try() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let host = Flaky {
+        calls: Arc::clone(&calls),
+        fail_for: 1,
+    };
+    let out = run(
+        "return await retry(() => flaky(), {delayMs: 5});",
+        host,
+        &limits(),
+    )
+    .unwrap();
+    assert_eq!(out.value, Some(json!("done")));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn retry_stops_after_times_attempts_and_throws_the_last_error() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let host = Flaky {
+        calls: Arc::clone(&calls),
+        fail_for: 9,
+    };
+    let code = "try { return await retry(() => flaky(), {times: 2, delayMs: 1}); } catch (e) { return e.message; }";
+    let out = run(code, host, &limits()).unwrap();
+    assert_eq!(out.value, Some(json!("busy")));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn the_last_expression_is_the_result_when_the_program_neither_returns_nor_prints() {
+    let cases = [
+        ("1 + 1", Some(json!(2))),
+        ("const a = 2;\na * 3;", Some(json!(6))),
+        ("const a = 2;\na * 4 // done", Some(json!(8))),
+        ("const a = 2;\na * 5\n// done\n", Some(json!(10))),
+        (
+            "const h = [1, 2, 3];\nh\n  .map((x) => x * 2)\n  .filter((x) => x > 2)",
+            Some(json!([4, 6])),
+        ),
+        ("const a = 1;\nconst b = a + 1", None),
+        ("const xs = [1, 2].map((x) => {\n  x + 1\n})", None),
+        ("const a = 1;\nfunction f() {\n  a + 1\n}", None),
+        ("const a = [1];\nif (a) {\n  a.length;\n}", None),
+        ("const a = [1];\n{\n  a.length\n}", None),
+    ];
+    for (code, expected) in cases {
+        let out = run(code, Fake, &limits()).unwrap();
+        assert_eq!(out.value, expected, "{code}");
+    }
+}
+
+#[test]
+fn a_brace_less_body_or_label_is_not_the_result() {
+    let cases = [
+        (
+            "let i = 0;\nfor (const x of [1, 2, 3])\n  print(x);",
+            json!([1, 2, 3]),
+        ),
+        ("let i = 0;\nwhile (i < 3)\n  print(i++)", json!([0, 1, 2])),
+        (
+            "let i = 0;\ndo\n  print(i++)\nwhile (i < 3)",
+            json!([0, 1, 2]),
+        ),
+        ("let n = 0;\nif (n === 0)\n  n = 5", json!([])),
+        ("let n = 0;\nif (n === 1) n = 1;\nelse\n  n = 7", json!([])),
+        ("let n = 0;\nskip:\n  n + 2", json!([])),
+    ];
+    for (code, prints) in cases {
+        let out = run(code, Fake, &limits()).unwrap();
+        assert_eq!(out.value, None, "{code}");
+        assert_eq!(Value::Array(out.prints), prints, "{code}");
+    }
+}
+
+#[test]
+fn a_line_break_that_continues_an_expression_keeps_it_whole() {
+    let cases = [
+        ("let x = 1;\nx = 2\n+ 5", Some(json!(7))),
+        ("let a = 1;\nlet b = 2;\na\n++b", Some(json!(3))),
+    ];
+    for (code, expected) in cases {
+        let out = run(code, Fake, &limits()).unwrap();
+        assert_eq!(out.value, expected, "{code}");
+    }
+}
+
+#[test]
+fn the_last_expression_after_a_brace_less_body_is_the_result() {
+    let cases = [
+        ("let n = 0;\nif (n === 0)\n  n = 5;\nn + 1", Some(json!(6))),
+        (
+            "let n = 0;\nfor (const x of [1, 2])\n  n += x\nn * 10",
+            Some(json!(30)),
+        ),
+    ];
+    for (code, expected) in cases {
+        let out = run(code, Fake, &limits()).unwrap();
+        assert_eq!(out.value, expected, "{code}");
+    }
+}
+
+#[test]
+fn a_program_that_prints_or_returns_keeps_its_own_result() {
+    let out = run("print('a'); 2", Fake, &limits()).unwrap();
+    assert_eq!(out.prints, [json!("a")]);
+    assert_eq!(out.value, None);
+
+    let out = run("const a = 1;\nreturn a + 1;\n", Fake, &limits()).unwrap();
+    assert_eq!(out.value, Some(json!(2)));
 }

@@ -52,6 +52,38 @@ pub fn fit_line(text: &str, budget: usize) -> String {
     }
 }
 
+/// Clips each line of `body` to `max` chars with `clip`, keeping the newlines.
+pub fn clip_lines(body: &str, max: usize) -> String {
+    let mut out = String::with_capacity(body.len());
+    for line in body.split_inclusive('\n') {
+        match line.strip_suffix('\n') {
+            Some(text) => {
+                out.push_str(&clip(text, 0, max));
+                out.push('\n');
+            }
+            None => out.push_str(&clip(line, 0, max)),
+        }
+    }
+    out
+}
+
+/// Keeps the longest prefix of whole lines that fits in `max` chars and counts the lines it leaves
+/// out.
+pub fn fit_lines(body: &str, max: usize) -> (&str, usize) {
+    let (mut used, mut end, mut dropped, mut fits) = (0, 0, 0, true);
+    for line in body.split_inclusive('\n') {
+        let n = line.chars().count();
+        if fits && used + n <= max {
+            used += n;
+            end += line.len();
+        } else {
+            fits = false;
+            dropped += 1;
+        }
+    }
+    (body.get(..end).unwrap_or_default(), dropped)
+}
+
 /// The footer under a truncated listing, naming the command that shows the rest.
 pub fn more_lines(path: &str, from: usize, to: usize, n: usize) -> String {
     format!("… {n} more lines (acus show {path}:{from}-{to})")
@@ -78,5 +110,18 @@ mod tests {
         assert!(fitted.contains("(+"), "{fitted}");
         assert_eq!(fit_line("short", 100), "short");
         assert!(fit_line(&line, 8).is_empty());
+    }
+
+    #[test]
+    fn fits_whole_lines_and_counts_the_rest() {
+        let (kept, dropped) = fit_lines("aaa\nbb\nc\n", 8);
+        assert_eq!((kept, dropped), ("aaa\nbb\n", 1));
+        let (kept, dropped) = fit_lines("long line\nshort\n", 4);
+        assert_eq!((kept, dropped), ("", 2));
+    }
+
+    #[test]
+    fn clip_lines_clips_each_line_and_keeps_newlines() {
+        assert_eq!(clip_lines("abcd\nef", 2), "ab… (+2 chars)\nef");
     }
 }

@@ -18,7 +18,7 @@ fn setup_dry_run_then_setup_twice_is_idempotent() {
     let v = json_line(&out);
     assert_eq!(v["dry_run"], true);
     let checks = v["checks"].as_array().unwrap();
-    assert_eq!(checks.len(), 4, "{out}");
+    assert_eq!(checks.len(), 6, "{out}");
     assert!(
         checks[1]["detail"]
             .as_str()
@@ -120,7 +120,7 @@ fn setup_replaces_the_old_hook_entries() {
         .flat_map(|group| group["hooks"].as_array().unwrap())
         .filter_map(|hook| hook["command"].as_str())
         .collect();
-    assert_eq!(commands.len(), 3, "{text}");
+    assert_eq!(commands.len(), 5, "{text}");
     assert!(
         commands
             .iter()
@@ -148,6 +148,23 @@ fn setup_registers_subagent_start_for_every_subagent() {
         groups[0]["hooks"][0]["command"], "acus hook 2>/dev/null || true",
         "{text}"
     );
+}
+
+#[test]
+fn setup_scopes_post_tool_use_to_exit_plan_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let claude = dir.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+
+    let (code, _, err) = acus_env(&["self", "setup"], &env);
+    assert_eq!(code, 0, "{err}");
+    let text = std::fs::read_to_string(claude.join("settings.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let groups = v["hooks"]["PostToolUse"].as_array().unwrap();
+    assert_eq!(groups.len(), 1, "{text}");
+    assert_eq!(groups[0]["matcher"], "ExitPlanMode", "{text}");
 }
 
 #[test]
@@ -207,7 +224,7 @@ fn setup_run_twice_writes_the_same_settings() {
         .iter()
         .filter(|c| c["name"].as_str().is_some_and(|n| n.starts_with("hook ")))
         .collect();
-    assert_eq!(hooks.len(), 3, "{out}");
+    assert_eq!(hooks.len(), 5, "{out}");
     for hook in hooks {
         assert!(
             hook["detail"].as_str().unwrap().starts_with("already set"),
