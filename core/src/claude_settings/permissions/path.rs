@@ -60,11 +60,23 @@ pub(super) fn targets(path: &Path, cwd: &Path) -> Vec<String> {
         }
     }
     let mut found = vec![virt(&lexical)];
-    let real = lexical.canonicalize().ok().or_else(|| {
-        let parent = lexical.parent()?.canonicalize().ok()?;
-        Some(parent.join(lexical.file_name()?))
-    });
-    if let Some(real) = real {
+    // Resolve the deepest ancestor that exists, so a file not yet created, or in a directory
+    // not yet created, still gets the canonical spelling of the place it will land.
+    let mut real = lexical.as_path();
+    let mut tail = Vec::new();
+    let resolved = loop {
+        if let Ok(done) = real.canonicalize() {
+            break Some(tail.iter().rev().fold(done, |acc, part| acc.join(part)));
+        }
+        match (real.parent(), real.file_name()) {
+            (Some(parent), Some(name)) => {
+                tail.push(name);
+                real = parent;
+            }
+            _ => break None,
+        }
+    };
+    if let Some(real) = resolved {
         let real = virt(&real);
         if !found.contains(&real) {
             found.push(real);
