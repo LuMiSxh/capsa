@@ -12,7 +12,7 @@ AGENTS.md before working in its directory.
 | `pons/`   | `pons`  | ACP proxy between Zed and the Claude ACP adapter |
 | `census/` | `census` | Usage analytics, limits and context awareness for the main agent |
 | `vicarius/` | `vicarius` | Local proxy that routes `-ds` subagents to DeepSeek while credit lasts |
-| `core/`   | `capsa-core` | Shared library. Modules: `render`, `cli` (feature `clap`), `log`, `skill`, `claude_settings`, `update` (feature `update`), `exit`, `format`, `hint`, `paths`, `pkg`, `which`, `census_snapshot` |
+| `core/`   | `capsa-core` | Shared library. Modules: `render`, `cli` (feature `clap`), `log`, `skill`, `claude_settings` (with `permissions`), `update` (feature `update`), `exit`, `format`, `hint`, `paths`, `pkg`, `which`, `census_snapshot` |
 
 ## Rules
 

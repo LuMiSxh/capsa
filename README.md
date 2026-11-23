@@ -6,7 +6,7 @@
 **Tools for coding agents, in one repository.** Each tool has its own version, tag and release.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/LuMiSxh/capsa/ci.yml?branch=main&style=flat-square&labelColor=23252a&color=d9973f&label=CI)](https://github.com/LuMiSxh/capsa/actions/workflows/ci.yml)
-[![Rust 1.99+](https://img.shields.io/badge/Rust-1.99%2B-d9973f?style=flat-square&labelColor=23252a)](rust-toolchain.toml)
+[![Rust 1.100+](https://img.shields.io/badge/Rust-1.100%2B-d9973f?style=flat-square&labelColor=23252a)](rust-toolchain.toml)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-d9973f?style=flat-square&labelColor=23252a)
 [![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-d9973f?style=flat-square&labelColor=23252a)](LICENSE)
 

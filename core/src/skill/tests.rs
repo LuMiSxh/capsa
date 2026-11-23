@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::Skill;
-use super::{SkillState, Target, install, installed_target, state, uninstall};
+use super::{MANIFEST_FILE, SkillState, Target, install, installed_target, state, uninstall};
 
 const SKILL: Skill = Skill {
     tool: "demo",
@@ -16,6 +16,12 @@ const EXTRA: Skill = Skill {
         ("reference/one.md", "# one\n"),
         ("reference/two.md", "# two\n"),
     ],
+};
+
+const SHRUNK: Skill = Skill {
+    tool: "demo",
+    text: "# demo\n",
+    extra: &[("reference/one.md", "# one\n")],
 };
 
 fn skill_file(home: &std::path::Path, dir: &str) -> std::path::PathBuf {
@@ -157,4 +163,96 @@ fn installed_target_reports_where_the_skill_lives() {
     std::fs::create_dir_all(h.join(CLAUDE).join("demo")).unwrap();
     assert_eq!(installed_target(h, "demo"), Some(Target::All));
     assert_eq!(installed_target(h, "other"), None);
+}
+
+#[test]
+fn install_writes_a_manifest_of_the_files_it_wrote() {
+    let t = tempfile::tempdir().unwrap();
+    install(t.path(), &EXTRA, Target::Claude).unwrap();
+    let manifest = t.path().join(CLAUDE).join("demo").join(MANIFEST_FILE);
+    assert_eq!(
+        std::fs::read_to_string(manifest).unwrap(),
+        "SKILL.md\nreference/one.md\nreference/two.md\n"
+    );
+}
+
+#[test]
+fn install_removes_a_file_the_manifest_lists_but_the_new_skill_drops() {
+    let t = tempfile::tempdir().unwrap();
+    install(t.path(), &EXTRA, Target::Claude).unwrap();
+    install(t.path(), &SHRUNK, Target::Claude).unwrap();
+    let dir = t.path().join(CLAUDE).join("demo");
+    assert!(!dir.join("reference/two.md").exists());
+    assert!(dir.join("reference/one.md").is_file());
+    assert_eq!(
+        state(t.path(), &SHRUNK, Target::Claude),
+        SkillState::Current
+    );
+}
+
+#[test]
+fn install_removes_reference_files_of_an_install_without_a_manifest() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join(CLAUDE).join("demo");
+    std::fs::create_dir_all(dir.join("reference")).unwrap();
+    std::fs::write(dir.join("SKILL.md"), "# old\n").unwrap();
+    std::fs::write(dir.join("reference/ctx.md"), "# ctx\n").unwrap();
+    install(t.path(), &EXTRA, Target::Claude).unwrap();
+    assert!(!dir.join("reference/ctx.md").exists());
+    assert!(dir.join("reference/one.md").is_file());
+}
+
+#[test]
+fn install_keeps_a_user_file_beside_the_skill() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join(CLAUDE).join("demo");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("notes.md"), "mine").unwrap();
+    install(t.path(), &EXTRA, Target::Claude).unwrap();
+    install(t.path(), &SHRUNK, Target::Claude).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("notes.md")).unwrap(),
+        "mine"
+    );
+}
+
+#[test]
+fn a_manifest_entry_outside_the_skill_directory_is_not_removed() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join(CLAUDE).join("demo");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(t.path().join("outside.md"), "mine").unwrap();
+    std::fs::write(dir.join(MANIFEST_FILE), "../../../outside.md\n").unwrap();
+    install(t.path(), &SKILL, Target::Claude).unwrap();
+    assert!(t.path().join("outside.md").is_file());
+}
+
+#[test]
+fn uninstall_removes_the_manifest_and_the_files_it_lists() {
+    let t = tempfile::tempdir().unwrap();
+    install(t.path(), &EXTRA, Target::Claude).unwrap();
+    let dir = t.path().join(CLAUDE).join("demo");
+    let manifest = dir.join(MANIFEST_FILE);
+    let listed = std::fs::read_to_string(&manifest).unwrap() + "reference/ctx.md\n";
+    std::fs::write(&manifest, listed).unwrap();
+    std::fs::write(dir.join("reference/ctx.md"), "# ctx\n").unwrap();
+    uninstall(t.path(), &EXTRA, false).unwrap();
+    assert!(!manifest.exists());
+    assert!(!dir.join("reference/ctx.md").exists());
+    assert!(!dir.exists());
+}
+
+#[test]
+fn state_is_outdated_while_a_listed_file_is_no_longer_shipped() {
+    let t = tempfile::tempdir().unwrap();
+    install(t.path(), &EXTRA, Target::Claude).unwrap();
+    assert_eq!(
+        state(t.path(), &SHRUNK, Target::Claude),
+        SkillState::Outdated
+    );
+    install(t.path(), &SHRUNK, Target::Claude).unwrap();
+    assert_eq!(
+        state(t.path(), &SHRUNK, Target::Claude),
+        SkillState::Current
+    );
 }

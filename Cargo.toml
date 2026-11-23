@@ -5,7 +5,7 @@ members = ["acus/crates/*", "pons", "core", "census", "vicarius"]
 # Tools keep their own versions; crates set `version` themselves.
 [workspace.package]
 edition = "2024"
-rust-version = "1.99.1"
+rust-version = "1.100.0"
 license = "MPL-2.0"
 repository = "https://github.com/LuMiSxh/capsa"
 
@@ -31,6 +31,7 @@ globset = "0.4.21"
 grep-matcher = "0.1.9"
 grep-regex = "0.1.14"
 grep-searcher = "0.1.17"
+htmd = "0.6.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.12.0", default-features = false }
 hyper-util = { version = "0.1.21", default-features = false }
@@ -42,6 +43,7 @@ reqwest = { version = "0.13.5", default-features = false }
 rquickjs = { version = "0.14.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value", "preserve_order"] }
+serde_norway = "0.9.42"
 sha2 = "0.11.1"
 similar = "3.2.1"
 tar = { version = "0.4.46", default-features = false }
@@ -69,6 +71,7 @@ tree-sitter-xml = "0.7.0"
 tree-sitter-yaml = "0.7.2"
 tree-sitter-zsh = "0.63.4"
 ureq = { version = "3.5.0", features = ["json"] }
+url = "2.5.8"
 windows-sys = "0.61.2"
 zip = { version = "9.2.2", default-features = false, features = ["deflate-flate2"] }
 

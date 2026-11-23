@@ -13,6 +13,7 @@ use serde_json::{Map, Value, json};
 use crate::hint::Hint;
 
 mod env;
+pub mod permissions;
 #[cfg(test)]
 mod tests;
 
@@ -61,13 +62,17 @@ impl Step {
     }
 }
 
-/// Claude Code's settings file: `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`.
-pub fn path() -> PathBuf {
+/// Returns Claude Code's configuration directory: `CLAUDE_CONFIG_DIR`, else `~/.claude`.
+pub fn config_dir() -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .or_else(|| std::env::home_dir().map(|h| h.join(".claude")))
         .unwrap_or_else(|| PathBuf::from(".claude"))
-        .join(SETTINGS)
+}
+
+/// Claude Code's settings file: `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`.
+pub fn path() -> PathBuf {
+    config_dir().join(SETTINGS)
 }
 
 /// Reads the settings at `path`. A missing file is an empty object; a symlink is followed, and
