@@ -5,10 +5,10 @@
 
 **Transparent stdio proxy between Zed and the Claude ACP adapter.** pons forwards every message unchanged, except for the subagent problems of Zed and the Claude adapter that it works around, and writes a wire log of the traffic.
 
-[![Rust 1.99+](https://img.shields.io/badge/Rust-1.99%2B-d9764e?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
+[![Rust 1.100+](https://img.shields.io/badge/Rust-1.100%2B-d9764e?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-d9764e?style=flat-square&labelColor=23252a)
 [![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-d9764e?style=flat-square&labelColor=23252a)](../LICENSE)
-[![Version](https://img.shields.io/badge/version-0.9.0-d9764e?style=flat-square&labelColor=23252a)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.0-d9764e?style=flat-square&labelColor=23252a)](CHANGELOG.md)
 
 **[capsa](../README.md)** · [Changelog](CHANGELOG.md)
 
