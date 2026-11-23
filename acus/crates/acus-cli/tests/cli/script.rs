@@ -237,8 +237,8 @@ fn script_read_refuses_dotdot_outside_symlinks_and_a_missing_repository() {
     std::os::unix::fs::symlink(base.join("secret.txt"), repo.join("link.txt")).unwrap();
     let cases = [
         (&repo, "ok.txt", None),
-        (&repo, "../secret.txt", Some("is outside the repository")),
-        (&repo, "link.txt", Some("is outside the repository")),
+        (&repo, "../secret.txt", Some("is outside the allowed roots")),
+        (&repo, "link.txt", Some("is outside the allowed roots")),
         (&plain, "ok.txt", Some("read() needs a git repository")),
     ];
     for (dir, path, refusal) in cases {
