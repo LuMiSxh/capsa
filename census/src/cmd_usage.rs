@@ -13,8 +13,8 @@ use capsa_core::render::{Doc, Render, emit};
 use census::config::Config;
 use census::limits::{self, Kind};
 use census::usage::{
-    Report, UsageOpts, WEIGHTS, by_script, compare, guard_log_path, parse_date, read_log,
-    read_script_log, refresh_prices, report, script_log_path, write_guard_follow,
+    Report, UsageOpts, WEIGHTS, by_script, compare, guard_log_path, inline_stat, parse_date,
+    read_log, read_script_log, refresh_prices, report, script_log_path, write_guard_follow,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -337,7 +337,8 @@ fn scripts(a: &Args, out: &Out) -> Result<Outcome> {
     let since = a.days.map_or(0, |d| now.saturating_sub(d * 86_400));
     let entries = read_script_log(since, a.project.as_deref());
     let stats = by_script(&entries);
-    let body = ScriptsView::new(path.display().to_string(), &stats, a.top, now);
+    let inline = inline_stat(&entries);
+    let body = ScriptsView::new(path.display().to_string(), &stats, inline, a.top, now);
     let outcome = emit(&body, out.format)?;
     Ok(if entries.is_empty() {
         Outcome::Empty

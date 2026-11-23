@@ -2,8 +2,9 @@
 //! Owns the context size of a session against the point where Claude Code compacts it.
 
 use crate::transcript;
+use capsa_core::claude_settings;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Context window of models that do not have the large one.
 const DEFAULT_WINDOW: u64 = 200_000;
@@ -32,7 +33,11 @@ pub struct ContextUse {
 
 /// Returns the context of `tokens` for `model` against the threshold of this process.
 pub fn measure(tokens: u64, model: Option<&str>) -> ContextUse {
-    measure_with(tokens, model, settings_window(&claude_config_dir()))
+    measure_with(
+        tokens,
+        model,
+        settings_window(&claude_settings::config_dir()),
+    )
 }
 
 /// Like [`measure`], with the `autoCompactWindow` of the settings already read by the caller.
@@ -113,14 +118,6 @@ fn family_version(model: &str, family: &str) -> Option<(u32, u32)> {
     // Dates such as `20241022` are longer than a version part and are not versions.
     let part = |p: Option<&str>| p.filter(|p| p.len() <= 2)?.parse::<u32>().ok();
     Some((part(parts.next())?, part(parts.next())?))
-}
-
-/// The configuration directory of Claude Code: `CLAUDE_CONFIG_DIR`, else `~/.claude`.
-pub fn claude_config_dir() -> PathBuf {
-    std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .or_else(|| std::env::home_dir().map(|h| h.join(".claude")))
-        .unwrap_or_default()
 }
 
 /// The field of `settings.json` that census reads.

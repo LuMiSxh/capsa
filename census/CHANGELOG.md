@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-23
+
+### Added
+
+- `census usage --scripts` counts inline `acus script` runs apart from the saved ones: their runs,
+  failures, median duration and host calls, and the title shows both run counts.
+
+### Changed
+
+- `census usage --tools` classifies `acus script` as `acus:script` instead of `acus:other`, and
+  `acus batch` as `acus:batch`.
+- Building needs Rust 1.100 or newer (was 1.99.1).
+
 ## [0.8.0]
 
 ### Added

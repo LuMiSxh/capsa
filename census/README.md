@@ -5,10 +5,10 @@
 
 **Usage analytics for Claude Code and Codex.** Tokens, cost, tool calls and subagent roles from the session transcripts, plus context awareness, subscription limits and API budgets for the running session.
 
-[![Rust 1.99+](https://img.shields.io/badge/Rust-1.99%2B-9c7ae8?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
+[![Rust 1.100+](https://img.shields.io/badge/Rust-1.100%2B-9c7ae8?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-9c7ae8?style=flat-square&labelColor=23252a)
 [![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-9c7ae8?style=flat-square&labelColor=23252a)](../LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.0-9c7ae8?style=flat-square&labelColor=23252a)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.0-9c7ae8?style=flat-square&labelColor=23252a)](CHANGELOG.md)
 
 **[capsa](../README.md)** · [Changelog](CHANGELOG.md)
 
@@ -43,7 +43,7 @@ Build from source, with the stable toolchain set in `rust-toolchain.toml` (see [
 | `census hook`                                                 | Claude Code hook for `UserPromptSubmit` and `PostToolUse`; see Hook                                              |
 | `census self …`                                               | Skill, setup, config, doctor, update and uninstall; see Self                                                     |
 
-`census usage` options: `--days N` (transcripts modified in the last N days), `--project TEXT` (sessions whose working directory contains TEXT), `--top N` (rows per table, default 10), `--claude-dir DIR`, `--codex-dir DIR`, `--tools` (how agents search, read, edit and build, with the p50, p90 and largest result size per category), `--misses` (with `--tools`: the most frequent commands of the categories that bypass acus, with the calls that ran unguarded, the intercepted calls and result characters), `--guard` (`acus guard` decisions per rule and the escaped calls, from acus's `guard.jsonl`), `--agents` (one row per role: spawns, models, requests, cost, cache hit rate, cache rewrites), `--handbacks` (spawns per ISO week and the hand-back heuristic), `--compare YYYY-MM-DD` (the report before and after a UTC date), `--by weekday|hour|cycle` (expected cost per bucket, see Limits).
+`census usage` options: `--days N` (transcripts modified in the last N days), `--project TEXT` (sessions whose working directory contains TEXT), `--top N` (rows per table, default 10), `--claude-dir DIR`, `--codex-dir DIR`, `--tools` (how agents search, read, edit and build, with the p50, p90 and largest result size per category), `--misses` (with `--tools`: the most frequent commands of the categories that bypass acus, with the calls that ran unguarded, the intercepted calls and result characters), `--guard` (`acus guard` decisions per rule and the escaped calls, from acus's `guard.jsonl`), `--scripts` (the runs of saved `acus script` scripts per name and scope, and the inline runs, from acus's `script.jsonl`), `--agents` (one row per role: spawns, models, requests, cost, cache hit rate, cache rewrites), `--handbacks` (spawns per ISO week and the hand-back heuristic), `--compare YYYY-MM-DD` (the report before and after a UTC date), `--by weekday|hour|cycle` (expected cost per bucket, see Limits).
 
 Output is agent text by default. `--human` adds colour on a terminal, `--json` prints the report as JSON, and `--format agent|human|json` is the same choice. `NO_COLOR` turns colour off. Exit codes are 0 for results, 1 for nothing found and 2 for an error; `census hook` always exits 0.
 
