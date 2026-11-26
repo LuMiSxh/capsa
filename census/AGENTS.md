@@ -18,7 +18,7 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
   `--by`), `cmd_context.rs`,
   `cmd_session.rs`, `cmd_statusline.rs`, `cmd_prune.rs`, `cmd_limits.rs` (the plan and budget views),
   `cmd_hook.rs` (stdin cap, 150 ms limits deadline, printing), `cmd_self.rs` (`self
-  skill|setup|config|doctor|update|uninstall`; update and uninstall need feature `cmd-update`, on by
+skill|setup|config|doctor|update|uninstall`; update and uninstall need feature `cmd-update`, on by
   default), `cmd_doctor.rs` (`self doctor`).
 - `src/cmd_config.rs`: `census self config`, which shows and sets the config.
 - `src/config.rs`: `config.toml` in the census config directory, read through `capsa_core::config`:
@@ -36,12 +36,14 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
   (weekday and hour, or hours since the weekly reset), `forecast.rs` the weekly forecast and the
   five-hour summary, `clock.rs` the calendar and `when`, `month.rs` the budget month and today's
   spend, `daily.rs` the daily limit of the budget mode, `error.rs`, `tests.rs`.
-- `src/usage/`: transcript analytics. `mod.rs` builds the report, `claude.rs` and `codex.rs` parse
-  transcripts, `tools/` classifies tool calls (`classify.rs` rules, `codex.rs` arguments,
-  `pipelines.rs` parsing, `shape.rs` grouping), `prices/` holds the list prices (see Gotchas),
-  `merge/` folds the files into the report (`agents.rs` summarises the subagent spawns), `handback.rs`
-  counts hand-backs, `read.rs` reads files in parallel,
-  `time.rs` does dates and ISO weeks, `walk.rs` lists the `*.jsonl` files.
+- `src/usage/`: transcript analytics. `mod.rs` builds the report and lists the `*.jsonl` files,
+  `claude.rs` and `codex.rs` parse transcripts, `guard.rs` and `script.rs` read acus's
+  `guard.jsonl` and `script.jsonl`, `follow.rs` derives the follow rate of each guard rule,
+  `bulletin.rs` writes census's own status bulletin, `tools/` classifies tool calls (`classify.rs`
+  rules, `codex.rs` arguments, `pipelines.rs` parsing, `shape.rs` grouping), `prices/` holds the
+  list prices (see Gotchas), `merge/` folds the files into the report (`agents.rs` summarises the
+  subagent spawns), `handback.rs` counts hand-backs, `read.rs` reads files in parallel, `time.rs`
+  does dates and ISO weeks.
 - `src/usage_views/`: the table views of `census usage` (`--by`, `--agents`, `--handbacks`,
   `--compare`, `--tools`), one module each, and the formatting helpers the report commands share
   (`k`, `usd`, `money`, `rate`) in `mod.rs`.
@@ -52,7 +54,7 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
   `mod.rs` is the API, `update.rs` and `scan.rs` read new bytes, `parse.rs` reads records,
   `model.rs` holds the row types, `query.rs` answers the reads, `fold.rs` folds old rows into hourly
   aggregates and prunes, `digest.rs` writes `digest.json`, `state.rs` owns the state files and the
-  lock.
+  lock, `error.rs` lists the failures.
 - `src/context.rs`: the compaction threshold and the context size, read from the end of the
   transcript. The hook reuses `transcript_ends`.
 - `src/session.rs`: which transcript is the session, and the summary of a session with its
@@ -64,7 +66,8 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
   (see Commands to regenerate it).
 - `src/transcript.rs`: the transcript records that the session and context views read.
 - `tests/`: `report_json.rs` pins the `--json` output of the report commands against the files in
-  `tests/report_json/`; `usage.rs` and `ledger.rs` over generated transcripts; `context.rs`,
+  `tests/report_json/`; `usage.rs`, `ledger.rs`, `ledger_digest.rs` and `ledger_sweep.rs` over
+  generated transcripts; `context.rs`,
   `session.rs` and `statusline.rs` for the library; `cli/` for the binary in a scratch home, one
   module per command group;
   `hook.rs` and `setup.rs` for the hook and `self setup`; `common/` for scratch directories.
@@ -78,8 +81,8 @@ Paths are relative to `census/`. census depends on `capsa-core` only, never on a
 - `cargo run -q -p census -- usage --help`: the options.
 - `CENSUS_PRICES_SOURCE=<litellm.json> cargo test -p census --lib regenerates_the_snapshot -- --ignored`:
   rewrites `data/prices.snapshot.json`. Download the source first with `curl -fsSL
-  https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json -o
-  <litellm.json>`. Put the moved prices in the CHANGELOG entry.
+https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json -o
+<litellm.json>`. Put the moved prices in the CHANGELOG entry.
 
 ## Rules
 
@@ -88,7 +91,7 @@ Shared rules: see root AGENTS.md.
 - The golden files in `tests/report_json/` pin the bytes of every report command's `--json`. A
   change to them is user-visible and goes into CHANGELOG.
 - The report commands print through `capsa_core::render`. `census hook` and `census statusline
-  --line` are protocol output: they stay outside `render`, and their output does not change with
+--line` are protocol output: they stay outside `render`, and their output does not change with
   the report views.
 - `census statusline` exits 0 and prints nothing unless `--line` is given. It never updates the
   ledger, so it stays fast, and it appends a snapshot only when a window's reading differs from the
@@ -128,7 +131,7 @@ Shared rules: see root AGENTS.md.
   reads the cache and fetches. The table in use is `<state>/census/prices.json` when it reads, else
   the snapshot. Only `census usage`, `census limits` and `census session` refresh the cache, when it
   is older than `prices_refresh_days`; a failed fetch keeps it and writes `prices.jsonl`. `census
-  hook` and `census statusline` never fetch. The digest records the table's `fetched_at`, so a new
+hook` and `census statusline` never fetch. The digest records the table's `fetched_at`, so a new
   list reprices it.
 - A model missing from the table is unpriced: `n/a` and `(+N unpriced)`, never 0.
 - `CENSUS_NO_PRICE_REFRESH=1` turns the fetch off. The CLI and golden tests set it, so they price
@@ -137,8 +140,8 @@ Shared rules: see root AGENTS.md.
   model, and the weighted unit feeds the limit calibration.
 - The provider of a request is `billed_by` in `usage/prices/mod.rs`: the table's provider, else
   `anthropic` for a `claude` id, else `unknown`. `billing` in the config classifies it for `census
-  usage` and `census session` only (`Config::billing_of`). The limits, the budget month and `census
-  usage --by` count `counts_toward_limits`, which is `anthropic` alone, whatever `billing` says: the
+usage` and `census session` only (`Config::billing_of`). The limits, the budget month and `census
+usage --by` count `counts_toward_limits`, which is `anthropic` alone, whatever `billing` says: the
   digest keeps their USD and an id for every raw row, so the updater does not read a request twice.
   `FORMAT` in `ledger/digest.rs` names the digest layout;
   bump it with any change to the digest's fields or to what its USD means.

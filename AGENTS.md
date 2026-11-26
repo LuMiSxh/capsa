@@ -6,13 +6,13 @@ capsa is a Rust monorepo of command-line tools for coding agents. Each tool
 has its own binary, version, CHANGELOG and AGENTS.md; read the tool's
 AGENTS.md before working in its directory.
 
-| Directory | Tool | Purpose |
-|-----------|------|---------|
-| `acus/`   | `acus`  | Code search, outline, patch, build output (`run`) and the PreToolUse guard |
-| `pons/`   | `pons`  | ACP proxy between Zed and the Claude ACP adapter |
-| `census/` | `census` | Usage analytics, limits and context awareness for the main agent |
-| `vicarius/` | `vicarius` | Local proxy that routes `-ds` subagents to DeepSeek while credit lasts |
-| `core/`   | `capsa-core` | Shared library. Modules: `render`, `cli` (feature `clap`), `log`, `skill`, `claude_settings` (with `permissions`), `update` (feature `update`), `exit`, `format`, `hint`, `paths`, `pkg`, `which`, `census_snapshot` |
+| Directory   | Tool         | Purpose                                                                                                                                                                                                                                                                                                                                  |
+| ----------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `acus/`     | `acus`       | Code search, outline, patch, build output (`run`) and the PreToolUse guard                                                                                                                                                                                                                                                               |
+| `pons/`     | `pons`       | ACP proxy between Zed and the Claude ACP adapter                                                                                                                                                                                                                                                                                         |
+| `census/`   | `census`     | Usage analytics, limits and context awareness for the main agent                                                                                                                                                                                                                                                                         |
+| `vicarius/` | `vicarius`   | Local proxy that routes `-ds` subagents to DeepSeek while credit lasts                                                                                                                                                                                                                                                                   |
+| `core/`     | `capsa-core` | Shared library. Modules: `render`, `cli` (feature `clap`), `config` (feature `config`), `process` (feature `process`), `update` (feature `update`), `log`, `skill`, `claude_settings` (with `permissions`), `hooks`, `doctor`, `bulletin`, `census_snapshot`, `exit`, `format`, `hint`, `paths`, `pkg`, `which`, `fs`, `lock`, `version` |
 
 ## Rules
 
@@ -40,8 +40,9 @@ AGENTS.md before working in its directory.
   pinned by snapshots. Exit codes: 0 result, 1 nothing found, 2 error with an
   `error:` line and, when there is a fix, a `hint:` line. Every truncation
   names the command that shows the rest.
-- **Logs:** each tool keeps its own directory and file (acus `guard.jsonl`,
-  census `hook.jsonl`, pons `pons-<time>-<pid>.jsonl` per start). `capsa_core::log`
+- **Logs:** each tool keeps its own directory and file (acus `guard.jsonl` and
+  `script.jsonl`, census `hook.jsonl` and `prices.jsonl`, pons
+  `pons-<time>-<pid>.jsonl` per start, vicarius `proxy.jsonl`). `capsa_core::log`
   writes one JSON object per line: the envelope `ts` (unix seconds), `level`
   (`info`, `warn`, `error`) and `event`, then the tool's fields. A file rotates
   to `<file name>.old` past its size limit. The `guard.jsonl` field names are a
@@ -168,7 +169,8 @@ and the [Agent Skills spec](https://agentskills.io/specification).
 
 ### Evals
 
-`scripts/skill-evals.py` runs `skill/evals/{triggers,tasks}.json` for every tool against Claude
+`scripts/skill-evals.py` runs `skill/evals/{triggers,tasks}.json` for each tool that ships a
+skill against Claude
 Code headless (`claude -p`, Haiku, low effort) in a fresh Rust fixture with one commit, one branch
 and one modified file. `--dry-run` prints the commands, `--repeat N` repeats each case, and
 `--parallel` stays at 3 or less to spare rate limits. Results and a summary table go to `--out`;
@@ -180,9 +182,13 @@ evals: it skips user skills and never reads OAuth.
 ## Commands
 
 - Run builds and tests through `acus run 'COMMAND'`.
-- Full check, as in CI: `cargo fmt --all --check`,
-  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
-  `cargo test --workspace --all-features`.
+- The workspace recipes are in `justfile`: `just test` runs cargo nextest and falls back to
+  `cargo test` when it is not installed; `just lint`, `just format`, `just format-check`,
+  `just conflicts` and `just check` for the full CI run.
+- Full check, as in CI: `just check` (`cargo fmt --all --check`,
+  `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`,
+  `python3 scripts/check-conflicts.py`, `cargo nextest run --workspace --all-features --locked`,
+  or `cargo test` without nextest).
 - One tool: add `-p <crate>` (`-p pons`, `-p acus-cli` and the
   other `acus-*` crates).
 - Release builds: `cargo build --release -p acus-cli`;

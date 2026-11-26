@@ -18,7 +18,8 @@ Paths are relative to `vicarius/`. vicarius depends on `capsa-core` only.
   before the fetch and opens through `open_if_unchanged`.
 - `src/proxy/`: `mod.rs` (`ProxyConfig`, `Proxy::bind` and `run`), `handler.rs` (routing and
   relay), `tap.rs` and `usage.rs` (read tokens from the stream), `record.rs` (counters and
-  `proxy.jsonl`), `headers.rs` (hop-by-hop and the log allowlist), `local.rs` (`/vicarius/*`).
+  `proxy.jsonl`), `headers.rs` (hop-by-hop and the log allowlist), `local.rs` (`/vicarius/*`),
+  `inline_tools.rs` (moves the inline tool definitions into the request's `tools`).
 - `tests/proxy/`: the proxy against mock upstreams on 127.0.0.1.
 - `src/agents/`: derives `<from>-ds.md` from each configured agent file. `frontmatter.rs` does the
   line-based edit, `sync.rs` writes, refreshes and removes the files, treating a suspended agent as
@@ -53,7 +54,7 @@ Paths are relative to `vicarius/`. vicarius depends on `capsa-core` only.
 
 ## Rules
 
-Shared rules: see the root CLAUDE.md.
+Shared rules: see the root AGENTS.md.
 
 - A setting that breaks a rule is refused on `set`, on `agent add` and on load. A refused change
   writes nothing.
