@@ -38,184 +38,195 @@ fn worker(source: &str) -> String {
     derive(source, "worker", "deepseek-flash", Effort::Keep).unwrap()
 }
 
+type EffortCase = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Effort,
+    &'static str,
+    Option<&'static str>,
+);
+
 #[test]
-fn an_explicit_effort_replaces_the_source_effort() {
-    let derived = derive(
-        SENIOR_WORKER,
-        "senior-worker",
-        "deepseek-flash",
-        Effort::High,
-    )
-    .unwrap();
-    assert!(derived.lines().any(|line| line == "effort: high"));
-    assert!(!derived.lines().any(|line| line == "effort: medium"));
+fn an_explicit_effort_is_written_and_replaces_the_source_effort() {
+    let cases: [EffortCase; 3] = [
+        (
+            "replaces the source effort",
+            SENIOR_WORKER,
+            "senior-worker",
+            Effort::High,
+            "effort: high",
+            Some("effort: medium"),
+        ),
+        (
+            "writes max effort",
+            WORKER,
+            "worker",
+            Effort::Max,
+            "effort: max",
+            None,
+        ),
+        (
+            "adds an effort when the source has none",
+            "---\nname: worker\nmodel: claude-haiku-5-5\n---\n",
+            "worker",
+            Effort::Low,
+            "effort: low",
+            None,
+        ),
+    ];
+    for (name, source, from, effort, present, absent) in cases {
+        let derived = derive(source, from, "deepseek-flash", effort).unwrap();
+        assert!(
+            derived.lines().any(|line| line == present),
+            "{name}: {derived}"
+        );
+        if let Some(absent) = absent {
+            assert!(
+                !derived.lines().any(|line| line == absent),
+                "{name}: {derived}"
+            );
+        }
+    }
 }
 
 #[test]
-fn max_effort_is_written_to_the_derived_agent() {
-    let derived = derive(WORKER, "worker", "deepseek-flash", Effort::Max).unwrap();
-    assert!(
-        derived.lines().any(|line| line == "effort: max"),
-        "{derived}"
-    );
+fn the_note_lands_on_the_description_for_every_shape() {
+    let cases = [
+        (
+            "a plain description",
+            WORKER,
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: Does work. {NOTE}\nmodel: deepseek-flash\n---\nBody line.\n"
+            ),
+        ),
+        (
+            "a multi-line plain description",
+            "---\nname: worker\ndescription: Does work\n  across two lines.\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\nmodel: deepseek-flash\ndescription: Does work\n  across two lines. {NOTE}\n---\n"
+            ),
+        ),
+        (
+            "a single quoted description",
+            "---\nname: worker\ndescription: 'It''s work.'\nmodel: x\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: 'It''s work. {NOTE}'\nmodel: deepseek-flash\n---\n"
+            ),
+        ),
+        (
+            "a double quoted description",
+            "---\nname: worker\ndescription: \"Does work.\"\nmodel: x\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: \"Does work. {NOTE}\"\nmodel: deepseek-flash\n---\n"
+            ),
+        ),
+        (
+            "a literal block description",
+            "---\nname: worker\ndescription: |\n  First line.\n  Second line.\nmodel: x\n---\nBody\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: |\n  First line.\n  Second line.\n  {NOTE}\nmodel: deepseek-flash\n---\nBody\n"
+            ),
+        ),
+        (
+            "a folded block description followed by a blank line",
+            "---\nname: worker\ndescription: >-\n    Folded text.\n\nmodel: x\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: >-\n    Folded text.\n    {NOTE}\n\nmodel: deepseek-flash\n---\n"
+            ),
+        ),
+        (
+            "a description with a trailing comment",
+            "---\nname: worker\ndescription: Does work. # for the lead\nmodel: x\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: Does work. {NOTE} # for the lead\nmodel: deepseek-flash\n---\n"
+            ),
+        ),
+    ];
+    for (name, source, expected) in cases {
+        assert_eq!(worker(source), expected, "{name}");
+    }
 }
 
 #[test]
-fn an_explicit_effort_is_added_when_the_source_has_none() {
-    let source = r"---
-name: worker
-model: claude-haiku-5-5
----
-";
-    let derived = derive(source, "worker", "deepseek-flash", Effort::Low).unwrap();
-    assert!(
-        derived.lines().any(|line| line == "effort: low"),
-        "{derived}"
-    );
+fn removes_the_always_try_worker_first_sentence_only_when_it_is_there() {
+    let cases = [
+        (
+            "a plain description",
+            "---\nname: worker\ndescription: Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.\nmodel: x\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: Does work. Split large tasks. {NOTE}\nmodel: deepseek-flash\n---\n"
+            ),
+        ),
+        (
+            "a single quoted description",
+            "---\nname: worker\ndescription: 'Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.'\nmodel: x\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: 'Does work. Split large tasks. {NOTE}'\nmodel: deepseek-flash\n---\n"
+            ),
+        ),
+        (
+            "a double quoted description",
+            "---\nname: worker\ndescription: \"Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.\"\nmodel: x\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: \"Does work. Split large tasks. {NOTE}\"\nmodel: deepseek-flash\n---\n"
+            ),
+        ),
+        (
+            "a block scalar description",
+            "---\nname: worker\ndescription: |\n  Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.\nmodel: x\n---\nBody\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: |\n  Does work. Split large tasks.\n  {NOTE}\nmodel: deepseek-flash\n---\nBody\n"
+            ),
+        ),
+        (
+            "a description without the sentence",
+            "---\nname: worker\ndescription: Does work. Only a hand-back goes to senior-worker.\nmodel: x\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: Does work. Only a hand-back goes to senior-worker. {NOTE}\nmodel: deepseek-flash\n---\n"
+            ),
+        ),
+    ];
+    for (name, source, expected) in cases {
+        assert_eq!(worker(source), expected, "{name}");
+    }
 }
 
 #[test]
-fn a_plain_description_gets_the_note_on_its_line() {
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: Does work. {NOTE}\nmodel: deepseek-flash\n---\nBody line.\n"
-    );
-    assert_eq!(worker(WORKER), expected);
-}
-
-#[test]
-fn a_multi_line_plain_description_gets_the_note_on_its_last_line() {
-    let source = "---\nname: worker\ndescription: Does work\n  across two lines.\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\nmodel: deepseek-flash\ndescription: Does work\n  across two lines. {NOTE}\n---\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn a_single_quoted_description_gets_the_note_before_the_closing_quote() {
-    let source = "---\nname: worker\ndescription: 'It''s work.'\nmodel: x\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: 'It''s work. {NOTE}'\nmodel: deepseek-flash\n---\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn a_double_quoted_description_gets_the_note_before_the_closing_quote() {
-    let source = "---\nname: worker\ndescription: \"Does work.\"\nmodel: x\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: \"Does work. {NOTE}\"\nmodel: deepseek-flash\n---\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn a_literal_block_description_gets_a_line_with_the_block_indent() {
-    let source =
-        "---\nname: worker\ndescription: |\n  First line.\n  Second line.\nmodel: x\n---\nBody\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: |\n  First line.\n  Second line.\n  {NOTE}\nmodel: deepseek-flash\n---\nBody\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn a_folded_block_description_keeps_the_blank_line_after_it() {
-    let source = "---\nname: worker\ndescription: >-\n    Folded text.\n\nmodel: x\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: >-\n    Folded text.\n    {NOTE}\n\nmodel: deepseek-flash\n---\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn drops_always_try_worker_first_sentence_from_a_plain_description() {
-    let source = "---\nname: worker\ndescription: Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.\nmodel: x\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: Does work. Split large tasks. {NOTE}\nmodel: deepseek-flash\n---\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn drops_always_try_worker_first_sentence_from_a_single_quoted_description() {
-    let source = "---\nname: worker\ndescription: 'Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.'\nmodel: x\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: 'Does work. Split large tasks. {NOTE}'\nmodel: deepseek-flash\n---\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn drops_always_try_worker_first_sentence_from_a_double_quoted_description() {
-    let source = "---\nname: worker\ndescription: \"Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.\"\nmodel: x\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: \"Does work. Split large tasks. {NOTE}\"\nmodel: deepseek-flash\n---\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn drops_always_try_worker_first_sentence_from_a_block_scalar_description() {
-    let source = "---\nname: worker\ndescription: |\n  Does work. Always try worker first; only security code goes to senior-worker. Split large tasks.\nmodel: x\n---\nBody\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: |\n  Does work. Split large tasks.\n  {NOTE}\nmodel: deepseek-flash\n---\nBody\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn leaves_a_description_without_the_worker_first_sentence_unchanged() {
-    let source = "---\nname: worker\ndescription: Does work. Only a hand-back goes to senior-worker.\nmodel: x\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: Does work. Only a hand-back goes to senior-worker. {NOTE}\nmodel: deepseek-flash\n---\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn a_missing_description_is_added_before_the_closing_fence() {
-    let source = "---\nname: worker\nmodel: x\n---\nBody\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\nmodel: deepseek-flash\ndescription: {NOTE}\n---\nBody\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn a_missing_model_is_inserted_after_name() {
-    let source = "---\nname: worker\ndescription: Does work.\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\nmodel: deepseek-flash\ndescription: Does work. {NOTE}\n---\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn an_existing_model_is_replaced_with_its_continuation_lines() {
-    let source = "---\nname: worker\nmodel: old-model\n  extra: continues\ndescription: x\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\nmodel: deepseek-flash\ndescription: x {NOTE}\n---\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn a_missing_name_is_added_as_the_first_key() {
-    let source = "---\ndescription: x\nmodel: y\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: x {NOTE}\nmodel: deepseek-flash\n---\n"
-    );
-    assert_eq!(worker(source), expected);
-}
-
-#[test]
-fn a_comment_after_a_plain_description_stays_after_the_note() {
-    let source = "---\nname: worker\ndescription: Does work. # for the lead\nmodel: x\n---\n";
-    let expected = format!(
-        "---\n{MARKER}\nname: worker-ds\ndescription: Does work. {NOTE} # for the lead\nmodel: deepseek-flash\n---\n"
-    );
-    assert_eq!(worker(source), expected);
+fn fills_in_name_model_and_description() {
+    let cases = [
+        (
+            "a missing description",
+            "---\nname: worker\nmodel: x\n---\nBody\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\nmodel: deepseek-flash\ndescription: {NOTE}\n---\nBody\n"
+            ),
+        ),
+        (
+            "a missing model",
+            "---\nname: worker\ndescription: Does work.\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\nmodel: deepseek-flash\ndescription: Does work. {NOTE}\n---\n"
+            ),
+        ),
+        (
+            "an existing model with continuation lines",
+            "---\nname: worker\nmodel: old-model\n  extra: continues\ndescription: x\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\nmodel: deepseek-flash\ndescription: x {NOTE}\n---\n"
+            ),
+        ),
+        (
+            "a missing name",
+            "---\ndescription: x\nmodel: y\n---\n",
+            format!(
+                "---\n{MARKER}\nname: worker-ds\ndescription: x {NOTE}\nmodel: deepseek-flash\n---\n"
+            ),
+        ),
+    ];
+    for (name, source, expected) in cases {
+        assert_eq!(worker(source), expected, "{name}");
+    }
 }
 
 #[test]
@@ -232,48 +243,36 @@ fn the_body_is_kept_byte_for_byte() {
 }
 
 #[test]
-fn a_file_without_an_opening_fence_is_refused() {
-    assert_eq!(
-        derive(
-            "name: worker\n---\n",
-            "worker",
-            "deepseek-flash",
-            Effort::Keep
+fn refuses_a_source_it_cannot_derive() {
+    let cases = [
+        (
+            "a file without an opening fence",
+            "name: worker\n---\n".to_owned(),
+            DeriveError::NoOpeningFence,
         ),
-        Err(DeriveError::NoOpeningFence)
-    );
-}
-
-#[test]
-fn a_file_without_a_closing_fence_is_refused() {
-    assert_eq!(
-        derive(
-            "---\nname: worker\n",
-            "worker",
-            "deepseek-flash",
-            Effort::Keep
+        (
+            "a file without a closing fence",
+            "---\nname: worker\n".to_owned(),
+            DeriveError::NoClosingFence,
         ),
-        Err(DeriveError::NoClosingFence)
-    );
-}
-
-#[test]
-fn a_derived_file_is_refused_as_a_source() {
-    assert_eq!(
-        derive(&worker(WORKER), "worker", "deepseek-flash", Effort::Keep),
-        Err(DeriveError::AlreadyDerived)
-    );
-}
-
-#[test]
-fn an_unterminated_quoted_description_is_refused() {
-    let source = "---\nname: worker\ndescription: \"Does work.\nmodel: x\n---\n";
-    assert_eq!(
-        derive(source, "worker", "deepseek-flash", Effort::Keep),
-        Err(DeriveError::Description(
-            "the quoted description is not closed"
-        ))
-    );
+        (
+            "a derived file",
+            worker(WORKER),
+            DeriveError::AlreadyDerived,
+        ),
+        (
+            "an unterminated quoted description",
+            "---\nname: worker\ndescription: \"Does work.\nmodel: x\n---\n".to_owned(),
+            DeriveError::Description("the quoted description is not closed"),
+        ),
+    ];
+    for (name, source, expected) in cases {
+        assert_eq!(
+            derive(&source, "worker", "deepseek-flash", Effort::Keep),
+            Err(expected),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -358,6 +357,7 @@ fn a_written_file_is_unchanged_until_its_source_changes() {
     );
     let written = fs::read_to_string(dir.path().join("worker-ds.md")).unwrap();
     assert_eq!(written, worker(&changed));
+    assert_eq!(file_names(dir.path()), ["worker-ds.md", "worker.md"]);
 }
 
 #[test]
@@ -474,12 +474,4 @@ fn an_unparsable_source_is_reported_with_its_error() {
             Outcome::Unparsable(DeriveError::NoOpeningFence.to_string())
         )]
     );
-}
-
-#[test]
-fn no_temporary_file_is_left_behind() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("worker.md"), WORKER).unwrap();
-    sync(dir.path(), &[agent("worker")], true);
-    assert_eq!(file_names(dir.path()), ["worker-ds.md", "worker.md"]);
 }

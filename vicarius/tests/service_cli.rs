@@ -178,32 +178,39 @@ fn status_route(body: &str) -> Vec<(&'static str, u16, String)> {
 }
 
 #[test]
-fn hook_prints_the_exact_context_line_for_one_available_agent() {
-    let home = tempfile::tempdir().unwrap();
-    let port = serve(status_route(OPEN));
-    write_config(home.path(), port, SENIOR);
-    let out = hook_with_healthy_service(home.path());
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    assert_eq!(text(&out.stdout), format!("{ONE_AGENT_LINE}\n"));
-}
-
-#[test]
-fn hook_lists_two_agents_comma_separated() {
-    let home = tempfile::tempdir().unwrap();
-    let body = OPEN.replace(
+fn hook_prints_one_line_naming_every_available_agent() {
+    let two_agents = OPEN.replace(
         r#""entries":[{"agent":"senior-worker","file":"senior-worker-ds.md","outcome":"written"}]"#,
         r#""entries":[{"agent":"senior-worker","file":"senior-worker-ds.md","outcome":"written"},{"agent":"consultant","file":"consultant-ds.md","outcome":"unchanged"}]"#,
     );
-    let port = serve(status_route(&body));
-    let agents = r#"[{ from = "senior-worker", model = "deepseek-flash" }, { from = "consultant", model = "deepseek-v4-pro" }]"#;
-    write_config(home.path(), port, agents);
-    let out = hook_with_healthy_service(home.path());
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    let line = text(&out.stdout);
-    assert!(
-        line.contains("senior-worker-ds (deepseek-flash, variant of senior-worker), consultant-ds (deepseek-v4-pro, variant of consultant)."),
-        "{line}"
-    );
+    let cases = [
+        (
+            "one available agent",
+            OPEN.to_owned(),
+            SENIOR.to_owned(),
+            format!("{ONE_AGENT_LINE}\n"),
+        ),
+        (
+            "two available agents",
+            two_agents,
+            r#"[{ from = "senior-worker", model = "deepseek-flash" }, { from = "consultant", model = "deepseek-v4-pro" }]"#.to_owned(),
+            format!(
+                "{}\n",
+                ONE_AGENT_LINE.replace(
+                    "senior-worker-ds (deepseek-flash, variant of senior-worker)",
+                    "senior-worker-ds (deepseek-flash, variant of senior-worker), consultant-ds (deepseek-v4-pro, variant of consultant)",
+                )
+            ),
+        ),
+    ];
+    for (name, body, agents, expected) in cases {
+        let home = tempfile::tempdir().unwrap();
+        let port = serve(status_route(&body));
+        write_config(home.path(), port, &agents);
+        let out = hook_with_healthy_service(home.path());
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", text(&out.stderr));
+        assert_eq!(text(&out.stdout), expected, "{name}");
+    }
 }
 
 #[test]
@@ -223,64 +230,45 @@ fn hook_prints_nothing_when_the_gate_is_closed_or_no_agent_is_ready() {
 }
 
 #[test]
-fn hook_prints_nothing_and_exits_0_quickly_when_the_service_is_down() {
-    let home = tempfile::tempdir().unwrap();
-    write_config(home.path(), free_port(), SENIOR);
-    let started = Instant::now();
-    let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
-    let elapsed = started.elapsed();
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    assert!(out.stdout.is_empty());
-    assert!(elapsed < HOOK_LIMIT, "hook took {elapsed:?}");
-}
-
-#[test]
-fn hook_answers_when_the_service_is_up() {
-    let home = tempfile::tempdir().unwrap();
-    let port = serve(status_route(OPEN));
-    write_config(home.path(), port, SENIOR);
-    let out = hook_with_healthy_service(home.path());
-    assert_eq!(text(&out.stdout), format!("{ONE_AGENT_LINE}\n"));
-}
-
-#[test]
-fn hook_gives_up_on_a_service_that_does_not_answer() {
-    let home = tempfile::tempdir().unwrap();
-    write_config(home.path(), serve_silent(), SENIOR);
-    let started = Instant::now();
-    let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
-    let elapsed = started.elapsed();
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    assert!(out.stdout.is_empty());
-    assert!(elapsed < HOOK_LIMIT, "hook took {elapsed:?}");
-}
-
-#[test]
-fn hook_ignores_an_event_other_than_session_start() {
-    let home = tempfile::tempdir().unwrap();
-    let port = serve(status_route(OPEN));
-    write_config(home.path(), port, SENIOR);
-    for input in [
-        r#"{"hook_event_name":"UserPromptSubmit","session_id":"s1"}"#,
-        r#"{"hook_event_name":"PostToolUse","session_id":"s1"}"#,
-        r#"{"session_id":"s1"}"#,
+fn hook_prints_nothing_and_exits_0_quickly_without_an_answer() {
+    for (name, port) in [
+        ("a service that is down", free_port()),
+        ("a service that does not answer", serve_silent()),
     ] {
-        let out = vicarius_with_input(home.path(), &["hook"], input.as_bytes());
-        assert_eq!(out.status.code(), Some(0), "{input}: {}", text(&out.stderr));
-        assert!(out.stdout.is_empty(), "{input}: {}", text(&out.stdout));
+        let home = tempfile::tempdir().unwrap();
+        write_config(home.path(), port, SENIOR);
+        let started = Instant::now();
+        let out = vicarius_with_input(home.path(), &["hook"], SESSION_START.as_bytes());
+        let elapsed = started.elapsed();
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", text(&out.stderr));
+        assert!(out.stdout.is_empty(), "{name}");
+        assert!(elapsed < HOOK_LIMIT, "{name}: hook took {elapsed:?}");
     }
 }
 
 #[test]
-fn hook_ignores_invalid_input() {
+fn hook_ignores_input_it_does_not_act_on() {
+    let inputs: [(&str, &[u8]); 6] = [
+        (
+            "an event other than SessionStart",
+            br#"{"hook_event_name":"UserPromptSubmit","session_id":"s1"}"#,
+        ),
+        (
+            "a PostToolUse event",
+            br#"{"hook_event_name":"PostToolUse","session_id":"s1"}"#,
+        ),
+        ("an input without an event", br#"{"session_id":"s1"}"#),
+        ("an input that is not JSON", b"not json"),
+        ("an empty input", b""),
+        ("an input that is not UTF-8", &[0xff, 0xfe]),
+    ];
     let home = tempfile::tempdir().unwrap();
     let port = serve(status_route(OPEN));
     write_config(home.path(), port, SENIOR);
-    let inputs: [&[u8]; 3] = [b"not json", b"", &[0xff, 0xfe]];
-    for (index, input) in inputs.iter().enumerate() {
+    for (name, input) in inputs {
         let out = vicarius_with_input(home.path(), &["hook"], input);
-        assert_eq!(out.status.code(), Some(0), "{index}: {}", text(&out.stderr));
-        assert!(out.stdout.is_empty(), "{index}: {}", text(&out.stdout));
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", text(&out.stderr));
+        assert!(out.stdout.is_empty(), "{name}: {}", text(&out.stdout));
     }
 }
 

@@ -313,7 +313,10 @@ fn a_loaded_agent_that_stays_loaded_fails_with_a_hint() {
         format!("{err:#}").contains("still has the agent loaded"),
         "{err:#}"
     );
-    assert!(capsa_core::hint::find_hint(&err).is_some());
+    assert_eq!(
+        capsa_core::hint::find_hint(&err),
+        Some("wait a few seconds, then run `vicarius self start` again")
+    );
 }
 
 #[test]

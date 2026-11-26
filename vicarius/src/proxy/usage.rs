@@ -240,36 +240,41 @@ data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":42}}\r\n\r\n";
         output_tokens: 42,
     };
 
-    #[test]
-    fn reads_start_and_delta_from_one_chunk() {
-        let mut t = tap("text/event-stream");
-        t.feed(STREAM.as_bytes());
-        assert_eq!(t.finish(), EXPECTED);
-    }
+    type JsonCase<'a> = (&'a str, &'a [&'a [u8]], (u64, u64));
 
     #[test]
-    fn reads_events_split_at_every_byte() {
-        let mut t = tap("text/event-stream");
-        for b in STREAM.as_bytes().chunks(1) {
-            t.feed(b);
+    fn reads_start_and_delta_whatever_the_chunk_size() {
+        for size in [STREAM.len(), 1] {
+            let mut t = tap("text/event-stream");
+            for chunk in STREAM.as_bytes().chunks(size) {
+                t.feed(chunk);
+            }
+            assert_eq!(t.finish(), EXPECTED, "chunk size {size}");
         }
-        assert_eq!(t.finish(), EXPECTED);
     }
 
     #[test]
     fn reads_a_json_body() {
-        let mut t = tap("application/json");
-        t.feed(br#"{"usage":{"input_tokens":7,"output_tokens""#);
-        t.feed(br#":9}}"#);
-        let u = t.finish();
-        assert_eq!((u.input_tokens, u.output_tokens), (7, 9));
-    }
-
-    #[test]
-    fn reads_count_tokens_answers() {
-        let mut t = tap("application/json");
-        t.feed(br#"{"input_tokens":31}"#);
-        assert_eq!(t.finish().input_tokens, 31);
+        let cases: [JsonCase; 2] = [
+            (
+                "a usage object split across chunks",
+                &[br#"{"usage":{"input_tokens":7,"output_tokens""#, br#":9}}"#],
+                (7, 9),
+            ),
+            (
+                "a count_tokens answer",
+                &[br#"{"input_tokens":31}"#],
+                (31, 0),
+            ),
+        ];
+        for (name, chunks, (input, output)) in cases {
+            let mut t = tap("application/json");
+            for chunk in chunks {
+                t.feed(chunk);
+            }
+            let u = t.finish();
+            assert_eq!((u.input_tokens, u.output_tokens), (input, output), "{name}");
+        }
     }
 
     #[test]

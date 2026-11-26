@@ -354,29 +354,9 @@ mod tests {
     }
 
     #[test]
-    fn stays_silent_immediately_when_the_gate_is_closed_for_no_key() {
-        let reads = Cell::new(0);
-        let clock = FakeClock::default();
-        let status = settled_status(
-            || {
-                reads.set(reads.get() + 1);
-                Some(closed_for("no_key"))
-            },
-            &clock,
-            POLL,
-            DEADLINE,
-        );
-
-        let line = status.and_then(|status| agents_line(&senior_config(), &status));
-
-        assert!(line.is_none());
-        assert_eq!(reads.get(), 1);
-        assert_eq!(clock.elapsed(), Duration::ZERO);
-    }
-
-    #[test]
-    fn stays_silent_immediately_when_the_gate_is_closed_for_another_reason() {
+    fn stays_silent_immediately_when_the_gate_is_closed() {
         for code in [
+            "no_key",
             "payment_required",
             "key_rejected",
             "low_balance",

@@ -106,61 +106,46 @@ fn the_known_models_cover_the_documented_ids() {
 }
 
 #[test]
-fn max_context_replaces_the_value_vicarius_wrote() {
-    let dir = tempfile::tempdir().unwrap();
-    let install = install_in(dir.path());
-    write_env(
-        &install,
-        &json!({"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000", "OTHER": "kept"}),
-    );
-    let new = Config {
-        max_context_tokens: 500_000,
-        ..Config::default()
-    };
-    let items = apply_steps(
-        &install,
-        &FakeLaunchctl::default(),
-        Key::MaxContext,
-        "500000",
-        &Config::default(),
-        &new,
-        WAIT,
-    )
-    .unwrap();
-    assert_eq!(
-        status_of(&items, "CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
-        "replaced"
-    );
-    assert_eq!(
-        read_json(&install.settings),
-        json!({"env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "500000", "OTHER": "kept"}})
-    );
-}
-
-#[test]
-fn max_context_keeps_a_value_set_by_hand() {
-    let dir = tempfile::tempdir().unwrap();
-    let install = install_in(dir.path());
-    write_env(&install, &json!({"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "999"}));
-    let new = Config {
-        max_context_tokens: 500_000,
-        ..Config::default()
-    };
-    let items = apply_steps(
-        &install,
-        &FakeLaunchctl::default(),
-        Key::MaxContext,
-        "500000",
-        &Config::default(),
-        &new,
-        WAIT,
-    )
-    .unwrap();
-    assert_eq!(status_of(&items, "CLAUDE_CODE_MAX_CONTEXT_TOKENS"), "kept");
-    assert_eq!(
-        read_json(&install.settings),
-        json!({"env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "999"}})
-    );
+fn max_context_replaces_only_the_value_vicarius_wrote() {
+    let cases = [
+        (
+            "a value vicarius wrote",
+            json!({"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000", "OTHER": "kept"}),
+            "replaced",
+            json!({"env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "500000", "OTHER": "kept"}}),
+        ),
+        (
+            "a value set by hand",
+            json!({"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "999"}),
+            "kept",
+            json!({"env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "999"}}),
+        ),
+    ];
+    for (name, before, status, after) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let install = install_in(dir.path());
+        write_env(&install, &before);
+        let new = Config {
+            max_context_tokens: 500_000,
+            ..Config::default()
+        };
+        let items = apply_steps(
+            &install,
+            &FakeLaunchctl::default(),
+            Key::MaxContext,
+            "500000",
+            &Config::default(),
+            &new,
+            WAIT,
+        )
+        .unwrap();
+        assert_eq!(
+            status_of(&items, "CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
+            status,
+            "{name}"
+        );
+        assert_eq!(read_json(&install.settings), after, "{name}");
+    }
 }
 
 #[test]

@@ -96,26 +96,29 @@ mod tests {
     }
 
     #[test]
-    fn a_path_with_a_space_and_a_quote_is_quoted_for_zsh() {
-        let exe = Path::new("/Users/a b/it's/vicarius");
-        let text = render(LABEL, exe, Path::new("/s/service.log"));
-        assert!(
-            text.contains("<string>exec '/Users/a b/it'\\''s/vicarius' serve</string>"),
-            "{text}"
-        );
-        assert_eq!(program_path(&text).as_deref(), Some(exe));
-    }
-
-    #[test]
-    fn markup_in_the_paths_is_escaped_and_read_back() {
-        let exe = Path::new("/x/a&b<c>\"d\"/vicarius");
-        let text = render(LABEL, exe, Path::new("/s/a&b.log"));
-        assert!(
-            text.contains("/x/a&amp;b&lt;c&gt;&quot;d&quot;/vicarius"),
-            "{text}"
-        );
-        assert!(text.contains("<string>/s/a&amp;b.log</string>"), "{text}");
-        assert_eq!(program_path(&text).as_deref(), Some(exe));
+    fn a_path_is_quoted_for_zsh_and_escaped_in_the_plist() {
+        let cases: [(&str, &Path, &Path, &str, &str); 2] = [
+            (
+                "a space and a quote",
+                Path::new("/Users/a b/it's/vicarius"),
+                Path::new("/s/service.log"),
+                "<string>exec '/Users/a b/it'\\''s/vicarius' serve</string>",
+                "<string>/s/service.log</string>",
+            ),
+            (
+                "markup",
+                Path::new("/x/a&b<c>\"d\"/vicarius"),
+                Path::new("/s/a&b.log"),
+                "/x/a&amp;b&lt;c&gt;&quot;d&quot;/vicarius",
+                "<string>/s/a&amp;b.log</string>",
+            ),
+        ];
+        for (name, exe, log, expected_command, expected_log) in cases {
+            let text = render(LABEL, exe, log);
+            assert!(text.contains(expected_command), "{name}: {text}");
+            assert!(text.contains(expected_log), "{name}: {text}");
+            assert_eq!(program_path(&text).as_deref(), Some(exe), "{name}");
+        }
     }
 
     #[test]

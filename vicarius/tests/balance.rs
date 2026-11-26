@@ -21,109 +21,106 @@ fn answer(is_available: bool, infos: &str) -> String {
     format!(r#"{{"is_available": {is_available}, "balance_infos": [{infos}]}}"#)
 }
 
-#[test]
-fn parses_the_documented_shape() {
-    let parsed = parse(DOCUMENTED.as_bytes()).unwrap();
-    assert_eq!(parsed, balance(true, &[("USD", 20.0)]));
-}
+type DecideCase<'a> = (&'a str, bool, &'a [(&'a str, f64)], Availability);
 
 #[test]
-fn parses_a_cny_only_balance() {
-    let body = answer(true, r#"{"currency": "CNY", "total_balance": "150.50"}"#);
-    assert_eq!(
-        parse(body.as_bytes()).unwrap(),
-        balance(true, &[("CNY", 150.5)])
-    );
-}
-
-#[test]
-fn keeps_is_available_false_from_the_answer() {
-    let body = answer(false, r#"{"currency": "USD", "total_balance": "0.00"}"#);
-    assert_eq!(
-        parse(body.as_bytes()).unwrap(),
-        balance(false, &[("USD", 0.0)])
-    );
-}
-
-#[test]
-fn an_empty_list_of_balances_parses_to_no_totals() {
-    let body = answer(true, "");
-    assert_eq!(parse(body.as_bytes()).unwrap(), balance(true, &[]));
-}
-
-#[test]
-fn a_non_numeric_amount_is_an_error() {
-    let body = answer(true, r#"{"currency": "USD", "total_balance": "abc"}"#);
-    assert!(matches!(
-        parse(body.as_bytes()),
-        Err(BalanceError::Amount { .. })
-    ));
-}
-
-#[test]
-fn a_non_finite_amount_is_an_error() {
-    for value in ["inf", "NaN"] {
-        let body = answer(
-            true,
-            &format!(r#"{{"currency": "USD", "total_balance": "{value}"}}"#),
-        );
-        assert!(matches!(
-            parse(body.as_bytes()),
-            Err(BalanceError::Amount { .. })
-        ));
+fn parses_every_answer_shape() {
+    let cases = [
+        (
+            "the documented shape",
+            DOCUMENTED.to_owned(),
+            balance(true, &[("USD", 20.0)]),
+        ),
+        (
+            "a CNY only balance",
+            answer(true, r#"{"currency": "CNY", "total_balance": "150.50"}"#),
+            balance(true, &[("CNY", 150.5)]),
+        ),
+        (
+            "is_available false",
+            answer(false, r#"{"currency": "USD", "total_balance": "0.00"}"#),
+            balance(false, &[("USD", 0.0)]),
+        ),
+        (
+            "an empty list of balances",
+            answer(true, ""),
+            balance(true, &[]),
+        ),
+    ];
+    for (name, body, expected) in cases {
+        assert_eq!(parse(body.as_bytes()).unwrap(), expected, "{name}");
     }
 }
 
 #[test]
-fn an_unavailable_account_is_unavailable_whatever_its_balance() {
-    let decided = decide(&balance(false, &[("USD", 20.0)]), 1.0);
-    assert_eq!(decided, Availability::Unavailable);
+fn a_total_that_is_not_a_finite_number_is_an_error() {
+    for value in ["abc", "inf", "NaN"] {
+        let body = answer(
+            true,
+            &format!(r#"{{"currency": "USD", "total_balance": "{value}"}}"#),
+        );
+        assert!(
+            matches!(parse(body.as_bytes()), Err(BalanceError::Amount { .. })),
+            "{value}"
+        );
+    }
 }
 
 #[test]
-fn a_usd_balance_at_the_minimum_is_available() {
-    let decided = decide(&balance(true, &[("USD", 1.0)]), 1.0);
-    assert_eq!(
-        decided,
-        Availability::Available {
-            amount: 1.0,
-            currency: "USD".to_owned(),
-        }
-    );
-}
-
-#[test]
-fn a_usd_balance_below_the_minimum_is_low() {
-    let decided = decide(&balance(true, &[("USD", 0.99)]), 1.0);
-    assert_eq!(
-        decided,
-        Availability::Low {
-            amount: 0.99,
-            currency: "USD".to_owned(),
-            min: 1.0,
-        }
-    );
-}
-
-#[test]
-fn a_cny_only_balance_is_available_in_cny() {
-    let decided = decide(&balance(true, &[("CNY", 150.5)]), 1.0);
-    assert_eq!(
-        decided,
-        Availability::Available {
-            amount: 150.5,
-            currency: "CNY".to_owned(),
-        }
-    );
-}
-
-#[test]
-fn a_zero_cny_balance_is_unavailable() {
-    let decided = decide(&balance(true, &[("CNY", 0.0)]), 1.0);
-    assert_eq!(decided, Availability::Unavailable);
-}
-
-#[test]
-fn no_totals_is_unavailable() {
-    assert_eq!(decide(&balance(true, &[]), 1.0), Availability::Unavailable);
+fn decides_availability_from_the_totals() {
+    let cases: [DecideCase; 6] = [
+        (
+            "an unavailable account is unavailable whatever its balance",
+            false,
+            &[("USD", 20.0)],
+            Availability::Unavailable,
+        ),
+        (
+            "a USD balance at the minimum is available",
+            true,
+            &[("USD", 1.0)],
+            Availability::Available {
+                amount: 1.0,
+                currency: "USD".to_owned(),
+            },
+        ),
+        (
+            "a USD balance below the minimum is low",
+            true,
+            &[("USD", 0.99)],
+            Availability::Low {
+                amount: 0.99,
+                currency: "USD".to_owned(),
+                min: 1.0,
+            },
+        ),
+        (
+            "a CNY only balance is available in CNY",
+            true,
+            &[("CNY", 150.5)],
+            Availability::Available {
+                amount: 150.5,
+                currency: "CNY".to_owned(),
+            },
+        ),
+        (
+            "a zero CNY balance is unavailable",
+            true,
+            &[("CNY", 0.0)],
+            Availability::Unavailable,
+        ),
+        (
+            "no totals is unavailable",
+            true,
+            &[],
+            Availability::Unavailable,
+        ),
+    ];
+    for (name, is_available, totals, expected) in cases {
+        assert_eq!(
+            decide(&balance(is_available, totals), 1.0),
+            expected,
+            "{name}"
+        );
+    }
 }

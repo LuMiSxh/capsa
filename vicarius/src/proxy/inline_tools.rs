@@ -531,20 +531,26 @@ mod tests {
     }
 
     #[test]
-    fn a_body_without_a_block_is_returned_borrowed() {
-        let body: &[u8] = br#"{"model":"deepseek-flash","messages":[{"role":"user","content":"tool_definition is a word"}]}"#;
-        assert!(matches!(rewrite(body), Cow::Borrowed(bytes) if std::ptr::eq(bytes, body)));
-    }
-
-    #[test]
-    fn a_body_that_does_not_parse_is_returned_borrowed() {
-        let body: &[u8] = br#"{"model":"deepseek-flash","messages":[{"role":"user","content":[{"type":"tool_definition""#;
-        assert!(matches!(rewrite(body), Cow::Borrowed(bytes) if std::ptr::eq(bytes, body)));
-    }
-
-    #[test]
-    fn a_tools_value_that_is_not_an_array_leaves_the_body_unchanged() {
-        let body: &[u8] = br#"{"tools":{"name":"Bash"},"messages":[{"role":"user","content":[{"type":"tool_definition","name":"Lookup"}]}]}"#;
-        assert!(matches!(rewrite(body), Cow::Borrowed(bytes) if std::ptr::eq(bytes, body)));
+    fn a_body_that_needs_no_rewrite_is_returned_borrowed() {
+        let bodies: [(&str, &[u8]); 3] = [
+            (
+                "a body without a block",
+                br#"{"model":"deepseek-flash","messages":[{"role":"user","content":"tool_definition is a word"}]}"#,
+            ),
+            (
+                "a body that does not parse",
+                br#"{"model":"deepseek-flash","messages":[{"role":"user","content":[{"type":"tool_definition""#,
+            ),
+            (
+                "a tools value that is not an array",
+                br#"{"tools":{"name":"Bash"},"messages":[{"role":"user","content":[{"type":"tool_definition","name":"Lookup"}]}]}"#,
+            ),
+        ];
+        for (name, body) in bodies {
+            assert!(
+                matches!(rewrite(body), Cow::Borrowed(bytes) if std::ptr::eq(bytes, body)),
+                "{name}"
+            );
+        }
     }
 }

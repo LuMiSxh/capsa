@@ -295,12 +295,6 @@ impl Agent {
 mod tests {
     use super::*;
 
-    fn with(change: impl FnOnce(&mut Config)) -> Result<(), ConfigError> {
-        let mut config = Config::default();
-        change(&mut config);
-        config.validate()
-    }
-
     fn agent(from: &str, model: &str) -> Agent {
         Agent {
             from: from.to_owned(),
@@ -316,6 +310,10 @@ mod tests {
         std::fs::write(&path, text).unwrap();
         Config::load_from(&path)
     }
+
+    type Change = fn(&mut Config);
+    type Rejection = (&'static str, Change, fn(&ConfigError) -> bool);
+    type Attempt = (&'static str, fn(&mut Config) -> Result<(), ConfigError>);
 
     #[test]
     fn a_missing_file_gives_the_defaults_and_creates_nothing() {
@@ -349,14 +347,9 @@ mod tests {
     }
 
     #[test]
-    fn existing_agent_configs_default_effort_to_keep() {
+    fn an_agent_config_defaults_effort_to_keep_and_is_active() {
         let config = load("[[agents]]\nfrom = \"worker\"\nmodel = \"deepseek-flash\"\n").unwrap();
         assert_eq!(config.agents[0].effort, Effort::Keep);
-    }
-
-    #[test]
-    fn an_agent_config_without_suspended_is_active() {
-        let config = load("[[agents]]\nfrom = \"worker\"\nmodel = \"deepseek-flash\"\n").unwrap();
         assert!(!config.agents[0].suspended);
     }
 
@@ -416,66 +409,108 @@ mod tests {
     }
 
     #[test]
-    fn port_zero_is_refused() {
-        assert!(matches!(with(|c| c.port = 0), Err(ConfigError::PortZero)));
-    }
-
-    #[test]
-    fn min_balance_must_be_a_finite_amount_of_zero_or_more() {
-        assert!(with(|c| c.min_balance_usd = 0.0).is_ok());
-        for bad in [-0.5, f64::NAN, f64::INFINITY] {
-            let result = with(|c| c.min_balance_usd = bad);
-            assert!(matches!(result, Err(ConfigError::MinBalance(_))), "{bad}");
+    fn a_setting_that_breaks_a_rule_is_refused() {
+        let refused: [Rejection; 14] = [
+            (
+                "a port of 0",
+                |c| c.port = 0,
+                |e| matches!(e, ConfigError::PortZero),
+            ),
+            (
+                "a negative min balance",
+                |c| c.min_balance_usd = -0.5,
+                |e| matches!(e, ConfigError::MinBalance(_)),
+            ),
+            (
+                "a NaN min balance",
+                |c| c.min_balance_usd = f64::NAN,
+                |e| matches!(e, ConfigError::MinBalance(_)),
+            ),
+            (
+                "an infinite min balance",
+                |c| c.min_balance_usd = f64::INFINITY,
+                |e| matches!(e, ConfigError::MinBalance(_)),
+            ),
+            (
+                "no refresh minute",
+                |c| c.balance_refresh_minutes = 0,
+                |e| matches!(e, ConfigError::BalanceRefresh(0)),
+            ),
+            (
+                "too few context tokens",
+                |c| c.max_context_tokens = 999,
+                |e| matches!(e, ConfigError::MaxContext(999)),
+            ),
+            (
+                "an empty agent name",
+                |c| c.agents = vec![agent("", "deepseek-flash")],
+                |e| matches!(e, ConfigError::AgentName(_)),
+            ),
+            (
+                "a dotted agent name",
+                |c| c.agents = vec![agent("a.b", "deepseek-flash")],
+                |e| matches!(e, ConfigError::AgentName(_)),
+            ),
+            (
+                "a parent agent name",
+                |c| c.agents = vec![agent("../x", "deepseek-flash")],
+                |e| matches!(e, ConfigError::AgentName(_)),
+            ),
+            (
+                "a slash in the agent name",
+                |c| c.agents = vec![agent("a/b", "deepseek-flash")],
+                |e| matches!(e, ConfigError::AgentName(_)),
+            ),
+            (
+                "a space in the agent name",
+                |c| c.agents = vec![agent("a b", "deepseek-flash")],
+                |e| matches!(e, ConfigError::AgentName(_)),
+            ),
+            (
+                "a name ending in -ds",
+                |c| {
+                    c.agents = vec![agent("senior-worker-ds", "deepseek-flash")];
+                },
+                |e| matches!(e, ConfigError::DerivedName(_)),
+            ),
+            (
+                "a model outside deepseek",
+                |c| c.agents = vec![agent("consultant", "gpt-5")],
+                |e| matches!(e, ConfigError::AgentModel { .. }),
+            ),
+            (
+                "one agent configured twice",
+                |c| {
+                    c.agents = vec![agent("a", "deepseek-flash"), agent("a", "deepseek-v4-pro")];
+                },
+                |e| matches!(e, ConfigError::DuplicateAgent(_)),
+            ),
+        ];
+        for (name, change, matches_error) in refused {
+            let mut config = Config::default();
+            change(&mut config);
+            match config.validate() {
+                Ok(()) => panic!("{name} was accepted"),
+                Err(error) => assert!(matches_error(&error), "{name}: {error}"),
+            }
         }
-    }
 
-    #[test]
-    fn balance_refresh_must_be_at_least_one_minute() {
-        let zero = with(|c| c.balance_refresh_minutes = 0);
-        assert!(matches!(zero, Err(ConfigError::BalanceRefresh(0))));
-        assert!(with(|c| c.balance_refresh_minutes = 1).is_ok());
-    }
-
-    #[test]
-    fn max_context_tokens_must_be_at_least_one_thousand() {
-        let small = with(|c| c.max_context_tokens = 999);
-        assert!(matches!(small, Err(ConfigError::MaxContext(999))));
-        assert!(with(|c| c.max_context_tokens = 1000).is_ok());
-    }
-
-    #[test]
-    fn agent_names_use_only_letters_digits_dash_and_underscore() {
-        for bad in ["", "a.b", "../x", "a/b", "a b"] {
-            let result = with(|c| c.agents = vec![agent(bad, "deepseek-flash")]);
-            assert!(matches!(result, Err(ConfigError::AgentName(_))), "{bad}");
+        let accepted: [(&str, Change); 5] = [
+            ("a zero min balance", |c| c.min_balance_usd = 0.0),
+            ("one refresh minute", |c| c.balance_refresh_minutes = 1),
+            ("1000 context tokens", |c| c.max_context_tokens = 1000),
+            ("letters, digits, dashes and underscores in a name", |c| {
+                c.agents = vec![agent("senior_worker-2", "deepseek-flash")];
+            }),
+            ("a known DeepSeek model", |c| {
+                c.agents = vec![agent("consultant", "deepseek-v4-pro")];
+            }),
+        ];
+        for (name, change) in accepted {
+            let mut config = Config::default();
+            change(&mut config);
+            assert!(config.validate().is_ok(), "{name}");
         }
-        let good = vec![agent("senior_worker-2", "deepseek-flash")];
-        assert!(with(|c| c.agents = good).is_ok());
-    }
-
-    #[test]
-    fn agent_names_may_not_end_in_ds() {
-        let names = vec![agent("senior-worker-ds", "deepseek-flash")];
-        let result = with(|c| c.agents = names);
-        assert!(matches!(result, Err(ConfigError::DerivedName(_))));
-    }
-
-    #[test]
-    fn agent_models_start_with_deepseek() {
-        let gpt = vec![agent("consultant", "gpt-5")];
-        assert!(matches!(
-            with(|c| c.agents = gpt),
-            Err(ConfigError::AgentModel { .. })
-        ));
-        let v4 = vec![agent("consultant", "deepseek-v4-pro")];
-        assert!(with(|c| c.agents = v4).is_ok());
-    }
-
-    #[test]
-    fn an_agent_name_configured_twice_is_refused() {
-        let twice = vec![agent("a", "deepseek-flash"), agent("a", "deepseek-v4-pro")];
-        let result = with(|c| c.agents = twice);
-        assert!(matches!(result, Err(ConfigError::DuplicateAgent(_))));
     }
 
     #[test]
@@ -490,14 +525,21 @@ mod tests {
     }
 
     #[test]
-    fn removing_an_unknown_agent_names_the_configured_ones() {
-        let mut c = Config::default();
-        let err = c.remove_agent("nobody").unwrap_err();
-        assert!(matches!(err, ConfigError::NoSuchAgent { .. }));
-        assert_eq!(
-            err.hint().as_deref(),
-            Some("configured agents: senior-worker")
-        );
+    fn an_unknown_agent_names_the_configured_ones() {
+        let attempts: [Attempt; 2] = [
+            ("remove", |c| c.remove_agent("nobody")),
+            ("suspend", |c| c.set_suspended("nobody", true)),
+        ];
+        for (name, attempt) in attempts {
+            let mut c = Config::default();
+            let err = attempt(&mut c).unwrap_err();
+            assert!(matches!(err, ConfigError::NoSuchAgent { .. }), "{name}");
+            assert_eq!(
+                err.hint().as_deref(),
+                Some("configured agents: senior-worker"),
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -518,15 +560,5 @@ mod tests {
         assert!(c.agents.iter().all(|a| a.suspended));
         c.set_all_suspended(false);
         assert!(c.agents.iter().all(|a| !a.suspended));
-    }
-
-    #[test]
-    fn suspending_an_unknown_agent_names_the_configured_ones() {
-        let mut c = Config::default();
-        let err = c.set_suspended("nobody", true).unwrap_err();
-        assert_eq!(
-            err.hint().as_deref(),
-            Some("configured agents: senior-worker")
-        );
     }
 }

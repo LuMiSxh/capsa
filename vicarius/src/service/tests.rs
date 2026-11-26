@@ -18,7 +18,7 @@ fn read_json(path: &Path) -> Value {
 }
 
 #[test]
-fn write_plist_writes_once_and_leaves_the_current_file_alone() {
+fn write_plist_writes_once_and_replaces_a_stale_file() {
     let dir = tempfile::tempdir().unwrap();
     let install = install_in(dir.path());
     assert!(write_plist(&install).unwrap());
@@ -29,13 +29,7 @@ fn write_plist_writes_once_and_leaves_the_current_file_alone() {
         install.plist_text()
     );
     assert!(install.log.parent().unwrap().is_dir());
-}
 
-#[test]
-fn write_plist_replaces_a_stale_file_and_leaves_no_temporary_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let install = install_in(dir.path());
-    std::fs::create_dir_all(install.plist.parent().unwrap()).unwrap();
     std::fs::write(&install.plist, "stale").unwrap();
     assert!(!plist_is_current(&install));
     assert!(write_plist(&install).unwrap());
