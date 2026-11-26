@@ -62,7 +62,11 @@ fn doctor(ledger: Status) -> Doctor {
 }
 
 #[test]
-fn census_limits_matches_the_design_example() {
+fn rich_layout_keeps_columns_aligned() {
+    let plain = || Profile {
+        color: false,
+        rich: true,
+    };
     let expected = [
         "census limits\n",
         "\n",
@@ -73,44 +77,26 @@ fn census_limits_matches_the_design_example() {
         "  ✓ hook registered   ✓ ledger 2 min old\n",
     ]
     .concat();
-    let plain = Profile {
-        color: false,
-        rich: true,
-    };
-    assert_eq!(render(&census(), plain), expected);
-}
+    assert_eq!(render(&census(), plain()), expected);
 
-#[test]
-fn a_non_row_block_ends_the_alignment_group() {
     let mut doc = Doc::default();
     doc.row("a_very_long_label").text("x");
     doc.line("note");
     doc.row("ab").text("y");
-    let plain = Profile {
-        color: false,
-        rich: true,
-    };
     assert_eq!(
-        render(&doc, plain),
+        render(&doc, plain()),
         "  a_very_long_label     x\n  note\n  ab     y\n"
     );
-}
 
-#[test]
-fn a_bar_column_pads_text_to_sixteen_cells() {
     let mut doc = Doc::default();
     doc.row("a").bar(0.5).text("50%");
     doc.row("b").text("10 of 20").text("x");
-    let plain = Profile {
-        color: false,
-        rich: true,
-    };
     let expected = format!(
         "  a     {}  50%\n  b     10 of 20{}x\n",
         "████████░░░░░░░░",
         " ".repeat(10)
     );
-    assert_eq!(render(&doc, plain), expected);
+    assert_eq!(render(&doc, plain()), expected);
 }
 
 #[test]
@@ -153,13 +139,10 @@ fn colour_appears_only_on_marks_bars_hints_and_titles() {
 }
 
 #[test]
-fn doctor_exits_empty_when_a_check_fails() {
+fn doctor_renders_its_report_in_every_format() {
     assert_eq!(doctor(Status::Fail).outcome(), Outcome::Empty);
     assert_eq!(doctor(Status::Warn).outcome(), Outcome::Found);
-}
 
-#[test]
-fn doctor_json_has_the_stable_shape() {
     let mut out = Vec::new();
     let outcome = emit_to(&doctor(Status::Fail), Format::Json, false, &mut out).unwrap();
     assert_eq!(outcome, Outcome::Empty);
@@ -167,10 +150,7 @@ fn doctor_json_has_the_stable_shape() {
         String::from_utf8(out).unwrap(),
         "{\"tool\":\"acus\",\"version\":\"0.1.0\",\"ok\":false,\"groups\":[{\"name\":\"setup\",\"checks\":[{\"name\":\"hook\",\"status\":\"ok\",\"detail\":\"installed\"},{\"name\":\"ledger\",\"status\":\"fail\",\"detail\":\"missing\",\"hint\":\"run acus self setup\"}]}]}\n"
     );
-}
 
-#[test]
-fn doctor_human_view_marks_checks_and_indents_the_hint() {
     let plain = Profile {
         color: false,
         rich: true,
@@ -183,10 +163,7 @@ fn doctor_human_view_marks_checks_and_indents_the_hint() {
     let mut doc = Doc::default();
     doctor(Status::Fail).doc(&mut doc);
     assert_eq!(render(&doc, plain), expected);
-}
 
-#[test]
-fn doctor_agent_view_uses_mark_words() {
     let mut out = Vec::new();
     emit_to(&doctor(Status::Fail), Format::Agent, false, &mut out).unwrap();
     assert_eq!(

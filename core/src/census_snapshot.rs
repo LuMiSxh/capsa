@@ -216,17 +216,13 @@ mod tests {
     }
 
     #[test]
-    fn appended_snapshots_are_read_back_by_time() {
+    fn appended_snapshots_read_back_and_bad_or_missing_input_is_skipped() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("deep/snapshots");
         append_to(&file, &snap(10)).unwrap();
         append_to(&file, &snap(20)).unwrap();
         assert_eq!(read_since_from(&file, 15).unwrap(), vec![snap(20)]);
-    }
 
-    #[test]
-    fn malformed_lines_are_skipped() {
-        let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("snapshots");
         append_to(&file, &snap(10)).unwrap();
         std::fs::OpenOptions::new()
@@ -237,11 +233,7 @@ mod tests {
             .unwrap();
         append_to(&file, &snap(30)).unwrap();
         assert_eq!(read_since_from(&file, 0).unwrap().len(), 2);
-    }
 
-    #[test]
-    fn missing_file_reads_as_empty() {
-        let dir = tempfile::tempdir().unwrap();
         assert!(
             read_since_from(&dir.path().join("none"), 0)
                 .unwrap()
@@ -327,19 +319,23 @@ mod tests {
     }
 
     #[test]
-    fn tail_read_matches_full_scan_at_every_chunk_size() {
+    fn tail_read_matches_a_full_scan_for_every_line_shape() {
         let mut malformed = lines(&[10, 20]);
         malformed.extend_from_slice(b"{not json\n\n");
         malformed.extend_from_slice(&lines(&[30]));
         let mut no_newline = lines(&[10, 20]);
         no_newline.pop();
+        let mut partial = lines(&[10, 20]);
+        partial.extend_from_slice(br#"{"t":30,"source":"pons"#);
         let long: Vec<u64> = (0..1000).map(|i| i * 10).collect();
         let contents = [
             vec![],
             lines(&[10]),
             lines(&[10, 20, 30, 40]),
+            lines(&[10, 20, 30]),
             malformed,
             no_newline,
+            partial,
             lines(&long),
         ];
         for content in contents {
@@ -348,19 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_last_line_is_skipped_like_a_full_scan() {
-        let mut partial = lines(&[10, 20]);
-        partial.extend_from_slice(br#"{"t":30,"source":"pons""#);
-        assert_matches_full_scan(&partial);
-    }
-
-    #[test]
-    fn file_smaller_than_the_chunk_reads_like_a_full_scan() {
-        assert_matches_full_scan(&lines(&[10, 20, 30]));
-    }
-
-    #[test]
-    fn disorder_within_the_slack_matches_full_scan() {
+    fn disorder_within_and_beyond_the_slack() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("snapshots");
         std::fs::write(&file, lines(&[100, 5, 200])).unwrap();
@@ -370,12 +354,7 @@ mod tests {
             vec![snap(100), snap(200)]
         );
         assert_matches_full_scan(&lines(&[1000, 800, 1200]));
-    }
 
-    #[test]
-    fn disorder_beyond_the_slack_is_not_scanned() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("snapshots");
         std::fs::write(&file, lines(&[1100, 100, 1200])).unwrap();
         assert_eq!(full_scan(&file, 1000), vec![snap(1100), snap(1200)]);
         assert_eq!(read_since_from(&file, 1000).unwrap(), vec![snap(1200)]);

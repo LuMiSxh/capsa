@@ -61,23 +61,19 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn reinstall_fails_with_the_manual_command_when_the_child_exits_non_zero() {
-        let err =
-            reinstall_skill(Path::new("/usr/bin/false"), "acus", None, Format::Agent).unwrap_err();
-        assert_eq!(err.to_string(), "cannot reinstall the skill");
-        assert_eq!(find_hint(&err), Some("run acus self skill --install"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn reinstall_succeeds_when_the_child_exits_zero() {
-        let result = reinstall_skill(
+    fn reinstall_reports_the_child_result_with_the_manual_command_on_failure() {
+        let ok = reinstall_skill(
             Path::new("/usr/bin/true"),
             "acus",
             Some("codex"),
             Format::Json,
         );
-        assert!(result.is_ok());
+        assert!(ok.is_ok());
+
+        let err =
+            reinstall_skill(Path::new("/usr/bin/false"), "acus", None, Format::Agent).unwrap_err();
+        assert_eq!(err.to_string(), "cannot reinstall the skill");
+        assert_eq!(find_hint(&err), Some("run acus self skill --install"));
     }
 
     #[test]

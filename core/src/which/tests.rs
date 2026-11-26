@@ -72,7 +72,7 @@ fn resolved(env: &Env, fs: &FakeFs, name: &str) -> Option<String> {
 }
 
 #[test]
-fn path_entries_come_first_in_their_order() {
+fn path_entries_come_first_then_user_dirs() {
     let fs = FakeFs::with(&["/b/tool", "/a/tool"]);
     assert_eq!(
         resolved(&unix(&["/a", "/b"]), &fs, "tool").as_deref(),
@@ -82,10 +82,7 @@ fn path_entries_come_first_in_their_order() {
         resolved(&unix(&["/b", "/a"]), &fs, "tool").as_deref(),
         Some("/b/tool")
     );
-}
 
-#[test]
-fn user_dirs_are_searched_after_path() {
     let env = unix(&["/usr/bin"]);
     let fs = FakeFs::with(&["/home/u/.cargo/bin/tool"]);
     assert_eq!(
@@ -100,7 +97,7 @@ fn user_dirs_are_searched_after_path() {
 }
 
 #[test]
-fn every_user_bin_directory_is_searched() {
+fn every_user_bin_directory_is_searched_and_the_newest_nvm_node_wins() {
     let env = unix(&["/usr/bin"]);
     for dir in [
         "/home/u/.local/bin",
@@ -119,10 +116,7 @@ fn every_user_bin_directory_is_searched() {
         let fs = FakeFs::with(&[&format!("{dir}/tool")]);
         assert_eq!(resolved(&env, &fs, "tool"), Some(format!("{dir}/tool")));
     }
-}
 
-#[test]
-fn newest_nvm_node_wins() {
     let fs = FakeFs::with(&[
         "/home/u/.nvm/versions/node/v9.0.0/bin/npx",
         "/home/u/.nvm/versions/node/v20.11.1/bin/npx",
@@ -154,7 +148,7 @@ fn exclude_skips_that_directory_wherever_it_is() {
 }
 
 #[test]
-fn windows_pathext_picks_runnable_shims() {
+fn windows_resolution_follows_pathext_and_the_user_dirs() {
     let env = windows(&["C:/node"]);
     let fs = FakeFs::with(&["C:/node/npx", "C:/node/npx.cmd"]);
     assert_eq!(
@@ -169,19 +163,13 @@ fn windows_pathext_picks_runnable_shims() {
         resolved(&env, &fs, "bunx").as_deref(),
         Some("C:/node/bunx.exe")
     );
-}
 
-#[test]
-fn windows_name_with_an_extension_is_used_as_given() {
     let fs = FakeFs::with(&["C:/tools/agent.exe"]);
     assert_eq!(
         resolved(&windows(&["C:/tools"]), &fs, "agent.exe").as_deref(),
         Some("C:/tools/agent.exe")
     );
-}
 
-#[test]
-fn windows_user_dirs_come_from_appdata_and_local_appdata() {
     let env = windows(&["C:/other"]);
     for dir in [
         "C:/Users/u/AppData/Roaming/npm",
@@ -205,7 +193,7 @@ fn pathext_is_lowercased_and_junk_is_dropped() {
 }
 
 #[test]
-fn search_dirs_lists_path_then_user_dirs_without_duplicates_or_empties() {
+fn search_dirs_and_child_path_list_path_then_user_dirs_without_duplicates() {
     let env = unix(&["/usr/local/bin", "", "/x"]);
     let fs = FakeFs::with(&["/home/u/.cargo/bin/tool"]);
     let dirs = search_dirs(&env, &fs);
@@ -219,10 +207,7 @@ fn search_dirs_lists_path_then_user_dirs_without_duplicates_or_empties() {
         1
     );
     assert!(dirs.iter().all(|d| !d.as_os_str().is_empty()));
-}
 
-#[test]
-fn child_path_puts_the_program_dir_first_then_existing_user_dirs_once() {
     let env = unix(&["/usr/bin"]);
     let fs = FakeFs::with(&["/opt/homebrew/bin/npx", "/home/u/.cargo/bin/x"]);
     let dirs = child_path(&env, &fs, Path::new("/opt/homebrew/bin/npx"));
@@ -238,7 +223,7 @@ fn child_path_puts_the_program_dir_first_then_existing_user_dirs_once() {
 
 #[cfg(unix)]
 #[test]
-fn find_on_path_reports_the_index_and_needs_an_executable_file() {
+fn find_on_path_reports_the_index_and_skips_empty_and_relative_entries() {
     use std::os::unix::fs::PermissionsExt;
 
     let root = tempfile::tempdir().unwrap();
@@ -262,14 +247,7 @@ fn find_on_path_reports_the_index_and_needs_an_executable_file() {
     );
     assert_eq!(find_on_path("missing", &path, None), None);
     assert_eq!(path_index(&path, &b), Some(1));
-}
 
-#[cfg(unix)]
-#[test]
-fn find_on_path_skips_empty_and_relative_entries() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let root = tempfile::tempdir().unwrap();
     let abs = root.path().join("abs");
     std::fs::create_dir_all(&abs).unwrap();
     let tool = abs.join("tool");

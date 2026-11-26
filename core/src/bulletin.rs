@@ -179,43 +179,31 @@ mod tests {
 
     #[test]
     fn value_is_current_only_before_at_plus_ttl() {
-        let stamped = Stamped {
-            at: 100,
-            ttl: 60,
-            value: 7,
-        };
-        assert_eq!(stamped.current(159), Some(&7));
-        assert_eq!(stamped.current(160), None);
+        let cases = [
+            (100, 60, 159, true),
+            (100, 60, 160, false),
+            (1, u64::MAX, u64::MAX - 1, true),
+        ];
+        for (at, ttl, now, current) in cases {
+            let stamped = Stamped { at, ttl, value: 7 };
+            let expected = current.then_some(&7);
+            assert_eq!(
+                stamped.current(now),
+                expected,
+                "at {at} ttl {ttl} now {now}"
+            );
+        }
     }
 
     #[test]
-    fn ttl_past_the_end_of_time_stays_current() {
-        let stamped = Stamped {
-            at: 1,
-            ttl: u64::MAX,
-            value: 7,
-        };
-        assert_eq!(stamped.current(u64::MAX - 1), Some(&7));
-    }
-
-    #[test]
-    fn written_bulletin_reads_back() {
+    fn a_written_bulletin_reads_back_and_replaces_the_previous_one() {
         let dir = tempfile::tempdir().unwrap();
         write_in(dir.path(), "acus", &status(10)).unwrap();
         assert_eq!(read_in::<Status>(dir.path(), "acus"), Some(status(10)));
-    }
-
-    #[test]
-    fn write_replaces_the_previous_bulletin_and_leaves_no_temporary_file() {
-        let dir = tempfile::tempdir().unwrap();
-        write_in(dir.path(), "acus", &status(10)).unwrap();
         write_in(dir.path(), "acus", &status(20)).unwrap();
         assert_eq!(read_in::<Status>(dir.path(), "acus"), Some(status(20)));
         assert_eq!(names(dir.path()), ["acus.json"]);
-    }
 
-    #[test]
-    fn write_creates_the_bulletin_directory() {
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path().join("capsa/bulletin");
         write_in(&base, "pons", &status(10)).unwrap();
@@ -223,40 +211,29 @@ mod tests {
     }
 
     #[test]
-    fn missing_bulletin_reads_as_unknown() {
+    fn a_missing_malformed_or_unreadable_bulletin_reads_as_unknown() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(read_in::<Status>(dir.path(), "acus"), None);
-    }
 
-    #[test]
-    fn malformed_or_mismatched_bulletin_reads_as_unknown() {
-        let dir = tempfile::tempdir().unwrap();
         let bodies: [&[u8]; 2] = [b"{not json", br#"{"version":1}"#];
         for body in bodies {
             fs::write(dir.path().join("acus.json"), body).unwrap();
             assert_eq!(read_in::<Status>(dir.path(), "acus"), None);
         }
-    }
 
-    #[test]
-    fn unreadable_bulletin_reads_as_unknown() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("acus.json")).unwrap();
         assert_eq!(read_in::<Status>(dir.path(), "acus"), None);
     }
 
     #[test]
-    fn removing_a_bulletin_deletes_it_and_a_missing_one_is_not_an_error() {
+    fn removing_a_bulletin_deletes_it_and_an_invalid_name_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         write_in(dir.path(), "acus", &status(10)).unwrap();
         remove_in(dir.path(), "acus").unwrap();
         assert!(names(dir.path()).is_empty());
         remove_in(dir.path(), "acus").unwrap();
-    }
 
-    #[test]
-    fn invalid_tool_name_is_refused_without_a_file() {
-        let dir = tempfile::tempdir().unwrap();
         let err = write_in(dir.path(), "../acus", &status(10)).unwrap_err();
         assert!(matches!(err, BulletinError::InvalidTool(name) if name == "../acus"));
         assert_eq!(read_in::<Status>(dir.path(), "../acus"), None);

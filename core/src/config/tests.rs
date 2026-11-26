@@ -42,14 +42,11 @@ fn rendered(shown: &Shown) -> String {
 }
 
 #[test]
-fn missing_file_loads_the_default() {
+fn load_reads_the_default_or_the_files_values() {
     let dir = TempDir::new().unwrap();
     let loaded: Settings = file_in(&dir).load().unwrap();
     assert_eq!(loaded, Settings::default());
-}
 
-#[test]
-fn valid_file_loads_its_values() {
     let dir = TempDir::new().unwrap();
     let file = file_in(&dir);
     write_file(&file, "name = \"acus\"\n[limits]\nfive_hour = 80\n");
@@ -59,7 +56,7 @@ fn valid_file_loads_its_values() {
 }
 
 #[test]
-fn invalid_file_names_the_file_and_the_position() {
+fn load_reports_a_parse_error_for_bad_syntax_or_an_unknown_key() {
     let dir = TempDir::new().unwrap();
     let file = file_in(&dir);
     write_file(&file, "name = \"acus\"\nlimits = [\n");
@@ -68,10 +65,7 @@ fn invalid_file_names_the_file_and_the_position() {
     };
     assert_eq!(path, file.path());
     assert!(line >= 2, "line was {line}");
-}
 
-#[test]
-fn unknown_key_in_the_file_is_a_parse_error() {
     let dir = TempDir::new().unwrap();
     let file = file_in(&dir);
     write_file(&file, "bogus = 1\n");
@@ -82,7 +76,7 @@ fn unknown_key_in_the_file_is_a_parse_error() {
 }
 
 #[test]
-fn save_then_load_round_trips() {
+fn save_round_trips_and_leaves_only_the_config_file() {
     let dir = TempDir::new().unwrap();
     let file = file_in(&dir);
     let value = Settings {
@@ -96,10 +90,17 @@ fn save_then_load_round_trips() {
     file.save(&value).unwrap();
     let loaded: Settings = file.load().unwrap();
     assert_eq!(loaded, value);
+
+    let parent = file.path().parent().expect("a parent");
+    let names: Vec<OsString> = fs::read_dir(parent)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, [OsString::from("config.toml")]);
 }
 
 #[test]
-fn set_writes_valid_dotted_keys() {
+fn set_writes_valid_dotted_keys_and_keeps_non_toml_text_as_a_string() {
     let dir = TempDir::new().unwrap();
     let file = file_in(&dir);
     file.set::<Settings>("limits.five_hour", "75").unwrap();
@@ -111,10 +112,7 @@ fn set_writes_valid_dotted_keys() {
     assert!(loaded.limits.enabled);
     assert_eq!(loaded.tags, ["x", "y"]);
     assert_eq!(loaded.name, "vicarius");
-}
 
-#[test]
-fn set_keeps_a_value_that_is_not_toml_as_a_string() {
     let dir = TempDir::new().unwrap();
     let file = file_in(&dir);
     file.set::<Settings>("name", "hello world").unwrap();
@@ -123,54 +121,46 @@ fn set_keeps_a_value_that_is_not_toml_as_a_string() {
 }
 
 #[test]
-fn set_rejects_an_unknown_key_and_leaves_the_file_alone() {
-    let dir = TempDir::new().unwrap();
-    let file = file_in(&dir);
-    file.set::<Settings>("name", "acus").unwrap();
-    let before = fs::read_to_string(file.path()).unwrap();
-    let err = file.set::<Settings>("limits.nope", "1").err();
-    assert!(matches!(err, Some(ConfigError::Invalid { ref key, .. }) if key == "limits.nope"));
-    assert_eq!(fs::read_to_string(file.path()).unwrap(), before);
+fn set_rejects_an_invalid_value_and_leaves_the_file_alone() {
+    let cases = [
+        (Some(("name", "acus")), "limits.nope", "1", "limits.nope"),
+        (None, "limits.five_hour", "\"many\"", "limits.five_hour"),
+    ];
+    for (prior, key, value, expected) in cases {
+        let dir = TempDir::new().unwrap();
+        let file = file_in(&dir);
+        if let Some((prior_key, prior_value)) = prior {
+            file.set::<Settings>(prior_key, prior_value).unwrap();
+        }
+        let before = fs::read_to_string(file.path()).ok();
+        let err = file.set::<Settings>(key, value).err();
+        assert!(
+            matches!(err, Some(ConfigError::Invalid { ref key, .. }) if key == expected),
+            "{key}={value}"
+        );
+        assert_eq!(
+            fs::read_to_string(file.path()).ok(),
+            before,
+            "{key}={value}"
+        );
+    }
 }
 
 #[test]
-fn set_rejects_a_wrong_type_and_writes_nothing() {
-    let dir = TempDir::new().unwrap();
-    let file = file_in(&dir);
-    let err = file.set::<Settings>("limits.five_hour", "\"many\"").err();
-    assert!(matches!(err, Some(ConfigError::Invalid { .. })));
-    assert!(!file.path().exists());
-}
-
-#[test]
-fn set_rejects_a_key_through_a_non_table() {
-    let dir = TempDir::new().unwrap();
-    let file = file_in(&dir);
-    file.set::<Settings>("name", "acus").unwrap();
-    let err = file.set::<Settings>("name.inner", "1").err();
-    assert!(matches!(err, Some(ConfigError::Key { .. })));
-}
-
-#[test]
-fn set_rejects_an_empty_key_segment() {
-    let dir = TempDir::new().unwrap();
-    let err = file_in(&dir)
-        .set::<Settings>("limits..five_hour", "1")
-        .err();
-    assert!(matches!(err, Some(ConfigError::Key { .. })));
-}
-
-#[test]
-fn save_leaves_only_the_config_file_in_its_directory() {
-    let dir = TempDir::new().unwrap();
-    let file = file_in(&dir);
-    file.save(&Settings::default()).unwrap();
-    let parent = file.path().parent().expect("a parent");
-    let names: Vec<OsString> = fs::read_dir(parent)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name())
-        .collect();
-    assert_eq!(names, [OsString::from("config.toml")]);
+fn set_rejects_a_key_that_cannot_be_addressed() {
+    let cases = [
+        (Some(("name", "acus")), "name.inner"),
+        (None, "limits..five_hour"),
+    ];
+    for (prior, key) in cases {
+        let dir = TempDir::new().unwrap();
+        let file = file_in(&dir);
+        if let Some((prior_key, prior_value)) = prior {
+            file.set::<Settings>(prior_key, prior_value).unwrap();
+        }
+        let err = file.set::<Settings>(key, "1").err();
+        assert!(matches!(err, Some(ConfigError::Key { .. })), "{key}");
+    }
 }
 
 #[test]
@@ -199,7 +189,7 @@ fn legacy_json_is_found_only_when_it_exists() {
 }
 
 #[test]
-fn show_lists_dotted_keys_and_the_file() {
+fn show_renders_dotted_keys_and_flat_json() {
     let dir = TempDir::new().unwrap();
     let file = file_in(&dir);
     let value = Settings {
@@ -215,12 +205,7 @@ fn show_lists_dotted_keys_and_the_file() {
     assert!(text.contains("limits.enabled"), "{text}");
     assert!(text.contains("tags"), "{text}");
     assert!(text.contains(&file.path().display().to_string()), "{text}");
-}
 
-#[test]
-fn show_json_is_flat_with_the_path() {
-    let dir = TempDir::new().unwrap();
-    let file = file_in(&dir);
     let shown = file.show("acus self config", &Settings::default()).unwrap();
     let json = serde_json::to_value(&shown).unwrap();
     assert_eq!(json["name"], "");

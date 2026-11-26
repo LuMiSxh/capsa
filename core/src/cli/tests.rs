@@ -56,37 +56,32 @@ fn raw(argv: &[&str], pairs: &[(&'static str, &'static str)]) -> Format {
 }
 
 #[test]
-fn explicit_flags_win_over_the_environment() {
-    let claude = [("CLAUDECODE", "1"), ("CAPSA_HUMAN", "1")];
-    assert_eq!(pick(&["--json"], &claude), Format::Json);
-    assert_eq!(pick(&["--human"], &claude), Format::Human);
-    assert_eq!(pick(&["--agent"], &[("CAPSA_HUMAN", "1")]), Format::Agent);
-    assert_eq!(pick(&["--format", "human"], &claude), Format::Human);
-    assert_eq!(pick(&["--format=json"], &[]), Format::Json);
-    assert_eq!(pick(&["--json", "--human"], &[]), Format::Json);
-}
-
-#[test]
-fn capsa_human_selects_human_by_default() {
-    assert_eq!(pick(&[], &[("CAPSA_HUMAN", "1")]), Format::Human);
-}
-
-#[test]
-fn capsa_human_is_ignored_under_an_agent() {
-    let claude = [("CAPSA_HUMAN", "1"), ("CLAUDECODE", "1")];
-    let codex = [("CAPSA_HUMAN", "1"), ("CODEX_HOME", "/x")];
-    assert_eq!(pick(&[], &claude), Format::Agent);
-    assert_eq!(pick(&[], &codex), Format::Agent);
-}
-
-#[test]
-fn capsa_human_needs_the_value_one() {
-    assert_eq!(pick(&[], &[("CAPSA_HUMAN", "0")]), Format::Agent);
-}
-
-#[test]
-fn agent_is_the_default_format() {
-    assert_eq!(pick(&[], &[]), Format::Agent);
+fn flags_and_environment_pick_the_format() {
+    const HUMAN: &[(&str, &str)] = &[("CAPSA_HUMAN", "1")];
+    const NO_HUMAN: &[(&str, &str)] = &[("CAPSA_HUMAN", "0")];
+    const CLAUDE: &[(&str, &str)] = &[("CLAUDECODE", "1"), ("CAPSA_HUMAN", "1")];
+    const CODEX: &[(&str, &str)] = &[("CAPSA_HUMAN", "1"), ("CODEX_HOME", "/x")];
+    type Case = (
+        &'static [&'static str],
+        &'static [(&'static str, &'static str)],
+        Format,
+    );
+    let cases: &[Case] = &[
+        (&["--json"], CLAUDE, Format::Json),
+        (&["--human"], CLAUDE, Format::Human),
+        (&["--agent"], HUMAN, Format::Agent),
+        (&["--format", "human"], CLAUDE, Format::Human),
+        (&["--format=json"], &[], Format::Json),
+        (&["--json", "--human"], &[], Format::Json),
+        (&[], HUMAN, Format::Human),
+        (&[], CLAUDE, Format::Agent),
+        (&[], CODEX, Format::Agent),
+        (&[], NO_HUMAN, Format::Agent),
+        (&[], &[], Format::Agent),
+    ];
+    for (flags, vars, expected) in cases {
+        assert_eq!(pick(flags, vars), *expected, "{flags:?} {vars:?}");
+    }
 }
 
 #[test]
@@ -112,17 +107,14 @@ fn raw_format_reads_the_flags_of_a_rejected_command_line() {
 }
 
 #[test]
-fn help_and_version_are_output_not_errors() {
+fn help_version_and_parse_errors_are_clap_errors() {
     let help = Probe::try_parse_from(["probe", "--help"]).unwrap_err();
     assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
     assert!(!help.use_stderr());
     let version = Probe::try_parse_from(["probe", "--version"]).unwrap_err();
     assert_eq!(version.kind(), clap::error::ErrorKind::DisplayVersion);
     assert!(!version.use_stderr());
-}
 
-#[test]
-fn parse_error_names_the_rejected_argument() {
     let err = Probe::try_parse_from(["probe", "--bogus"]).unwrap_err();
     let message = Probe::parse_error(&err, &[]).to_string();
     assert!(

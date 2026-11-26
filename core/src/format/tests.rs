@@ -31,47 +31,32 @@ fn pick(flags: (bool, bool, bool), vars: &[(&'static str, &'static str)]) -> For
 }
 
 #[test]
-fn explicit_flags_win_in_json_human_agent_order() {
-    assert_eq!(pick((true, true, true), &[]), Format::Json);
-    assert_eq!(pick((true, false, true), &[]), Format::Human);
-    assert_eq!(pick((false, false, true), &[]), Format::Agent);
-}
-
-#[test]
-fn flags_beat_capsa_human() {
-    let human_env = [("CAPSA_HUMAN", "1")];
-    assert_eq!(pick((false, false, true), &human_env), Format::Agent);
-    assert_eq!(pick((false, true, false), &human_env), Format::Json);
-    assert_eq!(pick((true, false, false), &human_env), Format::Human);
-}
-
-#[test]
-fn default_is_agent() {
-    assert_eq!(pick((false, false, false), &[]), Format::Agent);
-}
-
-#[test]
-fn capsa_human_selects_human_outside_agent_env() {
-    assert_eq!(
-        pick((false, false, false), &[("CAPSA_HUMAN", "1")]),
-        Format::Human
+fn explicit_flags_and_environment_pick_the_format() {
+    const HUMAN: &[(&str, &str)] = &[("CAPSA_HUMAN", "1")];
+    const NO_HUMAN: &[(&str, &str)] = &[("CAPSA_HUMAN", "0")];
+    const CLAUDE: &[(&str, &str)] = &[("CAPSA_HUMAN", "1"), ("CLAUDECODE", "1")];
+    const CODEX: &[(&str, &str)] = &[("CAPSA_HUMAN", "1"), ("CODEX_HOME", "/x")];
+    type Case = (
+        (bool, bool, bool),
+        &'static [(&'static str, &'static str)],
+        Format,
     );
-    assert_eq!(
-        pick((false, false, false), &[("CAPSA_HUMAN", "0")]),
-        Format::Agent
-    );
-}
-
-#[test]
-fn capsa_human_is_ignored_under_claude_code() {
-    let vars = [("CAPSA_HUMAN", "1"), ("CLAUDECODE", "1")];
-    assert_eq!(pick((false, false, false), &vars), Format::Agent);
-}
-
-#[test]
-fn capsa_human_is_ignored_under_codex() {
-    let vars = [("CAPSA_HUMAN", "1"), ("CODEX_HOME", "/x")];
-    assert_eq!(pick((false, false, false), &vars), Format::Agent);
+    let cases: &[Case] = &[
+        ((true, true, true), &[], Format::Json),
+        ((true, false, true), &[], Format::Human),
+        ((false, false, true), &[], Format::Agent),
+        ((false, false, true), HUMAN, Format::Agent),
+        ((false, true, false), HUMAN, Format::Json),
+        ((true, false, false), HUMAN, Format::Human),
+        ((false, false, false), &[], Format::Agent),
+        ((false, false, false), HUMAN, Format::Human),
+        ((false, false, false), NO_HUMAN, Format::Agent),
+        ((false, false, false), CLAUDE, Format::Agent),
+        ((false, false, false), CODEX, Format::Agent),
+    ];
+    for (flags, vars, expected) in cases {
+        assert_eq!(pick(*flags, vars), *expected, "{flags:?} {vars:?}");
+    }
 }
 
 #[test]
@@ -85,14 +70,11 @@ fn agent_env_detects_claude_code_and_codex_prefix() {
 }
 
 #[test]
-fn agent_output_is_never_coloured_on_any_stream() {
+fn colour_needs_human_a_terminal_and_no_no_color() {
     assert!(!color(Format::Agent, Stream::Stdout));
     assert!(!color(Format::Agent, Stream::Stderr));
     assert!(!color_stdout(Format::Json));
-}
 
-#[test]
-fn colour_needs_human_a_terminal_and_no_no_color() {
     let plain = Fake::default();
     assert!(color_in(Format::Human, true, &plain));
     assert!(!color_in(Format::Human, false, &plain));
@@ -111,33 +93,22 @@ fn colour_needs_human_a_terminal_and_no_no_color() {
 }
 
 #[test]
-fn ago_reads_just_now_under_a_minute() {
-    assert_eq!(ago(0), "just now");
-    assert_eq!(ago(59), "just now");
-}
-
-#[test]
-fn ago_uses_minutes_from_one_minute() {
-    assert_eq!(ago(60), "1m ago");
-    assert_eq!(ago(3599), "59m ago");
-}
-
-#[test]
-fn ago_uses_hours_then_days() {
-    assert_eq!(ago(3600), "1h ago");
-    assert_eq!(ago(86_399), "23h ago");
-    assert_eq!(ago(86_400), "1d ago");
-    assert_eq!(ago(2_591_999), "29d ago");
-}
-
-#[test]
-fn ago_uses_thirty_day_months() {
-    assert_eq!(ago(2_592_000), "1mo ago");
-    assert_eq!(ago(31_535_999), "12mo ago");
-}
-
-#[test]
-fn ago_uses_365_day_years() {
-    assert_eq!(ago(31_536_000), "1y ago");
-    assert_eq!(ago(63_072_000), "2y ago");
+fn ago_uses_the_largest_unit_that_fits() {
+    let cases = [
+        (0, "just now"),
+        (59, "just now"),
+        (60, "1m ago"),
+        (3599, "59m ago"),
+        (3600, "1h ago"),
+        (86_399, "23h ago"),
+        (86_400, "1d ago"),
+        (2_591_999, "29d ago"),
+        (2_592_000, "1mo ago"),
+        (31_535_999, "12mo ago"),
+        (31_536_000, "1y ago"),
+        (63_072_000, "2y ago"),
+    ];
+    for (seconds, expected) in cases {
+        assert_eq!(ago(seconds), expected, "{seconds}");
+    }
 }

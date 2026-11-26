@@ -85,18 +85,31 @@ fn refused_in(text: &Option<String>, what: &str) -> bool {
 }
 
 #[test]
-fn no_mode_and_no_strict_keeps_every_call_that_no_rule_names() {
-    let s = Sandbox::new("{}");
-    assert_eq!(calls(&s.perms(None, false)), [None, None, None, None, None]);
+fn lenient_permissions_keep_every_call_that_no_rule_names() {
+    let empty = Sandbox::new("{}");
+    let allows = Sandbox::new(ALLOWS);
+    let mut cases = vec![empty.perms(None, false)];
+    for mode in [Mode::Default, Mode::Auto, Mode::AcceptEdits] {
+        cases.push(empty.perms(Some(mode), false));
+    }
+    cases.push(allows.perms(Some(Mode::DontAsk), false));
+    cases.push(empty.perms(Some(Mode::BypassPermissions), true));
+    for p in cases {
+        assert_eq!(calls(&p), [None, None, None, None, None]);
+    }
 }
 
 #[test]
-fn plan_refuses_bash_and_edits_and_lets_fetch_mcp_and_reads_go() {
+fn plan_refuses_bash_and_edits_even_with_an_allow_rule() {
     let s = Sandbox::new("{}");
     let [bash, edit, fetch, mcp, read] = calls(&s.perms(Some(Mode::Plan), false));
     assert!(refused_in(&bash, "refused in plan mode"), "{bash:?}");
     assert!(refused_in(&edit, "refused in plan mode"), "{edit:?}");
     assert_eq!((fetch, mcp, read), (None, None, None));
+
+    let s = Sandbox::new(ALLOWS);
+    let [bash, edit, ..] = calls(&s.perms(Some(Mode::Plan), true));
+    assert!(refused_in(&bash, "plan mode") && refused_in(&edit, "plan mode"));
 }
 
 #[test]
@@ -117,16 +130,7 @@ fn dont_ask_refuses_calls_without_an_allow_rule_but_not_reads() {
 }
 
 #[test]
-fn dont_ask_lets_calls_go_that_an_allow_rule_covers() {
-    let s = Sandbox::new(ALLOWS);
-    assert_eq!(
-        calls(&s.perms(Some(Mode::DontAsk), false)),
-        [None, None, None, None, None]
-    );
-}
-
-#[test]
-fn an_allow_rule_covers_only_what_it_names() {
+fn allow_rules_cover_only_what_they_name() {
     let s = Sandbox::new(ALLOWS);
     let p = s.perms(Some(Mode::DontAsk), false);
     assert!(p.check_bash("git status -s").is_ok());
@@ -139,10 +143,7 @@ fn an_allow_rule_covers_only_what_it_names() {
     assert!(p.check_fetch("https://evil.com/").is_err());
     assert!(p.check_mcp("srv", Some("other")).is_err());
     assert!(p.check_mcp("other", None).is_err());
-}
 
-#[test]
-fn a_bare_allow_rule_covers_every_call_of_its_tool() {
     let s = Sandbox::new(r#"{"permissions": {"allow": ["Bash", "mcp__srv"]}}"#);
     let p = s.perms(Some(Mode::DontAsk), false);
     assert!(p.check_bash("anything && at all").is_ok());
@@ -168,17 +169,6 @@ fn deny_and_ask_rules_beat_an_allow_rule_in_every_mode() {
         assert!(refused_in(&deny, "is denied by"), "{mode:?} {deny:?}");
         let ask = message(p.check_edit(Path::new("src/a.rs")));
         assert!(refused_in(&ask, "needs approval"), "{mode:?} {ask:?}");
-    }
-}
-
-#[test]
-fn default_auto_and_accept_edits_are_lenient_without_strict() {
-    let s = Sandbox::new("{}");
-    for mode in [Mode::Default, Mode::Auto, Mode::AcceptEdits] {
-        assert_eq!(
-            calls(&s.perms(Some(mode), false)),
-            [None, None, None, None, None]
-        );
     }
 }
 
@@ -231,7 +221,7 @@ const PROTECTED: [&str; 4] = [
 ];
 
 #[test]
-fn protected_paths_need_an_allow_rule_in_every_mode_but_bypass() {
+fn protected_paths_need_an_allow_rule_but_bypass_or_no_mode_does_not() {
     let s = Sandbox::new("{}");
     for (mode, strict) in [
         (Mode::Default, false),
@@ -260,10 +250,7 @@ fn protected_paths_need_an_allow_rule_in_every_mode_but_bypass() {
     assert!(p.check_edit(Path::new("src/a.rs")).is_ok());
     assert!(p.check_edit(Path::new("src/../.git/hooks/x")).is_err());
     assert!(p.check_edit(Path::new("sub/.GIT/config")).is_err());
-}
 
-#[test]
-fn protected_paths_go_with_an_allow_rule_or_in_bypass_or_with_no_mode() {
     let s = Sandbox::new(r#"{"permissions": {"allow": ["Edit(.git/**)"]}}"#);
     let p = s.perms(Some(Mode::AcceptEdits), true);
     assert!(p.check_edit(Path::new(".git/hooks/pre-commit")).is_ok());
@@ -283,24 +270,8 @@ fn protected_paths_go_with_an_allow_rule_or_in_bypass_or_with_no_mode() {
 }
 
 #[test]
-fn bypass_permissions_ignores_strict_and_allow_rules() {
-    let s = Sandbox::new("{}");
-    assert_eq!(
-        calls(&s.perms(Some(Mode::BypassPermissions), true)),
-        [None, None, None, None, None]
-    );
-}
-
-#[test]
 fn strict_with_an_unknown_mode_counts_as_default() {
     let s = Sandbox::new("{}");
     let bash = message(s.perms(None, true).check_bash("git status"));
     assert!(refused_in(&bash, "refused in an unknown mode"), "{bash:?}");
-}
-
-#[test]
-fn plan_still_refuses_with_an_allow_rule() {
-    let s = Sandbox::new(ALLOWS);
-    let [bash, edit, ..] = calls(&s.perms(Some(Mode::Plan), true));
-    assert!(refused_in(&bash, "plan mode") && refused_in(&edit, "plan mode"));
 }

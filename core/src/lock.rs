@@ -65,17 +65,14 @@ mod tests {
     const SHORT: Duration = Duration::from_millis(20);
 
     #[test]
-    fn second_exclusive_waits_then_gets_none() {
+    fn a_second_exclusive_lock_waits_and_times_out() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l");
         let _held = exclusive(&path, SHORT).unwrap().unwrap();
         let start = Instant::now();
         assert!(exclusive(&path, SHORT).unwrap().is_none());
         assert!(start.elapsed() >= SHORT);
-    }
 
-    #[test]
-    fn zero_wait_tries_once() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l");
         let _held = exclusive(&path, Duration::ZERO).unwrap().unwrap();
@@ -83,7 +80,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_locks_coexist_and_block_exclusive() {
+    fn shared_and_exclusive_locks_block_each_other() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l");
         let a = shared(&path, SHORT).unwrap().unwrap();
@@ -91,10 +88,7 @@ mod tests {
         assert!(exclusive(&path, SHORT).unwrap().is_none());
         drop((a, b));
         assert!(exclusive(&path, SHORT).unwrap().is_some());
-    }
 
-    #[test]
-    fn exclusive_blocks_shared() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l");
         let _held = exclusive(&path, SHORT).unwrap().unwrap();
@@ -102,15 +96,12 @@ mod tests {
     }
 
     #[test]
-    fn drop_releases_the_lock() {
+    fn dropping_releases_the_lock_and_keeps_the_files_content() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l");
         drop(exclusive(&path, SHORT).unwrap());
         assert!(exclusive(&path, SHORT).unwrap().is_some());
-    }
 
-    #[test]
-    fn existing_content_is_kept() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l");
         std::fs::write(&path, "old nonce").unwrap();

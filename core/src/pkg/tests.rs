@@ -51,7 +51,7 @@ fn unanswered(_: &str, _: &[&str]) -> Option<String> {
 }
 
 #[test]
-fn pnpm_bin_dir_is_asked_of_pnpm_first() {
+fn an_answering_manager_names_its_bin_dir() {
     let run = |program: &str, args: &[&str]| {
         (program == "pnpm" && args == ["bin", "-g"]).then(|| "/x/pnpm/bin\n".to_owned())
     };
@@ -63,39 +63,7 @@ fn pnpm_bin_dir_is_asked_of_pnpm_first() {
         &run,
     );
     assert_eq!(dir, Some(PathBuf::from("/x/pnpm/bin")));
-}
 
-#[test]
-fn pnpm_falls_back_to_pnpm_home_bin_then_pnpm_home() {
-    let home = Path::new("/h/pnpm");
-    let dir = |files: &[&str]| {
-        global_bin_dir_in(
-            &env(&[]),
-            &FakeFs::with(files),
-            Manager::Pnpm,
-            Some(home),
-            &unanswered,
-        )
-    };
-    assert_eq!(
-        dir(&["/h/pnpm/bin/pnpm"]),
-        Some(PathBuf::from("/h/pnpm/bin"))
-    );
-    assert_eq!(dir(&["/h/pnpm/pnpm"]), Some(PathBuf::from("/h/pnpm")));
-    assert_eq!(dir(&[]), None);
-}
-
-#[test]
-fn bun_falls_back_to_its_home_bin_directory() {
-    let fs = FakeFs::with(&["/home/u/.bun/bin/bun"]);
-    assert_eq!(
-        global_bin_dir_in(&env(&[]), &fs, Manager::Bun, None, &unanswered),
-        Some(PathBuf::from("/home/u/.bun/bin"))
-    );
-}
-
-#[test]
-fn npm_bin_dir_is_the_bin_under_its_prefix_and_the_prefix_on_windows() {
     let prefix = |_: &str, _: &[&str]| Some("/opt/homebrew\n".to_owned());
     let unix = global_bin_dir_in(&env(&[]), &FakeFs::default(), Manager::Npm, None, &prefix);
     assert_eq!(unix, Some(PathBuf::from("/opt/homebrew/bin")));
@@ -110,15 +78,52 @@ fn npm_bin_dir_is_the_bin_under_its_prefix_and_the_prefix_on_windows() {
 }
 
 #[test]
-fn an_unanswering_npm_has_no_bin_dir() {
-    let dir = global_bin_dir_in(
-        &env(&[]),
-        &FakeFs::default(),
-        Manager::Npm,
-        None,
-        &unanswered,
+fn each_manager_falls_back_to_its_known_bin_directory() {
+    let home = Path::new("/h/pnpm");
+    let dir = |manager, pnpm_home, files: &[&str]| {
+        global_bin_dir_in(
+            &env(&[]),
+            &FakeFs::with(files),
+            manager,
+            pnpm_home,
+            &unanswered,
+        )
+    };
+    type Case = (
+        Manager,
+        Option<&'static Path>,
+        &'static [&'static str],
+        Option<PathBuf>,
     );
-    assert_eq!(dir, None);
+    let cases: &[Case] = &[
+        (
+            Manager::Pnpm,
+            Some(home),
+            &["/h/pnpm/bin/pnpm"],
+            Some(PathBuf::from("/h/pnpm/bin")),
+        ),
+        (
+            Manager::Pnpm,
+            Some(home),
+            &["/h/pnpm/pnpm"],
+            Some(PathBuf::from("/h/pnpm")),
+        ),
+        (Manager::Pnpm, Some(home), &[], None),
+        (
+            Manager::Bun,
+            None,
+            &["/home/u/.bun/bin/bun"],
+            Some(PathBuf::from("/home/u/.bun/bin")),
+        ),
+        (Manager::Npm, None, &[], None),
+    ];
+    for (manager, pnpm_home, files, expected) in cases {
+        assert_eq!(
+            dir(*manager, *pnpm_home, files),
+            *expected,
+            "{manager:?} {files:?}"
+        );
+    }
 }
 
 #[test]
@@ -138,7 +143,7 @@ fn install_commands_match_each_package_manager() {
 }
 
 #[test]
-fn detection_prefers_the_named_manager_then_pnpm_bun_npm() {
+fn detection_prefers_the_named_manager_then_pnpm_bun_npm_and_searches_user_bins() {
     let e = env(&["/bin"]);
     let all = FakeFs::with(&["/bin/pnpm", "/bin/bun", "/bin/npm"]);
     assert_eq!(detect_in(&e, &all, None), Some(Manager::Pnpm));
@@ -155,25 +160,19 @@ fn detection_prefers_the_named_manager_then_pnpm_bun_npm() {
         Some(Manager::Npm)
     );
     assert_eq!(detect_in(&e, &FakeFs::default(), None), None);
-}
 
-#[test]
-fn detection_searches_the_user_bin_directories_too() {
     let e = env(&["/usr/bin"]);
     let fs = FakeFs::with(&["/home/u/.bun/bin/bun"]);
     assert_eq!(detect_in(&e, &fs, None), Some(Manager::Bun));
 }
 
 #[test]
-fn a_dry_run_returns_the_command_and_runs_nothing() {
+fn install_in_dry_run_runs_nothing_and_a_missing_manager_is_not_run() {
     let report = install_in(&env(&[]), &FakeFs::default(), Manager::Pnpm, "p", true).unwrap();
     assert_eq!(report.command, ["pnpm", "add", "-g", "p"]);
     assert!(report.status.is_none());
     assert!(report.success());
-}
 
-#[test]
-fn a_manager_missing_from_the_search_path_is_not_run() {
     let err = install_in(
         &env(&["/nowhere"]),
         &FakeFs::default(),
@@ -183,7 +182,10 @@ fn a_manager_missing_from_the_search_path_is_not_run() {
     )
     .unwrap_err();
     assert!(matches!(err, PkgError::Spawn { program: "npm", .. }));
-    assert!(err.hint().is_some());
+    assert_eq!(
+        err.hint().as_deref(),
+        Some("check that `npm` runs in a terminal, or choose another package manager")
+    );
 }
 
 #[cfg(unix)]
@@ -222,7 +224,7 @@ fn install_runs_the_manager_found_on_the_search_path() {
 
 #[cfg(unix)]
 #[test]
-fn package_version_reads_the_manifest_next_to_the_real_binary() {
+fn package_version_follows_a_link_or_a_cmd_shim_to_the_manifest() {
     let root = tempfile::tempdir().unwrap();
     let pkg_dir = root
         .path()
@@ -242,11 +244,7 @@ fn package_version_reads_the_manifest_next_to_the_real_binary() {
     assert_eq!(package_version(&link, PKG).as_deref(), Some("1.2.3"));
     assert_eq!(package_version(&link, "other"), None);
     assert_eq!(package_version(&root.path().join("missing"), PKG), None);
-}
 
-#[cfg(unix)]
-#[test]
-fn package_version_follows_a_cmd_shim_target() {
     let root = tempfile::tempdir().unwrap();
     let pkg_dir = root
         .path()

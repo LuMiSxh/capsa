@@ -48,170 +48,136 @@ fn settings(event: &str, entries: Vec<Value>) -> Value {
 }
 
 #[test]
-fn reports_missing_when_the_event_has_no_entry_of_the_tool() {
-    assert_eq!(hook_state(&json!({}), &SPEC), HookState::Missing);
-    let foreign = settings("PreToolUse", vec![entry(Some("Bash"), "other-tool run")]);
-    assert_eq!(hook_state(&foreign, &SPEC), HookState::Missing);
+fn hook_state_reports_every_relation_to_the_spec() {
+    let cases = [
+        (json!({}), SPEC, HookState::Missing),
+        (
+            settings("PreToolUse", vec![entry(Some("Bash"), "other-tool run")]),
+            SPEC,
+            HookState::Missing,
+        ),
+        (
+            settings("PreToolUse", vec![entry(Some("Bash"), COMMAND)]),
+            SPEC,
+            HookState::Installed,
+        ),
+        (
+            settings("SubagentStart", vec![entry(None, COMMAND)]),
+            UNSCOPED,
+            HookState::Installed,
+        ),
+        (
+            settings("PreToolUse", vec![entry(Some("Read"), COMMAND)]),
+            SPEC,
+            HookState::CustomMatcher {
+                matcher: Some("Read".to_owned()),
+            },
+        ),
+        (
+            settings("SubagentStart", vec![entry(Some("Explore"), COMMAND)]),
+            UNSCOPED,
+            HookState::CustomMatcher {
+                matcher: Some("Explore".to_owned()),
+            },
+        ),
+        (
+            settings("PreToolUse", vec![entry(None, COMMAND)]),
+            SPEC,
+            HookState::CustomMatcher { matcher: None },
+        ),
+        (
+            settings("PreToolUse", vec![entry(Some("Bash"), "demo-hook old")]),
+            SPEC,
+            HookState::Outdated {
+                command: "demo-hook old".to_owned(),
+            },
+        ),
+        (
+            settings(
+                "PreToolUse",
+                vec![entry(Some("Bash"), "demo-hook run --verbose")],
+            ),
+            SPEC,
+            HookState::Outdated {
+                command: "demo-hook run --verbose".to_owned(),
+            },
+        ),
+        (
+            settings(
+                "PreToolUse",
+                vec![
+                    entry(Some("Bash"), COMMAND),
+                    entry(Some("Bash"), "demo-hook old"),
+                ],
+            ),
+            SPEC,
+            HookState::Outdated {
+                command: "demo-hook old".to_owned(),
+            },
+        ),
+    ];
+    for (value, spec, expected) in cases {
+        assert_eq!(hook_state(&value, &spec), expected);
+    }
 }
 
 #[test]
-fn reports_installed_under_the_spec_matcher() {
-    let v = settings("PreToolUse", vec![entry(Some("Bash"), COMMAND)]);
-    assert_eq!(hook_state(&v, &SPEC), HookState::Installed);
-}
-
-#[test]
-fn reports_installed_without_a_matcher_when_the_spec_has_none() {
-    let v = settings("SubagentStart", vec![entry(None, COMMAND)]);
-    assert_eq!(hook_state(&v, &UNSCOPED), HookState::Installed);
-}
-
-#[test]
-fn reports_a_custom_matcher_the_user_chose() {
-    let v = settings("PreToolUse", vec![entry(Some("Read"), COMMAND)]);
-    assert_eq!(
-        hook_state(&v, &SPEC),
-        HookState::CustomMatcher {
-            matcher: Some("Read".to_owned())
+fn add_installs_replaces_or_keeps_the_hook_and_its_neighbours() {
+    let unchanged = |v: Value| (v.clone(), Step::Set, v, None::<HookState>);
+    let cases = vec![
+        (
+            settings("PreToolUse", vec![entry(Some("Read"), "other-tool run")]),
+            Step::Install,
+            settings(
+                "PreToolUse",
+                vec![
+                    entry(Some("Read"), "other-tool run"),
+                    entry(Some("Bash"), COMMAND),
+                ],
+            ),
+            Some(HookState::Installed),
+        ),
+        (
+            json!({}),
+            Step::Install,
+            settings("PreToolUse", vec![entry(Some("Bash"), COMMAND)]),
+            None,
+        ),
+        (
+            json!({"hooks": {"PreToolUse": [{
+                "matcher": "Bash",
+                "hooks": [
+                    {"type": "command", "command": "demo-hook old"},
+                    {"type": "command", "command": "other-tool run"}
+                ]
+            }]}}),
+            Step::Replace,
+            json!({"hooks": {"PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "other-tool run"}]},
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": COMMAND}]}
+            ]}}),
+            Some(HookState::Installed),
+        ),
+        (
+            settings("PreToolUse", vec![entry(Some("Bash"), "demo-hook old")]),
+            Step::Replace,
+            settings("PreToolUse", vec![entry(Some("Bash"), COMMAND)]),
+            None,
+        ),
+        unchanged(settings("PreToolUse", vec![entry(Some("Read"), COMMAND)])),
+        unchanged(settings(
+            "PreToolUse",
+            vec![entry(Some("Bash"), "demo-hook run --verbose")],
+        )),
+        unchanged(settings("PreToolUse", vec![entry(Some("Bash"), COMMAND)])),
+    ];
+    for (mut value, expected_step, expected, state) in cases {
+        assert_eq!(add_missing_hook(&mut value, &SPEC), expected_step);
+        assert_eq!(value, expected);
+        if let Some(state) = state {
+            assert_eq!(hook_state(&value, &SPEC), state);
         }
-    );
-}
-
-#[test]
-fn reports_a_custom_matcher_when_the_spec_has_none_and_the_entry_has_one() {
-    let v = settings("SubagentStart", vec![entry(Some("Explore"), COMMAND)]);
-    assert_eq!(
-        hook_state(&v, &UNSCOPED),
-        HookState::CustomMatcher {
-            matcher: Some("Explore".to_owned())
-        }
-    );
-}
-
-#[test]
-fn reports_a_custom_matcher_when_the_entry_has_none() {
-    let v = settings("PreToolUse", vec![entry(None, COMMAND)]);
-    assert_eq!(
-        hook_state(&v, &SPEC),
-        HookState::CustomMatcher { matcher: None }
-    );
-}
-
-#[test]
-fn reports_outdated_for_the_older_form_of_the_command() {
-    let v = settings("PreToolUse", vec![entry(Some("Bash"), "demo-hook old")]);
-    assert_eq!(
-        hook_state(&v, &SPEC),
-        HookState::Outdated {
-            command: "demo-hook old".to_owned()
-        }
-    );
-}
-
-#[test]
-fn reports_outdated_for_the_same_binary_with_other_arguments() {
-    let v = settings(
-        "PreToolUse",
-        vec![entry(Some("Bash"), "demo-hook run --verbose")],
-    );
-    assert_eq!(
-        hook_state(&v, &SPEC),
-        HookState::Outdated {
-            command: "demo-hook run --verbose".to_owned()
-        }
-    );
-}
-
-#[test]
-fn reports_outdated_before_a_current_entry() {
-    let v = settings(
-        "PreToolUse",
-        vec![
-            entry(Some("Bash"), COMMAND),
-            entry(Some("Bash"), "demo-hook old"),
-        ],
-    );
-    assert_eq!(
-        hook_state(&v, &SPEC),
-        HookState::Outdated {
-            command: "demo-hook old".to_owned()
-        }
-    );
-}
-
-#[test]
-fn add_missing_installs_next_to_foreign_hooks() {
-    let mut v = settings("PreToolUse", vec![entry(Some("Read"), "other-tool run")]);
-    assert_eq!(add_missing_hook(&mut v, &SPEC), Step::Install);
-    assert_eq!(hook_state(&v, &SPEC), HookState::Installed);
-    assert_eq!(
-        v["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-        "other-tool run"
-    );
-}
-
-#[test]
-fn add_missing_writes_the_hook_into_an_empty_object() {
-    let mut v = json!({});
-    assert_eq!(add_missing_hook(&mut v, &SPEC), Step::Install);
-    assert_eq!(
-        v,
-        settings("PreToolUse", vec![entry(Some("Bash"), COMMAND)])
-    );
-}
-
-#[test]
-fn add_missing_replaces_a_legacy_entry_and_keeps_foreign_hooks() {
-    let mut v = json!({"hooks": {"PreToolUse": [{
-        "matcher": "Bash",
-        "hooks": [
-            {"type": "command", "command": "demo-hook old"},
-            {"type": "command", "command": "other-tool run"}
-        ]
-    }]}});
-    assert_eq!(add_missing_hook(&mut v, &SPEC), Step::Replace);
-    assert_eq!(hook_state(&v, &SPEC), HookState::Installed);
-    assert_eq!(
-        v["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-        "other-tool run"
-    );
-}
-
-#[test]
-fn add_missing_replaces_a_lone_legacy_entry_with_the_current_hook() {
-    let mut v = settings("PreToolUse", vec![entry(Some("Bash"), "demo-hook old")]);
-    assert_eq!(add_missing_hook(&mut v, &SPEC), Step::Replace);
-    assert_eq!(
-        v,
-        settings("PreToolUse", vec![entry(Some("Bash"), COMMAND)])
-    );
-}
-
-#[test]
-fn add_missing_keeps_a_custom_matcher_and_writes_nothing() {
-    let mut v = settings("PreToolUse", vec![entry(Some("Read"), COMMAND)]);
-    let before = v.clone();
-    assert_eq!(add_missing_hook(&mut v, &SPEC), Step::Set);
-    assert_eq!(v, before);
-}
-
-#[test]
-fn add_missing_keeps_an_outdated_entry_that_is_not_legacy() {
-    let mut v = settings(
-        "PreToolUse",
-        vec![entry(Some("Bash"), "demo-hook run --verbose")],
-    );
-    let before = v.clone();
-    assert_eq!(add_missing_hook(&mut v, &SPEC), Step::Set);
-    assert_eq!(v, before);
-}
-
-#[test]
-fn add_missing_leaves_an_installed_hook_alone() {
-    let mut v = settings("PreToolUse", vec![entry(Some("Bash"), COMMAND)]);
-    let before = v.clone();
-    assert_eq!(add_missing_hook(&mut v, &SPEC), Step::Set);
-    assert_eq!(v, before);
+    }
 }
 
 fn open(v: &Value) -> (tempfile::TempDir, HookFile) {
@@ -235,7 +201,7 @@ fn opens_a_missing_file_as_an_empty_document() {
 }
 
 #[test]
-fn set_installs_then_reports_the_same_entry_as_set() {
+fn set_installs_or_keeps_an_entry_and_reports_the_step() {
     let (_dir, mut file) = open(&json!({"theme": "dark"}));
     assert_eq!(file.set(&SPEC), Step::Install);
     assert_eq!(file.set(&SPEC), Step::Set);
@@ -246,35 +212,7 @@ fn set_installs_then_reports_the_same_entry_as_set() {
         saved["hooks"],
         settings("PreToolUse", vec![entry(Some("Bash"), COMMAND)])["hooks"]
     );
-}
 
-#[test]
-fn set_replaces_legacy_and_outdated_entries_with_the_canonical_one() {
-    let v = settings(
-        "PreToolUse",
-        vec![
-            entry(Some("Bash"), "demo-hook old"),
-            entry(Some("Read"), "demo-hook run --verbose"),
-        ],
-    );
-    let (_dir, mut file) = open(&v);
-    assert_eq!(file.set(&SPEC), Step::Replace);
-    assert_eq!(file.state(&SPEC), HookState::Installed);
-    assert_eq!(
-        file.value(),
-        &settings("PreToolUse", vec![entry(Some("Bash"), COMMAND)])
-    );
-}
-
-#[test]
-fn set_replaces_a_custom_matcher_when_the_spec_has_one() {
-    let (_dir, mut file) = open(&settings("PreToolUse", vec![entry(Some("Read"), COMMAND)]));
-    assert_eq!(file.set(&SPEC), Step::Replace);
-    assert_eq!(file.state(&SPEC), HookState::Installed);
-}
-
-#[test]
-fn set_keeps_a_custom_matcher_when_the_spec_has_none() {
     let v = settings("SubagentStart", vec![entry(Some("Explore"), COMMAND)]);
     let (_dir, mut file) = open(&v);
     assert_eq!(file.set(&UNSCOPED), Step::Set);
@@ -282,28 +220,53 @@ fn set_keeps_a_custom_matcher_when_the_spec_has_none() {
 }
 
 #[test]
-fn set_replaces_an_outdated_entry_even_when_the_spec_has_no_matcher() {
-    let v = settings(
-        "SubagentStart",
-        vec![entry(Some("Explore"), "demo-hook old")],
-    );
-    let (_dir, mut file) = open(&v);
-    assert_eq!(file.set(&UNSCOPED), Step::Replace);
-    assert_eq!(file.state(&UNSCOPED), HookState::Installed);
+fn set_replaces_a_legacy_outdated_or_custom_matcher_entry() {
+    let canonical = settings("PreToolUse", vec![entry(Some("Bash"), COMMAND)]);
+    let cases = [
+        (
+            settings(
+                "PreToolUse",
+                vec![
+                    entry(Some("Bash"), "demo-hook old"),
+                    entry(Some("Read"), "demo-hook run --verbose"),
+                ],
+            ),
+            SPEC,
+            Some(canonical),
+        ),
+        (
+            settings("PreToolUse", vec![entry(Some("Read"), COMMAND)]),
+            SPEC,
+            None,
+        ),
+        (
+            settings(
+                "SubagentStart",
+                vec![entry(Some("Explore"), "demo-hook old")],
+            ),
+            UNSCOPED,
+            None,
+        ),
+    ];
+    for (initial, spec, expected_value) in cases {
+        let (_dir, mut file) = open(&initial);
+        assert_eq!(file.set(&spec), Step::Replace);
+        assert_eq!(file.state(&spec), HookState::Installed);
+        if let Some(expected) = expected_value {
+            assert_eq!(file.value(), &expected);
+        }
+    }
 }
 
 #[test]
-fn set_and_remove_leave_foreign_hooks_untouched() {
+fn remove_claims_every_owned_entry_and_keeps_foreign_hooks() {
     let foreign = entry(Some("Bash"), "other-tool run");
     let (_dir, mut file) = open(&settings("PreToolUse", vec![foreign.clone()]));
     file.set(&SPEC);
     assert_eq!(file.value()["hooks"]["PreToolUse"][0], foreign);
     assert!(file.remove(&SPEC));
     assert_eq!(file.value(), &settings("PreToolUse", vec![foreign]));
-}
 
-#[test]
-fn remove_claims_every_owned_entry_and_drops_the_empty_hooks() {
     let v = settings(
         "PreToolUse",
         vec![entry(Some("Bash"), COMMAND), entry(None, "demo-hook old")],
@@ -416,7 +379,7 @@ fn reports_each_status_line_state() {
 }
 
 #[test]
-fn set_status_line_installs_then_reports_the_same_line_as_set() {
+fn set_status_line_installs_or_replaces_the_line() {
     let (_dir, mut file) = open(&json!({"theme": "dark"}));
     assert_eq!(file.set_status_line(&LINE), Step::Install);
     assert_eq!(file.set_status_line(&LINE), Step::Set);
@@ -429,20 +392,24 @@ fn set_status_line_installs_then_reports_the_same_line_as_set() {
     let mut again = HookFile::open_at(Agent::ClaudeCode, file.path()).unwrap();
     assert_eq!(again.status_line(&LINE), StatusLineState::Installed);
     assert_eq!(again.set_status_line(&LINE), Step::Set);
-}
 
-#[test]
-fn set_status_line_replaces_an_outdated_or_foreign_line() {
-    let (_dir, mut file) = open(&json!({"statusLine": status_line("demo-hook statusline --wide")}));
-    assert_eq!(file.set_status_line(&LINE), Step::Replace);
-    assert_eq!(file.status_line(&LINE), StatusLineState::Installed);
-
-    let (_dir, mut file) = open(&json!({"statusLine": status_line("other-tool")}));
-    assert_eq!(file.set_status_line(&LINE), Step::Replace);
-    assert_eq!(
-        file.value()["statusLine"],
-        status_line("demo-hook statusline")
-    );
+    for (initial, expected) in [
+        (
+            json!({"statusLine": status_line("demo-hook statusline --wide")}),
+            None,
+        ),
+        (
+            json!({"statusLine": status_line("other-tool")}),
+            Some(status_line("demo-hook statusline")),
+        ),
+    ] {
+        let (_dir, mut file) = open(&initial);
+        assert_eq!(file.set_status_line(&LINE), Step::Replace);
+        assert_eq!(file.status_line(&LINE), StatusLineState::Installed);
+        if let Some(expected) = expected {
+            assert_eq!(file.value()["statusLine"], expected);
+        }
+    }
 }
 
 #[test]

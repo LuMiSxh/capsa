@@ -126,57 +126,38 @@ mod tests {
     }
 
     #[test]
-    fn bare_tilde_is_the_home_directory() {
-        assert_eq!(expand("~"), HOME);
+    fn expand_replaces_a_leading_tilde_and_leaves_every_other_tilde_alone() {
+        let cases = [
+            ("~", HOME),
+            ("~/src/a.rs", "/home/user/src/a.rs"),
+            ("~\\src", "/home/user\\src"),
+            ("~bob/src", "~bob/src"),
+            ("src/~/a.rs", "src/~/a.rs"),
+            ("a~", "a~"),
+            ("/abs/x", "/abs/x"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(expand(input), expected, "{input}");
+        }
     }
 
     #[test]
-    fn tilde_slash_joins_the_rest_to_home() {
-        assert_eq!(expand("~/src/a.rs"), "/home/user/src/a.rs");
-    }
-
-    #[test]
-    fn tilde_backslash_joins_the_rest_to_home() {
-        assert_eq!(expand("~\\src"), "/home/user\\src");
-    }
-
-    #[test]
-    fn tilde_user_form_is_kept_as_written() {
-        assert_eq!(expand("~bob/src"), "~bob/src");
-    }
-
-    #[test]
-    fn tilde_inside_a_path_is_kept_as_written() {
-        assert_eq!(expand("src/~/a.rs"), "src/~/a.rs");
-        assert_eq!(expand("a~"), "a~");
-    }
-
-    #[test]
-    fn path_is_kept_when_no_home_is_known() {
+    fn path_is_kept_without_a_tilde_or_a_known_home() {
         assert_eq!(
             expand_with_home("~/src", None).display().to_string(),
             "~/src"
         );
-    }
-
-    #[test]
-    fn path_without_tilde_is_unchanged() {
         assert_eq!(expand("/abs/x"), "/abs/x");
     }
 
-    #[test]
     #[cfg(unix)]
-    fn state_dir_prefers_xdg_state_home() {
+    #[test]
+    fn state_dir_prefers_xdg_state_home_and_falls_back_to_local_state() {
         let env = |k: &str| (k == "XDG_STATE_HOME").then(|| OsString::from("/x/state"));
         assert_eq!(
             state_dir_with("census", Some(PathBuf::from(HOME)), env),
             Path::new("/x/state/census")
         );
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn state_dir_falls_back_to_local_state_in_home() {
         assert_eq!(
             state_dir_with("census", Some(PathBuf::from(HOME)), |_| None),
             Path::new("/home/user/.local/state/census")
@@ -202,27 +183,22 @@ mod tests {
         );
     }
 
-    #[test]
     #[cfg(unix)]
-    fn log_file_joins_the_name_to_the_state_dir() {
+    #[test]
+    fn log_file_joins_the_name_to_the_state_dir_from_home_or_the_state_root() {
         assert_eq!(
             log_file_with("acus", "guard.jsonl", Some(PathBuf::from(HOME)), |_| None),
             Some(PathBuf::from("/home/user/.local/state/acus/guard.jsonl"))
+        );
+        let env = |k: &str| (k == "XDG_STATE_HOME").then(|| OsString::from("/x/state"));
+        assert_eq!(
+            log_file_with("acus", "guard.jsonl", None, env),
+            Some(PathBuf::from("/x/state/acus/guard.jsonl"))
         );
     }
 
     #[test]
     fn log_file_is_none_without_a_home_or_state_root() {
         assert_eq!(log_file_with("acus", "guard.jsonl", None, |_| None), None);
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn log_file_uses_the_state_root_when_no_home_is_known() {
-        let env = |k: &str| (k == "XDG_STATE_HOME").then(|| OsString::from("/x/state"));
-        assert_eq!(
-            log_file_with("acus", "guard.jsonl", None, env),
-            Some(PathBuf::from("/x/state/acus/guard.jsonl"))
-        );
     }
 }

@@ -35,23 +35,15 @@ fn missing() -> anyhow::Result<()> {
 }
 
 #[test]
-fn hint_is_found_through_context_layers() {
+fn hints_and_causes_survive_the_context_chain() {
     let err = missing().unwrap_err();
     assert_eq!(find_hint(&err), Some("create a.toml"));
-}
-
-#[test]
-fn message_appears_once_in_chain() {
-    let err = missing().unwrap_err();
     let messages: Vec<String> = err.chain().map(ToString::to_string).collect();
     assert_eq!(
         messages,
         ["loading settings", "config file missing: a.toml"]
     );
-}
 
-#[test]
-fn causes_survive_the_hint_wrapper() {
     let source = io::Error::new(io::ErrorKind::PermissionDenied, "denied");
     let err = Err::<(), _>(LibError::Read(source)).hinted().unwrap_err();
     let messages: Vec<String> = err.chain().map(ToString::to_string).collect();
@@ -67,30 +59,24 @@ fn error_without_hint_yields_none() {
 }
 
 #[test]
-fn hinted_new_is_found_directly() {
-    let err = anyhow::Error::new(Hinted::new("bad", "try again"));
-    assert_eq!(find_hint(&err), Some("try again"));
+fn hinted_constructors_build_an_error_that_find_hint_reads() {
+    let direct = anyhow::Error::new(Hinted::new("bad", "try again"));
+    assert_eq!(find_hint(&direct), Some("try again"));
+
+    let built = hinted("bad", "try again");
+    assert_eq!(built.to_string(), "bad");
+    assert_eq!(find_hint(&built), Some("try again"));
 }
 
 #[test]
-fn hinted_builds_an_error_that_find_hint_reads() {
-    let err = hinted("bad", "try again");
-    assert_eq!(err.to_string(), "bad");
-    assert_eq!(find_hint(&err), Some("try again"));
-}
-
-#[test]
-fn update_unavailable_gives_the_install_command_for_the_package() {
+fn unavailable_commands_name_the_rebuild_or_manual_fix() {
     let err = update_unavailable("census", "census");
     assert_eq!(err.to_string(), "census was built without `cmd-update`");
     assert_eq!(
         find_hint(&err),
         Some("cargo install --path census --features cmd-update, or rerun the installer")
     );
-}
 
-#[test]
-fn uninstall_unavailable_asks_for_manual_removal() {
     let err = uninstall_unavailable("vicarius");
     assert_eq!(err.to_string(), "vicarius was built without `cmd-update`");
     assert_eq!(

@@ -54,7 +54,7 @@ fn verifies_checksums() {
 }
 
 #[test]
-fn extracts_the_binary_from_both_archive_kinds() {
+fn extracts_the_binary_and_refuses_non_regular_entries_in_both_archive_kinds() {
     let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
         Vec::new(),
         flate2::Compression::fast(),
@@ -79,10 +79,7 @@ fn extracts_the_binary_from_both_archive_kinds() {
     let data = zip.finish().unwrap().into_inner();
     assert_eq!(extract(&data, "zip", "acus.exe").unwrap(), b"exe");
     assert!(extract(&data, "zip", "other.exe").is_err());
-}
 
-#[test]
-fn refuses_links_directories_and_empty_files_in_a_tar() {
     let build = |kind: tar::EntryType, body: &[u8]| {
         let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
             Vec::new(),
@@ -113,10 +110,7 @@ fn refuses_links_directories_and_empty_files_in_a_tar() {
         extract(&build(tar::EntryType::Regular, b""), "tar.gz", "acus"),
         Err(UpdateError::MissingInArchive { .. })
     ));
-}
 
-#[test]
-fn refuses_links_directories_and_empty_files_in_a_zip() {
     let new = || zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opts = zip::write::SimpleFileOptions::default();
     let mut link = new();
@@ -132,7 +126,7 @@ fn refuses_links_directories_and_empty_files_in_a_zip() {
 }
 
 #[test]
-fn replaces_the_binary_in_place() {
+fn replaces_the_binary_in_place_and_makes_it_executable() {
     let dir = tempfile::tempdir().unwrap();
     let exe = dir.path().join("acus");
     std::fs::write(&exe, "old").unwrap();
@@ -140,18 +134,12 @@ fn replaces_the_binary_in_place() {
     assert_eq!(std::fs::read(&exe).unwrap(), b"new");
     let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
     assert_eq!(left.len(), 1 + usize::from(cfg!(windows)), "{left:?}");
-}
-
-#[cfg(unix)]
-#[test]
-fn replaced_binary_is_executable() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
-    let exe = dir.path().join("acus");
-    std::fs::write(&exe, "old").unwrap();
-    replace(&exe, "acus", b"new").unwrap();
-    let mode = std::fs::metadata(&exe).unwrap().permissions().mode();
-    assert_eq!(mode & 0o111, 0o111);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&exe).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111);
+    }
 }
 
 #[cfg(unix)]
@@ -171,7 +159,7 @@ fn refuses_to_replace_or_remove_a_symlink() {
 }
 
 #[test]
-fn refuses_a_directory_and_a_missing_file() {
+fn replace_refuses_a_directory_a_missing_file_and_a_planted_temporary_file() {
     let dir = tempfile::tempdir().unwrap();
     let sub = dir.path().join("acus");
     std::fs::create_dir(&sub).unwrap();
@@ -183,10 +171,7 @@ fn refuses_a_directory_and_a_missing_file() {
         replace(&dir.path().join("acus.exe"), "acus", b"new"),
         Err(UpdateError::Write { .. })
     ));
-}
 
-#[test]
-fn a_planted_temporary_file_is_never_overwritten() {
     let dir = tempfile::tempdir().unwrap();
     let exe = dir.path().join("acus");
     std::fs::write(&exe, "old").unwrap();
@@ -209,7 +194,7 @@ fn removes_the_binary() {
 }
 
 #[test]
-fn replacing_requires_the_tool_name() {
+fn replacing_or_removing_requires_the_tool_name() {
     let dir = tempfile::tempdir().unwrap();
     let renamed = dir.path().join("renamed");
     std::fs::write(&renamed, "old").unwrap();
@@ -218,11 +203,6 @@ fn replacing_requires_the_tool_name() {
         Err(UpdateError::NotNamed { .. })
     ));
     assert_eq!(std::fs::read(&renamed).unwrap(), b"old");
-}
-
-#[test]
-fn removal_requires_the_tool_name() {
-    let dir = tempfile::tempdir().unwrap();
     assert!(ensure_named(&dir.path().join("acus"), "acus").is_ok());
     assert!(ensure_named(&dir.path().join("acus.exe"), "acus").is_ok());
     assert!(matches!(
@@ -232,7 +212,7 @@ fn removal_requires_the_tool_name() {
 }
 
 #[test]
-fn selects_the_newest_published_release_of_the_tool() {
+fn select_release_picks_the_newest_published_release_whatever_the_listing_order() {
     let list = releases(
         r#"[
             {"tag_name": "census-v0.3.0", "draft": false, "prerelease": false},
@@ -242,15 +222,16 @@ fn selects_the_newest_published_release_of_the_tool() {
             {"tag_name": "acus-v0.16.0", "draft": false, "prerelease": false}
         ]"#,
     );
-    assert_eq!(
-        select_release(list.clone(), "acus").unwrap().tag,
-        "acus-v0.16.1"
-    );
-    assert_eq!(select_release(list, "census").unwrap().tag, "census-v0.3.0");
-}
+    for (tool, expected) in [("acus", "acus-v0.16.1"), ("census", "census-v0.3.0")] {
+        assert_eq!(
+            select_release(list.clone(), tool).unwrap().tag,
+            expected,
+            "{tool}"
+        );
+    }
+    let other = releases(r#"[{"tag_name": "pons-v0.5.0", "draft": false, "prerelease": false}]"#);
+    assert!(select_release(other, "acus").is_none());
 
-#[test]
-fn selects_the_highest_version_whatever_the_listing_order() {
     let list = releases(
         r#"[
             {"tag_name": "acus-v0.16.2", "draft": false, "prerelease": false},
@@ -266,12 +247,6 @@ fn selects_the_highest_version_whatever_the_listing_order() {
     for lower in ["0.16.2", "0.9.0", "0.10.0"] {
         assert!(version(picked.tag.strip_prefix("acus-v").unwrap()) > version(lower));
     }
-}
-
-#[test]
-fn selects_no_release_without_the_tools_tags() {
-    let list = releases(r#"[{"tag_name": "pons-v0.5.0", "draft": false, "prerelease": false}]"#);
-    assert!(select_release(list, "acus").is_none());
 }
 
 #[test]
@@ -291,28 +266,6 @@ fn names_archives_and_finds_their_api_urls() {
     assert!(asset_url(&release, "acus-x86_64-pc-windows-msvc.zip.sha256").is_none());
 }
 
-#[test]
-fn report_names_the_command_to_run() {
-    let report = Report {
-        tool: "pons",
-        current: "0.5.2".into(),
-        latest: "0.6.0".into(),
-        exe: "/bin/pons".into(),
-        state: State::Available,
-    };
-    assert_eq!(
-        report.to_string(),
-        "pons 0.6.0 is available (installed 0.5.2); run pons self update"
-    );
-    assert_eq!(report.outcome(true).code(), 0);
-    let current = Report {
-        state: State::Current,
-        ..report
-    };
-    assert_eq!(current.outcome(true).code(), 1);
-    assert_eq!(current.outcome(false).code(), 0);
-}
-
 fn pons_report(state: State) -> Report {
     Report {
         tool: "pons",
@@ -324,18 +277,27 @@ fn pons_report(state: State) -> Report {
 }
 
 #[test]
-fn report_agent_text_is_its_display_line() {
+fn report_names_the_command_and_renders_its_display_line_in_every_format() {
+    let named = pons_report(State::Available);
+    assert_eq!(
+        named.to_string(),
+        "pons 0.6.0 is available (installed 0.5.2); run pons self update"
+    );
+    assert_eq!(named.outcome(true).code(), 0);
+    let current = Report {
+        state: State::Current,
+        ..named
+    };
+    assert_eq!(current.outcome(true).code(), 1);
+    assert_eq!(current.outcome(false).code(), 0);
+
     let report = pons_report(State::Available);
     let mut out = Vec::new();
     emit_to(&report, Format::Agent, false, &mut out).unwrap();
     assert_eq!(String::from_utf8(out).unwrap(), format!("{report}\n"));
-}
 
-#[test]
-fn report_json_has_the_stable_shape() {
-    let report = pons_report(State::Updated);
     assert_eq!(
-        serde_json::to_value(&report).unwrap(),
+        serde_json::to_value(pons_report(State::Updated)).unwrap(),
         serde_json::json!({
             "tool": "pons",
             "current": "0.5.2",
@@ -344,18 +306,9 @@ fn report_json_has_the_stable_shape() {
             "state": "updated",
         })
     );
-}
 
-#[test]
-fn report_human_view_titles_the_update_and_hints_at_it() {
     let mut out = Vec::new();
-    emit_to(
-        &pons_report(State::Available),
-        Format::Human,
-        false,
-        &mut out,
-    )
-    .unwrap();
+    emit_to(&report, Format::Human, false, &mut out).unwrap();
     let text = String::from_utf8(out).unwrap();
     assert!(text.starts_with("pons self update\n"), "{text}");
     assert!(text.contains("installed"), "{text}");
@@ -385,61 +338,40 @@ fn status_error(code: u16) -> UpdateError {
 }
 
 #[test]
-fn the_environment_token_wins_over_gh_and_is_trimmed() {
-    let token = resolve_token(Some(" abc \n".to_owned()), || Some("gh-token".to_owned()));
-    assert_eq!(token.as_deref(), Some("abc"));
-}
-
-#[test]
-fn a_blank_environment_token_falls_back_to_gh() {
-    let token = resolve_token(Some("  ".to_owned()), || Some("gh-token".to_owned()));
-    assert_eq!(token.as_deref(), Some("gh-token"));
-}
-
-#[test]
-fn gh_supplies_the_token_when_the_environment_has_none() {
-    let token = resolve_token(None, || Some("gh-token".to_owned()));
-    assert_eq!(token.as_deref(), Some("gh-token"));
-}
-
-#[test]
-fn no_token_is_resolved_when_neither_source_has_one() {
-    assert_eq!(resolve_token(None, || None), None);
-}
-
-#[test]
-fn only_a_token_adds_the_authorization_header() {
+fn token_resolution_and_the_authorization_header() {
+    let cases: &[(Option<&str>, Option<&str>, Option<&str>)] = &[
+        (Some(" abc \n"), Some("gh-token"), Some("abc")),
+        (Some("  "), Some("gh-token"), Some("gh-token")),
+        (None, Some("gh-token"), Some("gh-token")),
+        (None, None, None),
+    ];
+    for (env, gh, expected) in cases {
+        let token = resolve_token(env.map(str::to_owned), || gh.map(str::to_owned));
+        assert_eq!(token.as_deref(), *expected, "{env:?} {gh:?}");
+    }
     assert_eq!(authorization(None), None);
     assert_eq!(authorization(Some("abc")).as_deref(), Some("Bearer abc"));
 }
 
 #[test]
-fn rate_limit_statuses_hint_at_the_token_fix() {
-    for code in [403, 429] {
+fn http_errors_hint_at_the_token_fix_and_name_a_missing_release() {
+    let rate_limit =
+        Some("GitHub may rate-limit anonymous requests: set GITHUB_TOKEN or run `gh auth login`");
+    let rejected = Some("GitHub rejected the token: check GITHUB_TOKEN, or run `gh auth login`");
+    let cases = [
+        (403, rate_limit),
+        (429, rate_limit),
+        (401, rejected),
+        (500, None),
+    ];
+    for (code, expected) in cases {
         assert_eq!(
             status_error(code).hint().as_deref(),
-            Some(
-                "GitHub may rate-limit anonymous requests: set GITHUB_TOKEN or run `gh auth login`"
-            )
+            expected,
+            "status {code}"
         );
     }
-}
 
-#[test]
-fn a_rejected_token_hints_at_the_token_fix() {
-    assert_eq!(
-        status_error(401).hint().as_deref(),
-        Some("GitHub rejected the token: check GITHUB_TOKEN, or run `gh auth login`")
-    );
-}
-
-#[test]
-fn other_statuses_have_no_hint() {
-    assert!(status_error(500).hint().is_none());
-}
-
-#[test]
-fn a_404_on_the_release_list_means_no_release() {
     let acus = Tool {
         name: "acus",
         version: "0.1.0",

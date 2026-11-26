@@ -101,25 +101,23 @@ mod tests {
     }
 
     #[test]
-    fn writes_a_missing_file() {
+    fn writes_a_missing_file_and_leaves_no_temporary_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         write_atomic(&path, b"{}\n").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"{}\n");
+        assert_eq!(names(dir.path()), ["settings.json"]);
     }
 
     #[test]
-    fn cache_write_replaces_an_existing_file_and_leaves_no_temporary_file() {
+    fn both_writers_replace_an_existing_file_and_leave_no_temporary_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("digest.json");
         std::fs::write(&path, "old").unwrap();
         write_cache(&path, b"new").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
         assert_eq!(names(dir.path()), ["digest.json"]);
-    }
 
-    #[test]
-    fn replaces_an_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         std::fs::write(&path, "old").unwrap();
@@ -138,14 +136,6 @@ mod tests {
         write_atomic(&path, b"new").unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
-    }
-
-    #[test]
-    fn leaves_no_temporary_file_behind() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
-        write_atomic(&path, b"x").unwrap();
-        assert_eq!(names(dir.path()), ["settings.json"]);
     }
 
     #[test]

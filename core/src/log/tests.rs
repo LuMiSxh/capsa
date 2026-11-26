@@ -48,7 +48,7 @@ fn four_threads_append_whole_lines() {
 }
 
 #[test]
-fn rotates_to_old_at_the_threshold_and_read_returns_old_lines_first() {
+fn rotation_keeps_old_lines_first() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("guard.jsonl");
     for n in 0..4 {
@@ -63,6 +63,22 @@ fn rotates_to_old_at_the_threshold_and_read_returns_old_lines_first() {
         2
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 2);
+    assert_eq!(counts(&path), [0, 1, 2, 3]);
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("log.jsonl");
+    let mut writer = Writer::open(&path, 100).unwrap();
+    for n in 0..4 {
+        writer.write(Level::Info, "tick", &json!({"n": n})).unwrap();
+    }
+    writer.flush().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(rotated(&path))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
     assert_eq!(counts(&path), [0, 1, 2, 3]);
 }
 
@@ -114,7 +130,7 @@ fn entry_parses_lines_written_before_level_and_event() {
 }
 
 #[test]
-fn writer_keeps_info_lines_buffered_until_dropped() {
+fn writer_buffers_info_lines_until_a_warn_or_drop() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("log.jsonl");
     let mut writer = Writer::open(&path, u64::MAX).unwrap();
@@ -122,10 +138,7 @@ fn writer_keeps_info_lines_buffered_until_dropped() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
     drop(writer);
     assert_eq!(counts(&path), [1]);
-}
 
-#[test]
-fn writer_flushes_buffered_lines_on_warn() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("log.jsonl");
     let mut writer = Writer::open(&path, u64::MAX).unwrap();
@@ -136,47 +149,19 @@ fn writer_flushes_buffered_lines_on_warn() {
 }
 
 #[test]
-fn writer_rotates_before_a_write_past_the_threshold() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("log.jsonl");
-    let mut writer = Writer::open(&path, 100).unwrap();
-    for n in 0..4 {
-        writer.write(Level::Info, "tick", &json!({"n": n})).unwrap();
-    }
-    writer.flush().unwrap();
-    assert_eq!(
-        std::fs::read_to_string(rotated(&path))
-            .unwrap()
-            .lines()
-            .count(),
-        2
-    );
-    assert_eq!(counts(&path), [0, 1, 2, 3]);
-}
-
-#[test]
-fn read_skips_malformed_lines() {
+fn read_skips_malformed_lines_and_handles_missing_or_unreadable_files() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("log.jsonl");
     let text =
         "{\"ts\":1,\"n\":1}\nnot json\n\n{\"n\":9}\n{\"ts\":2,\"n\":\"x\"\n{\"ts\":3,\"n\":3}\n";
     std::fs::write(&path, text).unwrap();
     assert_eq!(counts(&path), [1, 3]);
-}
 
-#[test]
-fn read_of_a_missing_file_has_no_entries() {
-    let dir = tempfile::tempdir().unwrap();
     assert!(
         read::<Value>(&dir.path().join("none.jsonl"))
             .unwrap()
             .is_empty()
     );
-}
-
-#[test]
-fn read_fails_on_a_file_it_cannot_read() {
-    let dir = tempfile::tempdir().unwrap();
     assert!(matches!(
         read::<Value>(dir.path()),
         Err(LogError::Read { .. })

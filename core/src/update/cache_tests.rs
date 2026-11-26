@@ -38,80 +38,43 @@ fn verdict(current: &'static str, latest: &str) -> UpdateCheck {
 }
 
 #[test]
-fn a_fresh_saved_version_is_used_without_a_fetch() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = saved(dir.path(), NOW - 60, "0.3.0");
-    let calls = Cell::new(0);
-    let result = check_with(&RUNNING, &path, dir.path(), NOW, |_| {
-        calls.set(calls.get() + 1);
-        Ok("9.9.9".to_owned())
-    });
-    assert_eq!(calls.get(), 0);
-    assert_eq!(result, UpdateCheck::Available("0.3.0".to_owned()));
+fn a_saved_version_is_used_while_fresh_and_fetched_once_stale() {
+    let cases = [
+        (NOW - 60, "0.3.0", "9.9.9", 0, "0.3.0", None),
+        (NOW - DAY, "0.1.0", "0.3.0", 1, "0.3.0", Some("0.3.0")),
+        (NOW + 60, "0.1.0", "0.3.0", 1, "0.3.0", None),
+    ];
+    for (checked_at, saved_latest, fetched, expected_calls, expected, rewritten) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let path = saved(dir.path(), checked_at, saved_latest);
+        let calls = Cell::new(0);
+        let result = check_with(&RUNNING, &path, dir.path(), NOW, |_| {
+            calls.set(calls.get() + 1);
+            Ok(fetched.to_owned())
+        });
+        assert_eq!(calls.get(), expected_calls, "{checked_at}");
+        assert_eq!(
+            result,
+            UpdateCheck::Available(expected.to_owned()),
+            "{checked_at}"
+        );
+        if let Some(latest) = rewritten {
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert!(text.contains(&format!(r#""checked_at":{NOW}"#)), "{text}");
+            assert!(text.contains(&format!(r#""latest":"{latest}""#)), "{text}");
+        }
+    }
 }
 
 #[test]
-fn a_stale_saved_version_is_fetched_and_saved_again() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = saved(dir.path(), NOW - DAY, "0.1.0");
-    let calls = Cell::new(0);
-    let result = check_with(&RUNNING, &path, dir.path(), NOW, |_| {
-        calls.set(calls.get() + 1);
-        Ok("0.3.0".to_owned())
-    });
-    assert_eq!(calls.get(), 1);
-    assert_eq!(result, UpdateCheck::Available("0.3.0".to_owned()));
-    let rewritten = std::fs::read_to_string(&path).unwrap();
-    assert!(
-        rewritten.contains(&format!(r#""checked_at":{NOW}"#)),
-        "{rewritten}"
-    );
-    assert!(rewritten.contains(r#""latest":"0.3.0""#), "{rewritten}");
-}
-
-#[test]
-fn a_saved_version_from_the_future_is_stale() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = saved(dir.path(), NOW + 60, "0.1.0");
-    let result = check_with(&RUNNING, &path, dir.path(), NOW, |_| Ok("0.3.0".to_owned()));
-    assert_eq!(result, UpdateCheck::Available("0.3.0".to_owned()));
-}
-
-#[test]
-fn an_unanswered_check_without_a_fresh_save_is_unknown_and_saves_nothing() {
+fn an_unanswered_check_or_a_corrupt_saved_file_is_unknown_and_saves_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("latest.json");
     let result = check_with(&RUNNING, &path, dir.path(), NOW, no_fetch);
     assert_eq!(result, UpdateCheck::Unknown);
     assert!(!path.exists());
     assert!(!dir.path().join("acus-release.json").exists());
-}
 
-#[test]
-fn a_newer_release_is_available_and_the_same_or_older_is_current() {
-    assert_eq!(
-        verdict("0.2.0", "0.3.0"),
-        UpdateCheck::Available("0.3.0".to_owned())
-    );
-    assert_eq!(
-        verdict("0.2.0-rc.1", "0.2.0"),
-        UpdateCheck::Available("0.2.0".to_owned())
-    );
-    assert_eq!(verdict("0.2.0", "0.2.0"), UpdateCheck::Current);
-    assert_eq!(verdict("0.2.0", "0.2.0-rc.1"), UpdateCheck::Current);
-    assert_eq!(verdict("0.3.0", "0.2.0"), UpdateCheck::Current);
-}
-
-#[test]
-fn only_the_value_off_switches_the_lookup_off() {
-    assert!(disabled_by(Some(OsStr::new("off"))));
-    assert!(!disabled_by(Some(OsStr::new("on"))));
-    assert!(!disabled_by(Some(OsStr::new(""))));
-    assert!(!disabled_by(None));
-}
-
-#[test]
-fn a_corrupt_saved_file_and_an_unreachable_release_is_an_ok_line_that_says_so() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("latest.json");
     std::fs::write(&path, r#"{"checked_at":"#).unwrap();
@@ -123,13 +86,33 @@ fn a_corrupt_saved_file_and_an_unreachable_release_is_an_ok_line_that_says_so() 
 }
 
 #[test]
-fn a_version_that_is_not_semver_is_unknown() {
+fn a_newer_release_is_available_and_a_version_that_is_not_semver_is_unknown() {
+    assert_eq!(
+        verdict("0.2.0", "0.3.0"),
+        UpdateCheck::Available("0.3.0".to_owned())
+    );
+    assert_eq!(
+        verdict("0.2.0-rc.1", "0.2.0"),
+        UpdateCheck::Available("0.2.0".to_owned())
+    );
+    assert_eq!(verdict("0.2.0", "0.2.0"), UpdateCheck::Current);
+    assert_eq!(verdict("0.2.0", "0.2.0-rc.1"), UpdateCheck::Current);
+    assert_eq!(verdict("0.3.0", "0.2.0"), UpdateCheck::Current);
+
     assert_eq!(verdict("0.2.0", "latest"), UpdateCheck::Unknown);
     assert_eq!(verdict("dev", "0.3.0"), UpdateCheck::Unknown);
 }
 
 #[test]
-fn a_checked_release_is_published_as_the_release_bulletin() {
+fn only_the_value_off_switches_the_lookup_off() {
+    assert!(disabled_by(Some(OsStr::new("off"))));
+    assert!(!disabled_by(Some(OsStr::new("on"))));
+    assert!(!disabled_by(Some(OsStr::new(""))));
+    assert!(!disabled_by(None));
+}
+
+#[test]
+fn check_with_publishes_or_rewrites_the_release_bulletin() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("latest.json");
     check_with(&RUNNING, &path, dir.path(), NOW, |_| Ok("0.3.0".to_owned()));
@@ -143,10 +126,7 @@ fn a_checked_release_is_published_as_the_release_bulletin() {
             latest: "0.3.0".to_owned(),
         }
     );
-}
 
-#[test]
-fn a_fresh_saved_version_still_rewrites_the_release_bulletin() {
     let dir = tempfile::tempdir().unwrap();
     let path = saved(dir.path(), NOW - 60, "0.3.0");
     let tool = Tool {
@@ -161,7 +141,7 @@ fn a_fresh_saved_version_still_rewrites_the_release_bulletin() {
 }
 
 #[test]
-fn a_newer_release_is_named_only_while_its_bulletin_is_current() {
+fn a_release_is_named_only_while_its_bulletin_is_current_and_it_is_newer() {
     let dir = tempfile::tempdir().unwrap();
     let release = Stamped {
         at: NOW,
@@ -178,11 +158,7 @@ fn a_newer_release_is_named_only_while_its_bulletin_is_current() {
     );
     assert_eq!(release_status_in(dir.path(), "acus", NOW + DAY), None);
     assert_eq!(release_status_in(dir.path(), "census", NOW), None);
-}
 
-#[test]
-fn no_release_is_named_when_the_running_version_is_not_older() {
-    let dir = tempfile::tempdir().unwrap();
     for (version, latest) in [("0.3.0", "0.3.0"), ("0.4.0", "0.3.0")] {
         let release = Stamped {
             at: NOW,

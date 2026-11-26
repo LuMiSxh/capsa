@@ -28,7 +28,7 @@ mod unix {
     }
 
     #[test]
-    fn rejects_group_ids_that_would_reach_everything() {
+    fn group_signalling_refuses_unsafe_ids_and_ends_the_grandchild() {
         for id in [0, 1, u32::MAX] {
             assert!(matches!(
                 signal_group(id, Signal::Kill),
@@ -36,10 +36,7 @@ mod unix {
             ));
             assert!(!group_alive(id));
         }
-    }
 
-    #[test]
-    fn killing_the_group_ends_the_grandchild() {
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "sleep 60 & echo ready; wait"])
             .stdout(Stdio::piped());

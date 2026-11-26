@@ -58,26 +58,23 @@ mod tests {
     use super::{is_older, is_version};
 
     #[test]
-    fn a_prerelease_is_older_than_its_release_with_the_same_core() {
-        assert!(is_older("1.0.0-beta", "1.0.0"));
-        assert!(is_older("1.0.0-beta.1", "1.0.0"));
-        assert!(!is_older("1.0.0", "1.0.0-beta.1"));
-        assert!(!is_older("1.0.0-beta.1", "1.0.0-beta.2"));
-    }
-
-    #[test]
-    fn cores_compare_numerically_and_missing_parts_are_zero() {
-        assert!(is_older("0.85.1", "0.106.0"));
-        assert!(!is_older("0.106.0", "0.85.1"));
-        assert!(!is_older("2.1", "2.1.0"));
-        assert!(!is_older("2.1.0", "2.1"));
-        assert!(!is_older("0.85.1+build.7", "0.85.1"));
-    }
-
-    #[test]
-    fn a_version_that_does_not_parse_is_never_older() {
-        assert!(!is_older("latest", "1.0.0"));
-        assert!(!is_older("1.0.0", "x"));
+    fn is_older_compares_cores_prereleases_and_unparsable_versions() {
+        let cases = [
+            ("1.0.0-beta", "1.0.0", true),
+            ("1.0.0-beta.1", "1.0.0", true),
+            ("1.0.0", "1.0.0-beta.1", false),
+            ("1.0.0-beta.1", "1.0.0-beta.2", false),
+            ("0.85.1", "0.106.0", true),
+            ("0.106.0", "0.85.1", false),
+            ("2.1", "2.1.0", false),
+            ("2.1.0", "2.1", false),
+            ("0.85.1+build.7", "0.85.1", false),
+            ("latest", "1.0.0", false),
+            ("1.0.0", "x", false),
+        ];
+        for (a, b, expected) in cases {
+            assert_eq!(is_older(a, b), expected, "{a} vs {b}");
+        }
         assert!(is_version("2.1.311-beta.1"));
         assert!(!is_version("claude: not a version"));
     }

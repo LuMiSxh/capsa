@@ -33,39 +33,27 @@ fn render(err: &anyhow::Error, format: Format, color: bool) -> String {
 }
 
 #[test]
-fn human_report_lists_causes_then_hint() {
-    let expected = "error: loading settings\n  caused by: cannot read config\n  caused by: denied\nhint: check the file permissions\n";
+fn non_json_reports_render_the_chain_and_hint() {
     let err = failing().unwrap_err();
+    let expected = "error: loading settings\n  caused by: cannot read config\n  caused by: denied\nhint: check the file permissions\n";
     assert_eq!(render(&err, Format::Human, false), expected);
-}
 
-#[test]
-fn agent_report_puts_the_chain_on_one_line() {
     let expected =
         "error: loading settings: cannot read config: denied\nhint: check the file permissions\n";
-    let err = failing().unwrap_err();
     assert_eq!(render(&err, Format::Agent, false), expected);
-}
 
-#[test]
-fn text_report_colours_labels_when_allowed() {
-    let err = failing().unwrap_err();
     let text = render(&err, Format::Human, true);
     assert!(text.starts_with("\x1b[31merror:\x1b[0m loading settings\n"));
     assert!(text.ends_with("\x1b[36mhint:\x1b[0m check the file permissions\n"));
 }
 
 #[test]
-fn json_report_has_error_causes_and_hint() {
+fn json_reports_include_causes_and_a_null_hint() {
     let err = failing().unwrap_err();
     assert_eq!(
         render(&err, Format::Json, false),
         "{\"error\":\"loading settings\",\"causes\":[\"cannot read config\",\"denied\"],\"hint\":\"check the file permissions\"}\n"
     );
-}
-
-#[test]
-fn json_report_without_hint_is_null() {
     let err = anyhow::anyhow!("boom");
     assert_eq!(
         render(&err, Format::Json, false),

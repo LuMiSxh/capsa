@@ -4,7 +4,7 @@ use super::{Permissions, bash, fetch};
 use std::path::{Path, PathBuf};
 
 #[test]
-fn bash_rules_match_exact_prefix_and_wildcard() {
+fn bash_rules_match_the_commands_they_name() {
     let cases = [
         ("rm:*", "rm x", true),
         ("rm:*", "rm", true),
@@ -20,15 +20,6 @@ fn bash_rules_match_exact_prefix_and_wildcard() {
         ("* --version", "node --version", true),
         ("git * main", "git push origin main", true),
         ("git * main", "git push origin dev", false),
-    ];
-    for (spec, command, expected) in cases {
-        assert_eq!(bash::matches(spec, command), expected, "{spec} / {command}");
-    }
-}
-
-#[test]
-fn bash_rules_see_every_subcommand_of_a_compound_command() {
-    let cases = [
         ("rm:*", "cd build && rm -rf out", true),
         ("rm:*", "echo done; rm x", true),
         ("rm:*", "cat f | rm x", true),
@@ -43,15 +34,6 @@ fn bash_rules_see_every_subcommand_of_a_compound_command() {
         ("rm:*", "echo \"a; rm x\"", false),
         ("rm:*", "ls 2>&1", false),
         ("npm test", "cd x && npm test", true),
-    ];
-    for (spec, command, expected) in cases {
-        assert_eq!(bash::matches(spec, command), expected, "{spec} / {command}");
-    }
-}
-
-#[test]
-fn bash_rules_see_through_shell_keywords_groups_and_shell_c_bodies() {
-    let cases = [
         ("rm:*", "if true; then rm -rf build; fi", true),
         ("rm:*", "for f in a b; do rm $f; done", true),
         ("rm:*", "while true; do rm x; done", true),
@@ -70,35 +52,26 @@ fn bash_rules_see_through_shell_keywords_groups_and_shell_c_bodies() {
         ("rm:*", "bash script.sh", false),
         ("rm:*", "echo then rm", false),
         ("rm:*", "echo 'bash -c rm'", false),
+        ("rm:*", "bash -o pipefail -c 'rm -rf x'", true),
+        ("rm:*", "bash -O extglob -c 'rm -rf x'", true),
+        ("rm:*", "bash +o history -c 'rm x'", true),
+        ("rm:*", "bash +O extglob -c 'rm x'", true),
+        ("rm:*", "sh -ec 'rm x'", true),
+        ("rm:*", "zsh -xc 'rm x'", true),
+        ("rm:*", "dash -lc 'rm x'", true),
+        ("rm:*", "bash --norc -c 'rm x'", true),
+        ("rm:*", "bash --rcfile my.rc -c 'rm x'", true),
+        ("rm:*", "bash --init-file my.rc -ic 'rm x'", true),
+        ("rm:*", "bash -c -o pipefail 'rm x'", true),
+        ("rm:*", "bash -eo pipefail -c 'rm x'", true),
+        ("rm:*", "bash -c -- 'rm x'", true),
+        ("rm:*", "bash -o pipefail -c 'ls'", false),
+        ("rm:*", "bash -o pipefail script.sh", false),
+        ("rm:*", "bash -o pipefail script.sh -c rm", false),
+        ("rm:*", "bash -- -c rm", false),
     ];
     for (spec, command, expected) in cases {
         assert_eq!(bash::matches(spec, command), expected, "{spec} / {command}");
-    }
-}
-
-#[test]
-fn bash_c_bodies_are_found_behind_options_that_take_an_argument() {
-    let cases = [
-        ("bash -o pipefail -c 'rm -rf x'", true),
-        ("bash -O extglob -c 'rm -rf x'", true),
-        ("bash +o history -c 'rm x'", true),
-        ("bash +O extglob -c 'rm x'", true),
-        ("sh -ec 'rm x'", true),
-        ("zsh -xc 'rm x'", true),
-        ("dash -lc 'rm x'", true),
-        ("bash --norc -c 'rm x'", true),
-        ("bash --rcfile my.rc -c 'rm x'", true),
-        ("bash --init-file my.rc -ic 'rm x'", true),
-        ("bash -c -o pipefail 'rm x'", true),
-        ("bash -eo pipefail -c 'rm x'", true),
-        ("bash -c -- 'rm x'", true),
-        ("bash -o pipefail -c 'ls'", false),
-        ("bash -o pipefail script.sh", false),
-        ("bash -o pipefail script.sh -c rm", false),
-        ("bash -- -c rm", false),
-    ];
-    for (command, expected) in cases {
-        assert_eq!(bash::matches("rm:*", command), expected, "{command}");
     }
 }
 
@@ -174,7 +147,7 @@ fn denies(result: Result<(), super::Refusal>, rule: &str) -> bool {
 }
 
 #[test]
-fn deny_refuses_and_names_the_rule() {
+fn deny_and_ask_refuse_and_name_the_rule() {
     let project = Project::new();
     let p = project.with(r#"{"permissions": {"deny": ["Bash(rm:*)"]}}"#);
     let err = p.check_bash("rm x").unwrap_err();
@@ -183,10 +156,7 @@ fn deny_refuses_and_names_the_rule() {
             .contains("is denied by `Bash(rm:*)` in permissions.deny")
     );
     assert!(p.check_bash("echo hi").is_ok());
-}
 
-#[test]
-fn ask_refuses_with_a_hint_to_run_the_command_alone() {
     let project = Project::new();
     let p = project.with(r#"{"permissions": {"ask": ["Bash(git push:*)"]}}"#);
     let err = p.check_bash("git push origin").unwrap_err();
@@ -235,7 +205,7 @@ fn an_unreadable_settings_file_refuses_every_call() {
 }
 
 #[test]
-fn read_rules_follow_the_path_prefixes() {
+fn read_edit_and_write_rules_follow_the_path_prefixes() {
     let project = Project::new();
     let p = project.with(
         r#"{"permissions": {"deny": [
@@ -260,6 +230,12 @@ fn read_rules_follow_the_path_prefixes() {
     assert!(denies(read(Path::new("src/../.env")), "Read(./.env)"));
     assert!(p.check_edit(Path::new("src/gen/out.rs")).is_err());
     assert!(p.check_edit(Path::new("src/main.rs")).is_ok());
+
+    let project = Project::new();
+    let p = project.with(r#"{"permissions": {"ask": ["Write(docs/**)"], "deny": ["Edit(lock)"]}}"#);
+    assert!(p.check_edit(Path::new("docs/a.md")).is_err());
+    assert!(p.check_edit(Path::new("lock")).is_err());
+    assert!(p.check_read(Path::new("docs/a.md")).is_ok());
 }
 
 #[test]
@@ -276,15 +252,6 @@ fn absolute_rules_use_a_double_slash() {
         p.check_read(&project.dir.path().join("outside/other.txt"))
             .is_ok()
     );
-}
-
-#[test]
-fn edit_and_write_rules_both_cover_edits() {
-    let project = Project::new();
-    let p = project.with(r#"{"permissions": {"ask": ["Write(docs/**)"], "deny": ["Edit(lock)"]}}"#);
-    assert!(p.check_edit(Path::new("docs/a.md")).is_err());
-    assert!(p.check_edit(Path::new("lock")).is_err());
-    assert!(p.check_read(Path::new("docs/a.md")).is_ok());
 }
 
 #[test]
