@@ -28,7 +28,16 @@ fn merge_conflict(d: &std::path::Path) {
     std::fs::write(d.join("a.txt"), "one\nmain\nthree\n").unwrap();
     commit(d, "main");
     Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t", "merge", "side"])
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "merge.conflictStyle=merge",
+            "merge",
+            "side",
+        ])
         .current_dir(d)
         .output()
         .unwrap();

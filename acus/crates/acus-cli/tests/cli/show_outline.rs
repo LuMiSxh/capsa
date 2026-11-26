@@ -2,7 +2,7 @@
 use crate::common::*;
 
 #[test]
-fn show_keeps_going_past_missing_files() {
+fn show_keeps_going_past_missing_addresses() {
     let (code, out, err) = acus(&["show", "nope.rs", "src/lib.rs:1"]);
     assert_eq!(
         (code, err.as_str()),
@@ -18,10 +18,7 @@ fn show_keeps_going_past_missing_files() {
             "error: path not found: nope.rs\nerror: path not found: nope2.rs\n"
         )
     );
-}
 
-#[test]
-fn show_exit_code_reflects_failed_addresses() {
     // One address that works and one missing: the working one is printed, and the exit is 1.
     let (code, out, err) = acus(&["show", "src/lib.rs:1", "nope.rs"]);
     assert_eq!(
@@ -68,7 +65,7 @@ fn show_symbol_suffix_range_and_markdown() {
 }
 
 #[test]
-fn show_errors_have_hints() {
+fn show_and_outline_errors_have_hints() {
     let (code, _, err) = acus(&["show", "src/lib.rs#nope"]);
     assert_eq!(code, 2);
     assert_eq!(
@@ -79,6 +76,12 @@ fn show_errors_have_hints() {
     assert_eq!(
         (code, err.as_str()),
         (2, "error: src/lib.rs has 17 lines\n")
+    );
+    let (code, out, err) = acus(&["outline", "src/lib.rs", "--kind", "fnn"]);
+    assert_eq!((code, out.as_str()), (2, ""));
+    assert!(
+        err.starts_with("error: unknown kind `fnn`\nhint: valid kinds are actor, array, "),
+        "{err}"
     );
 }
 
@@ -120,12 +123,7 @@ fn show_caps_a_long_whole_file_with_its_outline() {
         "{out}"
     );
     assert!(out.contains("or acus show big.rs#Symbol"), "{out}");
-}
 
-#[test]
-fn show_json_is_never_capped() {
-    let d = tempfile::tempdir().unwrap();
-    long_rust(d.path());
     let (code, out, err) = acus_in(d.path(), &["show", "big.rs", "--json"], "");
     assert_eq!((code, err.as_str()), (0, ""));
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -135,25 +133,19 @@ fn show_json_is_never_capped() {
 }
 
 #[test]
-fn show_full_prints_every_line_of_a_long_file() {
+fn show_prints_a_long_file_when_all_of_it_is_asked_for() {
     let d = tempfile::tempdir().unwrap();
     long_rust(d.path());
-    let (code, out, _) = acus_in(d.path(), &["show", "big.rs", "--full"], "");
-    assert_eq!(code, 0);
-    assert!(out.contains("\n500\t"), "{out}");
-    assert!(!out.contains("more lines"), "{out}");
-    assert!(!out.contains("big.rs rust"), "{out}");
-}
-
-#[test]
-fn show_does_not_cap_an_explicit_range() {
-    let d = tempfile::tempdir().unwrap();
-    long_rust(d.path());
-    let (code, out, _) = acus_in(d.path(), &["show", "big.rs:1-400"], "");
-    assert_eq!(code, 0);
-    assert!(out.contains("\n400\t"), "{out}");
-    assert!(!out.contains("more lines"), "{out}");
-    assert!(!out.contains("big.rs rust"), "{out}");
+    for (args, last) in [
+        (vec!["show", "big.rs", "--full"], "\n500\t"),
+        (vec!["show", "big.rs:1-400"], "\n400\t"),
+    ] {
+        let (code, out, _) = acus_in(d.path(), &args, "");
+        assert_eq!(code, 0, "{args:?}");
+        assert!(out.contains(last), "{args:?}: {out}");
+        assert!(!out.contains("more lines"), "{args:?}: {out}");
+        assert!(!out.contains("big.rs rust"), "{args:?}: {out}");
+    }
 }
 
 #[test]
@@ -252,13 +244,16 @@ fn tilde_paths_expand_to_home() {
 }
 
 #[test]
-fn show_from_line_addresses() {
+fn show_line_addresses_from_and_tail() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
     let ten: String = (1..=10).map(|i| format!("l{i}\n")).collect();
     std::fs::write(d.join("t.txt"), &ten).unwrap();
+    std::fs::write(d.join("e.txt"), "").unwrap();
+    std::fs::write(d.join("n.txt"), "a\nb\nc").unwrap();
 
     let run = |addr: &str| acus_in_env(d, &["show", addr], "", &[]);
+
     // Line N to the end of the file, numbered by the file's own lines.
     let from: String = (3..=10).map(|i| format!("{i}\tl{i}\n")).collect();
     assert_eq!(
@@ -268,18 +263,7 @@ fn show_from_line_addresses() {
     // Past the end, the same as an out-of-range `A-B` range.
     assert_eq!(run("t.txt:99-"), run("t.txt:99-100"));
     assert_ne!(run("t.txt:99-").0, 0);
-}
 
-#[test]
-fn show_tail_addresses() {
-    let dir = tempfile::tempdir().unwrap();
-    let d = dir.path();
-    let ten: String = (1..=10).map(|i| format!("l{i}\n")).collect();
-    std::fs::write(d.join("t.txt"), &ten).unwrap();
-    std::fs::write(d.join("e.txt"), "").unwrap();
-    std::fs::write(d.join("n.txt"), "a\nb\nc").unwrap();
-
-    let run = |addr: &str| acus_in_env(d, &["show", addr], "", &[]);
     // The last N lines, numbered by their place in the file.
     let (code, out, err) = run("t.txt:-2");
     assert_eq!((code, err.as_str()), (0, ""));
@@ -320,15 +304,5 @@ fn outline_kind_filter() {
     insta::assert_snapshot!(
         "cli__outline_kind_struct_enum",
         acus(&["outline", "src/lib.rs", "--kind", "struct,enum"]).1
-    );
-}
-
-#[test]
-fn outline_unknown_kind_errors() {
-    let (code, out, err) = acus(&["outline", "src/lib.rs", "--kind", "fnn"]);
-    assert_eq!((code, out.as_str()), (2, ""));
-    assert!(
-        err.starts_with("error: unknown kind `fnn`\nhint: valid kinds are actor, array, "),
-        "{err}"
     );
 }

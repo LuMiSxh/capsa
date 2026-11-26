@@ -1,0 +1,10 @@
+running 2 tests from ./a_test.ts
+test adds ... ok (1ms)
+test divides ... FAILED (2ms)
+
+ ERRORS
+
+divides => ./a_test.ts:5:6
+error: AssertionError: Values are not equal.
+
+FAILED | 1 passed | 1 failed (10ms)

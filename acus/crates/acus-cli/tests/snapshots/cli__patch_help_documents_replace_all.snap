@@ -1,6 +1,5 @@
 ---
 source: acus/crates/acus-cli/tests/cli/patch.rs
-assertion_line: 9
 expression: "&out[out.find(\"PATCH FORMAT\").unwrap()..]"
 ---
 PATCH FORMAT (stdin or --file; all or nothing, nothing is written on an error):
@@ -41,7 +40,8 @@ PATCH FORMAT (stdin or --file; all or nothing, nothing is written on an error):
   spaces, runs of whitespace and blank lines (REPLACE is written as given) and must match once;
   it never runs unless the flag or [patch] fuzzy is set, and --no-fuzzy turns that off.
   Written files must not get more syntax errors (tree-sitter) than they had, or the patch fails
-  and names the line; --allow-broken writes them anyway.
+  and names the line; --allow-broken writes them anyway. A patch may not leave an unmatched
+  conflict marker, or add markers to a file that had none; --allow-broken writes that too.
 
 PART OF A LINE: *** Replace All: PATH [PATH...]
   Replaces every occurrence of a text in the files, directories (walked, .gitignore respected)

@@ -108,6 +108,38 @@ fn covers_powershell_habits() {
     }
     // `ls -r` reverses in Bash.
     assert_eq!(check("ls -r src"), None);
+
+    // The same rules through the PowerShell path, with the escape and the no-hint cases.
+    for (cmd, rule) in [
+        ("Select-String -Path src\\*.rs -Pattern foo", "grep"),
+        ("Get-Content src\\main.rs", "read-shell"),
+        ("cargo test 2>&1 | Select-Object -Last 30", "build-pipe"),
+        (
+            "(Get-Content a.rs) -replace 'x','y' | Set-Content a.rs",
+            "ps-replace",
+        ),
+    ] {
+        match check_ps(cmd, None) {
+            Some(Verdict::Deny(r, reason)) => {
+                assert_eq!(r.as_str(), rule, "{cmd}");
+                assert!(reason.contains("# acus-skip"), "{reason}");
+            }
+            other => panic!("{cmd}: {other:?}"),
+        }
+    }
+    assert_eq!(
+        check_ps("Get-Content src\\main.rs # acus-skip", None),
+        Some(Verdict::Escape(Rule::ReadShell))
+    );
+    for cmd in [
+        "git log --oneline | Select-String fix",
+        "git log -p",
+        "git log --stat",
+        "Get-Content settings.ini",
+        "Get-ChildItem -Recurse *.rs",
+    ] {
+        assert_eq!(check_ps(cmd, None), None, "{cmd}");
+    }
 }
 
 #[test]
@@ -189,40 +221,6 @@ fn drive_paths_are_read_paths_in_powershell() {
         let (rule, reason) = deny(check_ps(cmd, None));
         assert_eq!(rule, "read-shell", "{cmd}");
         assert!(reason.contains(&format!("`{want}`")), "{cmd}: {reason}");
-    }
-}
-
-#[test]
-fn applies_the_rules_to_powershell() {
-    for (cmd, rule) in [
-        ("Select-String -Path src\\*.rs -Pattern foo", "grep"),
-        ("Get-Content src\\main.rs", "read-shell"),
-        ("cargo test 2>&1 | Select-Object -Last 30", "build-pipe"),
-        (
-            "(Get-Content a.rs) -replace 'x','y' | Set-Content a.rs",
-            "ps-replace",
-        ),
-    ] {
-        match check_ps(cmd, None) {
-            Some(Verdict::Deny(r, reason)) => {
-                assert_eq!(r.as_str(), rule, "{cmd}");
-                assert!(reason.contains("# acus-skip"), "{reason}");
-            }
-            other => panic!("{cmd}: {other:?}"),
-        }
-    }
-    assert_eq!(
-        check_ps("Get-Content src\\main.rs # acus-skip", None),
-        Some(Verdict::Escape(Rule::ReadShell))
-    );
-    for cmd in [
-        "git log --oneline | Select-String fix",
-        "git log -p",
-        "git log --stat",
-        "Get-Content settings.ini",
-        "Get-ChildItem -Recurse *.rs",
-    ] {
-        assert_eq!(check_ps(cmd, None), None, "{cmd}");
     }
 }
 

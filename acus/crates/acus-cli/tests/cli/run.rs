@@ -124,11 +124,7 @@ fn run_timeout_kills_the_command_and_keeps_its_output() {
     assert!(out.lines().any(|l| l == "start"), "{out}");
     assert!(out.contains("killed after 1s (--timeout)"), "{out}");
     assert!(out.contains("== exit 124"), "{out}");
-}
 
-#[cfg(unix)]
-#[test]
-fn run_timeout_ends_when_the_child_closed_stdout_but_runs_on() {
     let t = std::time::Instant::now();
     let (code, out, err) = acus(&["run", "exec >&-; sleep 30", "--timeout", "1"]);
     assert!(t.elapsed().as_secs() < 10, "took {:?}", t.elapsed());
@@ -154,11 +150,7 @@ fn run_timeout_kills_grandchildren() {
         .unwrap()
         .success();
     assert!(!alive, "grandchild {pid} survived");
-}
 
-#[cfg(unix)]
-#[test]
-fn run_timeout_leaves_a_finished_command_unchanged() {
     let (code, out, err) = acus(&["run", "echo hi; exit 3", "--timeout", "10"]);
     assert_eq!(code, 3, "{out}{err}");
     assert!(out.contains("hi") && out.contains("== exit 3"), "{out}");
@@ -179,11 +171,41 @@ fn run_log_reads_a_file_through_the_filters() {
     assert!(out.starts_with("== log run.output (5 lines)\n"), "{out}");
     assert!(out.contains("error: boom at a.rs:2:5"), "{out}");
     assert!(out.contains("may still be growing"), "{out}"); // just written
+
+    let nextest = tempfile::tempdir().unwrap();
+    std::fs::write(
+        nextest.path().join("nextest.log"),
+        "────────────\n Nextest run ID x with nextest profile: default\n    Starting 2 tests across 1 binary\n        PASS [   0.018s] pkg::bin a::b\n        PASS [   0.019s] pkg::bin c::d\n────────────\n     Summary [   0.020s] 2 tests run: 2 passed, 0 skipped\n",
+    )
+    .unwrap();
+    let (code, out, err) = acus_in(nextest.path(), &["run", "--log", "nextest.log"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("== log nextest.log (7 lines)"), "{out}");
+    assert!(
+        out.contains("… 7 noise lines dropped; 2 tests passed"),
+        "{out}"
+    );
+    assert!(!out.contains("PASS ["), "{out}");
+
+    let cut = tempfile::tempdir().unwrap();
+    std::fs::write(
+        cut.path().join("run.output"),
+        "l1\nerror: boom at a.rs:2:5\n",
+    )
+    .unwrap();
+    let (code, out, err) = acus_in(
+        cut.path(),
+        &["run", "--log", "run.output", "--tail", "1", "--cut", "10"],
+        "",
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("== log run.output (2 lines)\n"), "{out}");
+    assert!(out.lines().any(|l| l == "error: boo… (+13 chars)"), "{out}");
 }
 
 #[cfg(unix)]
 #[test]
-fn run_cut_clips_each_printed_line() {
+fn run_cut_clips_each_printed_line_after_filters() {
     let d = tempfile::tempdir().unwrap();
     let long = "x".repeat(30);
     let cmd = format!("echo short; echo {long}; echo 'error: {long}'; exit 3");
@@ -196,13 +218,7 @@ fn run_cut_clips_each_printed_line() {
 
     let (code, _, _) = acus_in(d.path(), &["run", "echo x", "--cut", "0"], "");
     assert_eq!(code, 2);
-}
 
-#[cfg(unix)]
-#[test]
-fn run_cut_applies_after_tail() {
-    let d = tempfile::tempdir().unwrap();
-    let long = "x".repeat(30);
     let cmd = format!("echo {long}; echo 'error: {long}'; exit 3");
     let (code, out, _) = acus_in(d.path(), &["run", &cmd, "--tail", "1", "--cut", "10"], "");
     assert_eq!(code, 3);
@@ -211,21 +227,7 @@ fn run_cut_applies_after_tail() {
 }
 
 #[test]
-fn run_cut_applies_to_a_log() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("run.output"), "l1\nerror: boom at a.rs:2:5\n").unwrap();
-    let (code, out, err) = acus_in(
-        d.path(),
-        &["run", "--log", "run.output", "--tail", "1", "--cut", "10"],
-        "",
-    );
-    assert_eq!(code, 0, "{err}");
-    assert!(out.starts_with("== log run.output (2 lines)\n"), "{out}");
-    assert!(out.lines().any(|l| l == "error: boo… (+13 chars)"), "{out}");
-}
-
-#[test]
-fn run_log_with_a_command_is_an_error() {
+fn run_log_argument_errors() {
     let d = tempfile::tempdir().unwrap();
     let (code, _, err) = acus_in(d.path(), &["run", "echo hi", "--log", "x.output"], "");
     assert_eq!(code, 2, "{err}");
@@ -234,11 +236,6 @@ fn run_log_with_a_command_is_an_error() {
         err.contains("hint: use either a command or --log FILE"),
         "{err}"
     );
-}
-
-#[test]
-fn run_log_missing_file_is_an_error() {
-    let d = tempfile::tempdir().unwrap();
     let (code, _, err) = acus_in(d.path(), &["run", "--log", "nope.output"], "");
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("error: nope.output: not found"), "{err}");
@@ -275,7 +272,7 @@ fn failing_run(
 
 #[cfg(unix)]
 #[test]
-fn run_leads_with_the_repeat_line_from_the_third_identical_failure() {
+fn run_counts_identical_failures() {
     let state = tempfile::tempdir().unwrap();
     for _ in 0..2 {
         let (code, out, err) = failing_run(state.path(), "mismatched", "1", false);
@@ -292,43 +289,31 @@ fn run_leads_with_the_repeat_line_from_the_third_identical_failure() {
     );
     let (_, out, _) = failing_run(state.path(), "mismatched", "1", false);
     assert!(out.starts_with("… 4th identical failure"), "{out}");
-}
 
-#[cfg(unix)]
-#[test]
-fn run_repeat_count_restarts_when_the_failure_changes() {
-    let state = tempfile::tempdir().unwrap();
-    failing_run(state.path(), "mismatched", "1", false);
-    failing_run(state.path(), "mismatched", "1", false);
-    let (_, out, _) = failing_run(state.path(), "unresolved", "1", false);
+    let restarts = tempfile::tempdir().unwrap();
+    failing_run(restarts.path(), "mismatched", "1", false);
+    failing_run(restarts.path(), "mismatched", "1", false);
+    let (_, out, _) = failing_run(restarts.path(), "unresolved", "1", false);
     assert!(!out.contains("identical failure"), "{out}");
-    failing_run(state.path(), "unresolved", "1", false);
-    let (_, out, _) = failing_run(state.path(), "unresolved", "1", false);
+    failing_run(restarts.path(), "unresolved", "1", false);
+    let (_, out, _) = failing_run(restarts.path(), "unresolved", "1", false);
     assert!(out.starts_with("… 3rd identical failure"), "{out}");
-}
 
-#[cfg(unix)]
-#[test]
-fn run_success_clears_the_repeat_count() {
-    let state = tempfile::tempdir().unwrap();
-    failing_run(state.path(), "mismatched", "1", false);
-    failing_run(state.path(), "mismatched", "1", false);
-    let (code, _, err) = failing_run(state.path(), "mismatched", "0", false);
+    let cleared = tempfile::tempdir().unwrap();
+    failing_run(cleared.path(), "mismatched", "1", false);
+    failing_run(cleared.path(), "mismatched", "1", false);
+    let (code, _, err) = failing_run(cleared.path(), "mismatched", "0", false);
     assert_eq!(code, 0, "{err}");
     for _ in 0..2 {
-        let (_, out, _) = failing_run(state.path(), "mismatched", "1", false);
+        let (_, out, _) = failing_run(cleared.path(), "mismatched", "1", false);
         assert!(!out.contains("identical failure"), "{out}");
     }
-}
 
-#[cfg(unix)]
-#[test]
-fn run_repeat_lead_is_not_cut_by_head() {
-    let state = tempfile::tempdir().unwrap();
+    let head = tempfile::tempdir().unwrap();
     for _ in 0..2 {
-        failing_run(state.path(), "mismatched", "1", false);
+        failing_run(head.path(), "mismatched", "1", false);
     }
-    let state_s = state.path().to_str().unwrap();
+    let state_s = head.path().to_str().unwrap();
     let env = [
         ("XDG_STATE_HOME", state_s),
         ("CLAUDE_CODE_SESSION_ID", "repeat-session"),
@@ -343,6 +328,21 @@ fn run_repeat_lead_is_not_cut_by_head() {
     assert!(
         lines[2].starts_with("… output cut at --head 1; 1 more line"),
         "{out}"
+    );
+
+    let json = tempfile::tempdir().unwrap();
+    for _ in 0..2 {
+        let (_, out, _) = failing_run(json.path(), "mismatched", "1", true);
+        let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(doc.get("repeat").is_none(), "{out}");
+    }
+    let (code, out, err) = failing_run(json.path(), "mismatched", "1", true);
+    assert_eq!(code, 1, "{err}");
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["exit"], 1);
+    assert_eq!(
+        doc["repeat"],
+        serde_json::json!({"count": 3, "key": "error: mismatched"})
     );
 }
 
@@ -383,25 +383,6 @@ fn run_ignores_a_state_dir_it_cannot_write() {
         assert!(out.starts_with("error: mismatched"), "{out}");
         assert!(!out.contains("identical failure"), "{out}");
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn run_json_adds_repeat_from_the_third_identical_failure() {
-    let state = tempfile::tempdir().unwrap();
-    for _ in 0..2 {
-        let (_, out, _) = failing_run(state.path(), "mismatched", "1", true);
-        let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert!(doc.get("repeat").is_none(), "{out}");
-    }
-    let (code, out, err) = failing_run(state.path(), "mismatched", "1", true);
-    assert_eq!(code, 1, "{err}");
-    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(doc["exit"], 1);
-    assert_eq!(
-        doc["repeat"],
-        serde_json::json!({"count": 3, "key": "error: mismatched"})
-    );
 }
 
 #[test]

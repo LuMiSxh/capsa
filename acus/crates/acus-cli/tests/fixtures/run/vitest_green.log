@@ -1,0 +1,9 @@
+ RUN  v2.0.0 /x
+
+ ✓ tests/a.test.ts (2 tests) 3ms
+ ✓ tests/b.test.ts (1 test) 2ms
+
+ Test Files  2 passed (2)
+      Tests  3 passed (3)
+   Start at  10:00:00
+   Duration  100ms

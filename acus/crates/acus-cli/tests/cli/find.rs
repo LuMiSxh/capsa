@@ -58,7 +58,7 @@ fn find_block() {
 }
 
 #[test]
-fn grep_context_flags_print_lines_around_hits() {
+fn grep_context_flags() {
     let (code, out, err) = find_context(&["-A1"]);
     assert_eq!((code, err.as_str()), (0, ""));
     assert_eq!(
@@ -82,36 +82,14 @@ fn grep_context_flags_print_lines_around_hits() {
         find_context(&["-A0"]).1,
         "<stdin>\n2\thit one\n--\n6\thit two\n--\n11\thit three\n"
     );
-}
-
-#[test]
-fn grep_context_explicit_flags_win_and_the_last_repeat_wins() {
+    // Explicit flags win, and the last repeat wins.
     assert_eq!(
         find_context(&["-C2", "-A0"]).1,
         find_context(&["-B2", "-A0"]).1
     );
     assert_eq!(find_context(&["-A1", "-A0"]).1, find_context(&["-A0"]).1);
     assert_eq!(find_context(&["-C1", "-C2"]).1, find_context(&["-C2"]).1);
-}
 
-#[test]
-fn find_grep_compatibility_aliases_match_their_flags() {
-    assert_eq!(
-        acus(&["find", "needle", "-b", "-g", "*.rs"]),
-        acus(&["find", "needle", "--block", "-g", "*.rs"])
-    );
-    assert_eq!(
-        acus(&["find", "needle", "--max-columns", "6", "-g", "*.rs"]),
-        acus(&["find", "needle", "--cut", "6", "-g", "*.rs"])
-    );
-    assert_eq!(
-        acus(&["find", "needle", "--max-count", "1", "src/lib.rs"]),
-        acus(&["find", "needle", "-m", "1", "src/lib.rs"])
-    );
-}
-
-#[test]
-fn grep_context_conflicts_with_block() {
     let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
     let (code, out, err) = acus_in(dir, &["find", "hit", "--block", "-C1", "-"], HITS);
     assert_eq!((code, out.as_str()), (2, ""));
@@ -134,22 +112,7 @@ fn find_skips_missing_paths_when_another_exists() {
 }
 
 #[test]
-fn find_reads_standard_input_for_dash() {
-    let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
-    let input = "a Parser line\nnothing\n";
-    let (code, out, err) = acus_in(dir, &["find", "Parser", "-"], input);
-    assert_eq!((code, err.as_str()), (0, ""));
-    assert!(out.contains("<stdin>") && out.contains("Parser line"));
-    assert!(!out.contains("nothing"));
-    let (code, out, _) = acus_in(dir, &["find", "-v", "Parser", "-"], input);
-    assert_eq!(code, 0);
-    assert!(out.contains("nothing") && !out.contains("Parser line"));
-    let (code, _, _) = acus_in(dir, &["find", "zzz_none", "-"], input);
-    assert_eq!(code, 1);
-}
-
-#[test]
-fn find_searches_piped_stdin_without_a_path() {
+fn find_reads_piped_stdin() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("a.rs"), "cwd Parser\n").unwrap();
     let input = "first Parser\nnothing\nsecond parser\n";
@@ -165,28 +128,34 @@ fn find_searches_piped_stdin_without_a_path() {
     assert_eq!((code, out.as_str()), (0, "<stdin>\n3\tsecond parser\n"));
     let (code, out, _) = acus_in(d.path(), &["find", "zzz_none"], input);
     assert_eq!((code, out.as_str()), (1, ""));
-}
 
-#[test]
-fn find_stdin_honours_count_head_and_invert() {
-    let d = tempfile::tempdir().unwrap();
+    let counts = tempfile::tempdir().unwrap();
     let input = "hit one\nmiss\nhit two\nhit three\n";
-    let (_, out, _) = acus_in(d.path(), &["find", "hit", "-c"], input);
+    let (_, out, _) = acus_in(counts.path(), &["find", "hit", "-c"], input);
     assert_eq!(out, "<stdin> 3\ntotal 3 in 1 files\n");
-    let (_, out, _) = acus_in(d.path(), &["find", "hit", "--head", "3"], input);
+    let (_, out, _) = acus_in(counts.path(), &["find", "hit", "--head", "3"], input);
     assert_eq!(out.lines().count(), 4, "{out}");
     assert!(out.contains("output cut at --head 3"), "{out}");
-    let (_, out, _) = acus_in(d.path(), &["find", "-v", "hit"], input);
+    let (_, out, _) = acus_in(counts.path(), &["find", "-v", "hit"], input);
     assert_eq!(out, "<stdin>\n2\tmiss\n");
-}
 
-#[test]
-fn find_explicit_path_ignores_piped_stdin() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("a.rs"), "file Parser\n").unwrap();
-    let (code, out, err) = acus_in(d.path(), &["find", "Parser", "a.rs"], "stdin Parser\n");
+    let named = tempfile::tempdir().unwrap();
+    std::fs::write(named.path().join("a.rs"), "file Parser\n").unwrap();
+    let (code, out, err) = acus_in(named.path(), &["find", "Parser", "a.rs"], "stdin Parser\n");
     assert_eq!((code, err.as_str()), (0, ""));
     assert_eq!(out, "a.rs\n1\tfile Parser\n");
+
+    let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proj"));
+    let input = "a Parser line\nnothing\n";
+    let (code, out, err) = acus_in(dir, &["find", "Parser", "-"], input);
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert!(out.contains("<stdin>") && out.contains("Parser line"));
+    assert!(!out.contains("nothing"));
+    let (code, out, _) = acus_in(dir, &["find", "-v", "Parser", "-"], input);
+    assert_eq!(code, 0);
+    assert!(out.contains("nothing") && !out.contains("Parser line"));
+    let (code, _, _) = acus_in(dir, &["find", "zzz_none", "-"], input);
+    assert_eq!(code, 1);
 }
 
 #[test]
@@ -318,7 +287,7 @@ fn find_caps_hits() {
 }
 
 #[test]
-fn find_rg_habits() {
+fn find_accepts_grep_flag_habits() {
     let (code, out, _) = acus(&["find", "needle", "-l", "-n"]);
     assert_eq!(code, 0);
     assert!(out.lines().all(|l| !l.contains('\t')), "{out}");
@@ -330,10 +299,41 @@ fn find_rg_habits() {
             .count(),
         1
     );
+
+    assert_eq!(
+        acus(&["find", "needle", "-b", "-g", "*.rs"]),
+        acus(&["find", "needle", "--block", "-g", "*.rs"])
+    );
+    assert_eq!(
+        acus(&["find", "needle", "--max-columns", "6", "-g", "*.rs"]),
+        acus(&["find", "needle", "--cut", "6", "-g", "*.rs"])
+    );
+    assert_eq!(
+        acus(&["find", "needle", "--max-count", "1", "src/lib.rs"]),
+        acus(&["find", "needle", "-m", "1", "src/lib.rs"])
+    );
+
+    let rs = acus(&["find", "needle", "-l", "-g", "*.rs"]).1;
+    assert_eq!(acus(&["find", "needle", "-l", "--include=*.rs"]).1, rs);
+    assert_eq!(acus(&["find", "needle", "-l", "--include", "*.rs"]).1, rs);
+    let (_, out, _) = acus(&[
+        "find",
+        "needle",
+        "-l",
+        "--exclude",
+        "*.rs",
+        "--exclude-dir",
+        "web",
+    ]);
+    assert_eq!(out, "README.md 1\n");
+    assert_eq!(
+        acus(&["find", "needle", "-l", "-g", "!web/", "-g", "!src/"]).1,
+        "README.md 1\n"
+    );
 }
 
 #[test]
-fn find_accepts_recursive_grep_habits_and_explains_the_rest() {
+fn find_explains_unsupported_grep_flags() {
     for flags in [["-rn"], ["-rnH"], ["-R"], ["-nH"]] {
         let (code, _, err) = acus(&["find", "needle", flags[0]]);
         assert_eq!(code, 0, "{flags:?}: {err}");
@@ -354,10 +354,7 @@ fn find_accepts_recursive_grep_habits_and_explains_the_rest() {
     // Other commands keep clap's plain error.
     let (_, _, err) = acus(&["outline", "src", "-c"]);
     assert!(!err.contains("hint:"), "{err}");
-}
 
-#[test]
-fn find_unknown_short_flag_hints_the_escaped_pattern() {
     let (code, out, err) = acus(&["find", "-zz", "."]);
     assert_eq!((code, out.as_str()), (2, ""));
     assert!(err.contains("unexpected argument"), "{err}");
@@ -365,10 +362,7 @@ fn find_unknown_short_flag_hints_the_escaped_pattern() {
         err.contains("hint: a pattern that starts with '-' needs -e: acus find -e '-x' PATH"),
         "{err}"
     );
-}
 
-#[test]
-fn find_files_points_to_acus_files_not_a_grep_flag() {
     let (code, out, err) = acus(&["find", "needle", "--files"]);
     assert_eq!((code, out.as_str()), (2, ""), "{err}");
     assert_eq!(
@@ -378,7 +372,7 @@ fn find_files_points_to_acus_files_not_a_grep_flag() {
 }
 
 #[test]
-fn find_count_lists_files_and_total() {
+fn find_output_modes() {
     let (code, out, _) = acus(&["find", "needle", "-c"]);
     assert_eq!(code, 0);
     assert_eq!(
@@ -395,10 +389,7 @@ fn find_count_lists_files_and_total() {
     assert_eq!(v["files"][1]["path"], "src/lib.rs");
     assert_eq!(v["files"][1]["count"], 3);
     assert_eq!(acus(&["find", "zzz-none", "-c"]).0, 1);
-}
 
-#[test]
-fn find_only_matching_prints_the_matched_text() {
     let (code, out, _) = acus(&["find", "-o", r"need\w+", "-g", "*.rs"]);
     assert_eq!(code, 0);
     assert!(out.contains("11\tneedle\n12\tneedle\n"), "{out}");
@@ -407,10 +398,17 @@ fn find_only_matching_prints_the_matched_text() {
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["files"][0]["hits"][0]["matches"][0], "need");
     assert!(v["files"][0]["hits"][0].get("text").is_none());
-}
 
-#[test]
-fn find_modes_that_print_no_lines_ignore_context_flags() {
+    let (code, out, _) = acus(&["find", "-v", "needle", "README.md"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("Demo") && !out.contains("Run the needle"),
+        "{out}"
+    );
+    let (_, out, _) = acus(&["find", "-m", "1", "needle", "src/lib.rs"]);
+    assert_eq!(out.matches("needle").count(), 1, "{out}");
+    assert_eq!(acus(&["find", "needle", "-m", "0"]).0, 2);
+
     for modes in [
         vec!["-o", r"need\w+"],
         vec!["-c", "needle"],
@@ -432,41 +430,7 @@ fn find_modes_that_print_no_lines_ignore_context_flags() {
 }
 
 #[test]
-fn find_invert_and_max_count_work_per_file() {
-    let (code, out, _) = acus(&["find", "-v", "needle", "README.md"]);
-    assert_eq!(code, 0);
-    assert!(
-        out.contains("Demo") && !out.contains("Run the needle"),
-        "{out}"
-    );
-    let (_, out, _) = acus(&["find", "-m", "1", "needle", "src/lib.rs"]);
-    assert_eq!(out.matches("needle").count(), 1, "{out}");
-    assert_eq!(acus(&["find", "needle", "-m", "0"]).0, 2);
-}
-
-#[test]
-fn find_grep_glob_flags_map_to_globs() {
-    let rs = acus(&["find", "needle", "-l", "-g", "*.rs"]).1;
-    assert_eq!(acus(&["find", "needle", "-l", "--include=*.rs"]).1, rs);
-    assert_eq!(acus(&["find", "needle", "-l", "--include", "*.rs"]).1, rs);
-    let (_, out, _) = acus(&[
-        "find",
-        "needle",
-        "-l",
-        "--exclude",
-        "*.rs",
-        "--exclude-dir",
-        "web",
-    ]);
-    assert_eq!(out, "README.md 1\n");
-    assert_eq!(
-        acus(&["find", "needle", "-l", "-g", "!web/", "-g", "!src/"]).1,
-        "README.md 1\n"
-    );
-}
-
-#[test]
-fn find_accepts_extended_and_perl_flags() {
+fn find_regex_dialects() {
     let plain = acus(&["find", "need(le|s)"]).1;
     assert_eq!(acus(&["find", "-E", "need(le|s)"]).1, plain);
     assert_eq!(acus(&["find", "-P", "need(le|s)"]).1, plain);
@@ -476,10 +440,7 @@ fn find_accepts_extended_and_perl_flags() {
         err.contains("-P is accepted") && err.contains("no look-around"),
         "{err}"
     );
-}
 
-#[test]
-fn find_reads_bre_alternation() {
     let (code, out, err) = acus(&["find", r"Usage\|Parser", "-l"]);
     assert_eq!(code, 0);
     assert_eq!(out, acus(&["find", "Usage|Parser", "-l"]).1);
@@ -496,7 +457,7 @@ fn find_reads_bre_alternation() {
 }
 
 #[test]
-fn find_nothing_exits_1() {
+fn find_reports_no_matches() {
     assert_eq!(
         acus(&["find", "zzz_not_here"]),
         (
@@ -505,10 +466,6 @@ fn find_nothing_exits_1() {
             "(no matches; hidden and .gitignored files were skipped: --hidden, -u)\n".into()
         )
     );
-}
-
-#[test]
-fn find_nothing_names_the_glob_it_searched() {
     let (code, out, err) = acus(&["find", "zzz_not_here", "-g", "*.rs"]);
     assert_eq!((code, out.as_str()), (1, ""));
     assert!(
@@ -518,10 +475,6 @@ fn find_nothing_names_the_glob_it_searched() {
         "{err}"
     );
     assert!(!acus(&["find", "zzz_not_here"]).2.contains("searched"));
-}
-
-#[test]
-fn find_json_no_matches_is_null() {
     let (code, out, err) = acus(&["find", "zzz_not_here", "--json"]);
     assert_eq!(code, 1);
     assert!(err.is_empty());
@@ -572,7 +525,7 @@ fn find_follow_searches_through_symlinked_directories() {
 }
 
 #[test]
-fn find_multiline_prints_every_line_of_a_match() {
+fn find_multiline_matches_anchors_and_refuses_modes_it_cannot_print() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(
         d.path().join("m.txt"),
@@ -595,22 +548,24 @@ fn find_multiline_prints_every_line_of_a_match() {
     let (code, _, err) = acus_in(d.path(), &["find", r"start here\nmiddle", "m.txt"], "");
     assert_eq!(code, 1);
     assert!(err.contains("add -U"), "{err}");
-}
 
-#[test]
-fn find_multiline_anchors_match_at_line_boundaries() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("m.txt"), "x\nfn foo\nbar\nfn foo\nbaz\n").unwrap();
-    let (code, out, _) = acus_in(d.path(), &["find", "-U", r"^fn foo\nbar$", "m.txt"], "");
+    let anchors = tempfile::tempdir().unwrap();
+    std::fs::write(
+        anchors.path().join("m.txt"),
+        "x\nfn foo\nbar\nfn foo\nbaz\n",
+    )
+    .unwrap();
+    let (code, out, _) = acus_in(
+        anchors.path(),
+        &["find", "-U", r"^fn foo\nbar$", "m.txt"],
+        "",
+    );
     assert_eq!(code, 0);
     assert!(out.contains("2\tfn foo\n3\tbar\n"), "{out}");
     assert!(!out.contains("baz"), "{out}");
-}
 
-#[test]
-fn find_multiline_refuses_the_modes_it_cannot_print() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("m.txt"), "start here\nmiddle\n").unwrap();
+    let refused = tempfile::tempdir().unwrap();
+    std::fs::write(refused.path().join("m.txt"), "start here\nmiddle\n").unwrap();
     for extra in [
         &["-c"][..],
         &["-v"][..],
@@ -620,7 +575,7 @@ fn find_multiline_refuses_the_modes_it_cannot_print() {
     ] {
         let mut args = vec!["find", "-U", r"start here\nmiddle", "m.txt"];
         args.extend_from_slice(extra);
-        let (code, out, err) = acus_in(d.path(), &args, "");
+        let (code, out, err) = acus_in(refused.path(), &args, "");
         assert_eq!((code, out.as_str()), (2, ""), "{extra:?}");
         assert!(
             err.starts_with("error: ")
@@ -645,7 +600,7 @@ fn ranged_dir() -> tempfile::TempDir {
 }
 
 #[test]
-fn find_range_searches_only_the_lines_with_file_absolute_numbers() {
+fn find_range_addresses() {
     let d = ranged_dir();
     let (code, out, _) = acus_in(d.path(), &["find", "hit", "f.txt:2-4"], "");
     assert_eq!((code, out.as_str()), (0, "f.txt\n2\thit 2\n4\thit 4\n"));
@@ -655,18 +610,10 @@ fn find_range_searches_only_the_lines_with_file_absolute_numbers() {
     // Context does not leave the range: line 4 is outside 2-3.
     let (_, out, _) = acus_in(d.path(), &["find", "hit", "f.txt:2-3", "-A", "2"], "");
     assert_eq!(out, "f.txt\n2\thit 2\n3-\tmiss\n");
-}
 
-#[test]
-fn find_from_line_range_searches_to_the_end() {
-    let d = ranged_dir();
     let (code, out, _) = acus_in(d.path(), &["find", "hit", "f.txt:4-"], "");
     assert_eq!((code, out.as_str()), (0, "f.txt\n4\thit 4\n5\thit 5\n"));
-}
 
-#[test]
-fn find_range_takes_a_symbol_and_mixes_with_plain_paths() {
-    let d = ranged_dir();
     let (code, out, _) = acus_in(d.path(), &["find", "hit", "a.rs#two"], "");
     assert_eq!(code, 0);
     assert!(
@@ -681,11 +628,7 @@ fn find_range_takes_a_symbol_and_mixes_with_plain_paths() {
         out.contains("4\thit 4") && out.contains("1\thit 1"),
         "{out}"
     );
-}
 
-#[test]
-fn find_range_works_with_count_block_and_max_count() {
-    let d = ranged_dir();
     let (_, out, _) = acus_in(d.path(), &["find", "hit", "f.txt:1-2", "-c"], "");
     assert_eq!(out, "f.txt 2\ntotal 2 in 1 files\n");
     let (_, out, _) = acus_in(d.path(), &["find", "hit", "f.txt:4-5", "-m", "1"], "");

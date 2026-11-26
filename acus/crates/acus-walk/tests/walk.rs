@@ -80,7 +80,7 @@ fn respects_gitignore_and_skips_hidden() {
 }
 
 #[test]
-fn glob_without_slash_matches_the_name_at_any_depth() {
+fn globs_and_excludes_narrow_the_walk() {
     let d = tree();
     let named = |g: &str| {
         collect(
@@ -96,6 +96,19 @@ fn glob_without_slash_matches_the_name_at_any_depth() {
     // A glob with a `/` stays anchored at the root.
     assert_eq!(named("sub/c.rs"), ["sub/c.rs"]);
     assert!(named("c/c.rs").is_empty());
+
+    let opts = WalkOpts {
+        include: vec!["*.rs".into()],
+        exclude: vec!["sub/**".into()],
+        ..Default::default()
+    };
+    assert_eq!(collect(opts, d.path()), ["a.rs"]);
+
+    let opts = WalkOpts {
+        exclude: vec!["sub".into(), "*.md".into()],
+        ..Default::default()
+    };
+    assert_eq!(collect(opts, d.path()), ["a.rs"]);
 }
 
 #[test]
@@ -112,28 +125,7 @@ fn hidden_flag_includes_dotfiles() {
 }
 
 #[test]
-fn globs_match_relative_to_root() {
-    let d = tree();
-    let opts = WalkOpts {
-        include: vec!["*.rs".into()],
-        exclude: vec!["sub/**".into()],
-        ..Default::default()
-    };
-    assert_eq!(collect(opts, d.path()), ["a.rs"]);
-}
-
-#[test]
-fn bare_exclude_drops_directories_and_files_by_name() {
-    let d = tree();
-    let opts = WalkOpts {
-        exclude: vec!["sub".into(), "*.md".into()],
-        ..Default::default()
-    };
-    assert_eq!(collect(opts, d.path()), ["a.rs"]);
-}
-
-#[test]
-fn missing_root_is_an_error() {
+fn missing_roots_error_or_are_skipped() {
     let opts = WalkOpts {
         roots: vec!["/definitely/not/here".into()],
         ..Default::default()
@@ -144,9 +136,7 @@ fn missing_root_is_an_error() {
             .to_string()
             .contains("path not found")
     );
-}
-#[test]
-fn missing_root_is_skipped_when_another_exists() {
+
     let d = tree();
     let opts = WalkOpts {
         roots: vec!["/definitely/not/here".into(), d.path().join("sub")],

@@ -12,15 +12,11 @@ fn script(args: &[&str], code: &str) -> (i32, String, String) {
 }
 
 #[test]
-fn script_prints_the_value_it_returns() {
+fn script_prints_the_return_value_or_the_last_expression() {
     assert_eq!(
         acus(&["script", "-e", "return 1 + 1"]),
         (0, "2\n".to_owned(), String::new())
     );
-}
-
-#[test]
-fn script_prints_the_last_expression_when_it_has_no_return() {
     assert_eq!(
         acus(&["script", "-e", "find('let needle')"]),
         (
@@ -57,7 +53,7 @@ fn script_sleep_past_the_time_limit_times_the_script_out() {
 }
 
 #[test]
-fn script_find_renders_hits_like_the_agent_format_and_json_keeps_the_objects() {
+fn script_find_renders_and_filters_hits() {
     let code = "return await find('let needle')";
     assert_eq!(
         script(&[], code),
@@ -76,10 +72,6 @@ fn script_find_renders_hits_like_the_agent_format_and_json_keeps_the_objects() {
             String::new()
         )
     );
-}
-
-#[test]
-fn script_filters_keep_the_kind_and_an_empty_result_exits_1() {
     let (code, out, _) = script(&[], "return (await find('pos')).grep('self').head(1)");
     assert_eq!((code, out.lines().count()), (0, 1));
     let (code, out, _) = script(&[], "return (await find('needle')).grep('zzz')");
@@ -146,10 +138,6 @@ fn script_keeps_what_it_printed_before_a_throw() {
     let (code, out, err) = script(&[], "print('before');\nthrow new Error('boom');");
     assert_eq!((code, out.as_str()), (2, "before\n"), "{err}");
     assert!(err.starts_with("error: line 2: boom"), "{err}");
-}
-
-#[test]
-fn script_json_failure_includes_the_prints() {
     let (code, out, err) = script(&["--json"], "print('before');\nthrow new Error('boom');");
     assert_eq!(code, 2, "{err}");
     assert_eq!(

@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+────────────
+ Nextest run ID 1f79aa0d-4ec8-4a5c-aa83-5e8dc2f36573 with nextest profile: default
+    Starting 4 tests across 2 binaries (2 tests skipped)
+        PASS [   0.005s] foo::bin a::b
+        PASS [   0.010s] foo::bin c::d
+        PASS [   0.011s] bar::lib e::f
+        PASS [   0.012s] bar::lib g::h
+────────────
+     Summary [   0.021s] 4 tests run: 4 passed, 2 skipped

@@ -13,10 +13,20 @@ pub(super) type Stage = Option<(bool, u32)>;
     clippy::needless_pass_by_value,
     reason = "the op is a per-line reborrow of the chunk"
 )]
-pub(super) fn body(op: Option<&mut Op>, line: &str, n: usize, stage: &mut Stage) -> Result<()> {
+pub(super) fn body(
+    op: Option<&mut Op>,
+    line: &str,
+    n: usize,
+    stage: &mut Stage,
+    in_conflict: bool,
+) -> Result<()> {
     let opens = |l: &str| ["<<<<<<< SEARCH", "<<<<<<<"].contains(&l.trim_end());
     let closes = |l: &str| [">>>>>>> REPLACE", ">>>>>>>"].contains(&l.trim_end());
     let ends = matches!(stage, Some((true, 0))) && closes(line);
+    // Inside a closed conflict section a `=======` is the text being searched for, not the block's
+    // separator, so a patch can remove the section.
+    let separator =
+        line.trim_end() == "=======" && matches!(stage, Some((false, 0))) && !in_conflict;
     if let Some((true, d)) = stage {
         if opens(line) || line.trim_end() == "<<<<<<< REGEX" {
             *d += 1;
@@ -34,7 +44,7 @@ pub(super) fn body(op: Option<&mut Op>, line: &str, n: usize, stage: &mut Stage)
                 *stage = Some((false, 0));
             }
             None => return Err(EditError::ExpectedBlock { line: n }),
-            Some((false, _)) if line.trim_end() == "=======" => *stage = Some((true, 0)),
+            Some((false, _)) if separator => *stage = Some((true, 0)),
             Some((true, _)) if ends => *stage = None,
             Some((r, _)) => {
                 let Some(b) = blocks.last_mut() else {
@@ -51,7 +61,7 @@ pub(super) fn body(op: Option<&mut Op>, line: &str, n: usize, stage: &mut Stage)
                 });
                 *stage = Some((false, 0));
             }
-            Some((false, _)) if line.trim_end() == "=======" => *stage = Some((true, 0)),
+            Some((false, _)) if separator => *stage = Some((true, 0)),
             Some((true, _)) if ends => {
                 let Some(c) = chunks.last() else {
                     return Err(EditError::TextOutsideChunk { line: n });

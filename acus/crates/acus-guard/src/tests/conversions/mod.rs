@@ -329,7 +329,11 @@ fn keeps_escaped_spaces_inside_their_word() {
 }
 
 #[test]
-fn converts_git_diff_into_acus_diff() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table of git conversions; splitting it scatters the cases"
+)]
+fn converts_git_diff_and_log_into_acus_calls() {
     for (cmd, want) in [
         ("git diff", "acus diff -p"),
         ("git diff --stat", "acus diff"),
@@ -371,10 +375,7 @@ fn converts_git_diff_into_acus_diff() {
             "{cmd}"
         );
     }
-}
 
-#[test]
-fn converts_git_log_into_acus_log() {
     for (cmd, want) in [
         ("git log", "acus log"),
         ("git log -10", "acus log -n 10"),

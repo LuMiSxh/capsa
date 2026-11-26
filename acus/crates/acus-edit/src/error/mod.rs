@@ -141,6 +141,12 @@ pub enum EditError {
     /// A conflict section whose `=======` or `>>>>>>>` marker is missing.
     #[error("{path}:{line}: unterminated conflict section")]
     UnterminatedConflict { path: String, line: usize },
+    /// A patch whose result leaves an unmatched conflict marker.
+    #[error("{path}:{line}: the patch would leave an unmatched conflict marker")]
+    UnmatchedConflict { path: String, line: usize },
+    /// A patch that adds conflict markers to a file that did not have them.
+    #[error("{path}:{line}: the patch would add conflict markers")]
+    IntroducedConflict { path: String, line: usize },
     /// A `PATH:LINE` that is outside every conflict section.
     #[error("{path}:{line}: no conflict section contains that line")]
     NoConflictAtLine { path: String, line: usize },

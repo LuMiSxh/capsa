@@ -51,19 +51,16 @@ fn printing_a_result_gives_the_text_its_command_prints() {
         assert_eq!(code, 0, "{js}: {err}");
         assert_eq!(out, stdout(d.path(), &cli), "{js}");
     }
-}
 
-#[test]
-fn returning_a_follow_result_gives_the_text_of_acus_follow() {
-    let d = tempfile::tempdir().unwrap();
+    let follow = tempfile::tempdir().unwrap();
     std::fs::write(
-        d.path().join("lib.rs"),
+        follow.path().join("lib.rs"),
         "fn a() {\n    b();\n}\n\nfn b() {}\n",
     )
     .unwrap();
-    let (code, out, err) = script_in(d.path(), &[], "return await follow('lib.rs#b');");
+    let (code, out, err) = script_in(follow.path(), &[], "return await follow('lib.rs#b');");
     assert_eq!(code, 0, "{err}");
-    assert_eq!(out, stdout(d.path(), &["follow", "lib.rs#b"]));
+    assert_eq!(out, stdout(follow.path(), &["follow", "lib.rs#b"]));
 }
 
 #[test]
@@ -96,10 +93,7 @@ fn a_long_return_value_is_cut_with_a_footer_naming_the_options() {
         lines[400],
         "… cut 9600 lines; return less, use .head()/.grep(), or rerun with --max-output N"
     );
-}
 
-#[test]
-fn prints_and_the_return_value_both_show_under_the_cap() {
     let code = "print(Array.from({length: 1000}, (_, i) => 'p' + i).join('\\n')); return 'RESULT';";
     let (exit, out, err) = script_in(&project(), &[], code);
     assert_eq!(exit, 0, "{err}");

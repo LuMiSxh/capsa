@@ -131,9 +131,9 @@ fn add_delete_move() {
     );
 }
 
-// The counts match `git diff --numstat -M` on the same change: `2 2 a.txt => m.txt`.
+/// The counts match `git diff --numstat -M` on the same change: `2 2 a.txt => m.txt`.
 #[test]
-fn edit_then_move_gives_one_line_with_net_counts() {
+fn an_edit_and_a_move_in_either_order_give_one_line_with_net_counts() {
     let d = dir(&[("a.txt", "a\nb\nc\nd\n")]);
     let c = run(
         d.path(),
@@ -144,11 +144,7 @@ fn edit_then_move_gives_one_line_with_net_counts() {
     assert_eq!(read(d.path(), "m.txt"), "a\nx\ny\nd\n");
     let s: Vec<String> = c.iter().map(ToString::to_string).collect();
     assert_eq!(s, ["R a.txt -> m.txt +2 -2"]);
-}
 
-// The counts match `git diff --numstat -M` on the same change: `2 2 a.txt => m.txt`.
-#[test]
-fn move_then_edit_gives_one_line_with_net_counts() {
     let d = dir(&[("a.txt", "a\nb\nc\nd\n")]);
     let c = run(
         d.path(),

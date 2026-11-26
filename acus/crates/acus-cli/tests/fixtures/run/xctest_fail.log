@@ -1,0 +1,24 @@
+[1/1] Planning build
+Building for debugging...
+[0/4] Write swift-version--58304C5D4F9F9F9E.txt
+[1/4] Emitting module Foo
+[2/4] Compiling Foo.swift
+[3/4] Emitting module FooTests
+[4/4] Compiling FooTests.swift
+Build complete! (1.23s)
+Test Suite 'All tests' started at 2026-11-26 10:00:00.000
+Test Suite 'FooTests.xctest' started at 2026-11-26 10:00:00.001
+Test Suite 'FooTests' started at 2026-11-26 10:00:00.002
+Test Case '-[FooTests.FooTests testA]' started.
+Test Case '-[FooTests.FooTests testA]' passed (0.001 seconds).
+Test Case '-[FooTests.FooTests testB]' started.
+Test Case '-[FooTests.FooTests testB]' passed (0.001 seconds).
+Test Case '-[FooTests.FooTests testC]' started.
+Tests/FooTests/FooTests.swift:2: error: -[FooTests.FooTests testC] : XCTAssertEqual failed: ("1") is not equal to ("2")
+Test Case '-[FooTests.FooTests testC]' failed (0.001 seconds).
+Test Suite 'FooTests' failed at 2026-11-26 10:00:00.003
+     Executed 3 tests, with 1 failure (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'FooTests.xctest' failed at 2026-11-26 10:00:00.004
+     Executed 3 tests, with 1 failure (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'All tests' failed at 2026-11-26 10:00:00.005
+     Executed 3 tests, with 1 failure (0 unexpected) in 0.003 (0.003) seconds

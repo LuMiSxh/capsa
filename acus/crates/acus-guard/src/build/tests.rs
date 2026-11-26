@@ -14,7 +14,7 @@ fn assert_rewrites(cases: &[(&str, &str)]) {
 }
 
 #[test]
-fn folds_gh_logs_timeouts_and_quoted_angle_brackets() {
+fn folds_build_pipes_into_run_flags() {
     assert_rewrites(&[
         (
             "gh run view 123 --log-failed | grep error | tail -20",
@@ -39,6 +39,23 @@ fn folds_gh_logs_timeouts_and_quoted_angle_brackets() {
         (
             "cargo test 2>&1 | grep '<T>' | tail -5",
             "acus run 'cargo test' --grep '<T>' --tail 5",
+        ),
+        // A head that keeps every tail line folds away.
+        (
+            "acus run 'cargo test' --tail 20 | head -25",
+            "acus run 'cargo test' --tail 20",
+        ),
+        (
+            "acus run 'cargo test' --tail 20 | head -20",
+            "acus run 'cargo test' --tail 20",
+        ),
+        (
+            "cargo test 2>&1 | tail -20 | head -25",
+            "acus run 'cargo test' --tail 20",
+        ),
+        (
+            "cargo test 2>&1 | tail -20 | head -20; echo hi",
+            "acus run 'cargo test' --tail 20; echo hi",
         ),
     ]);
 }
@@ -111,32 +128,13 @@ fn names_every_filter_that_blocks_the_ctx_form() {
 }
 
 #[test]
-fn a_head_that_keeps_every_tail_line_folds_away() {
-    assert_rewrites(&[
-        (
-            "acus run 'cargo test' --tail 20 | head -25",
-            "acus run 'cargo test' --tail 20",
-        ),
-        (
-            "acus run 'cargo test' --tail 20 | head -20",
-            "acus run 'cargo test' --tail 20",
-        ),
-        (
-            "cargo test 2>&1 | tail -20 | head -25",
-            "acus run 'cargo test' --tail 20",
-        ),
-        (
-            "cargo test 2>&1 | tail -20 | head -20; echo hi",
-            "acus run 'cargo test' --tail 20; echo hi",
-        ),
-    ]);
-}
-
-#[test]
-fn a_head_that_cuts_the_tail_keeps_the_old_verdict() {
+fn chains_that_cannot_fold_stay_refused() {
     for cmd in [
         "acus run 'cargo test' --tail 20 | head -5",
         "cargo test 2>&1 | tail -20 | head -5",
+        "cargo test 2>&1 | tail -n +5 | grep x",
+        "acus run 'cargo test' | tail -n +5 | grep x",
+        "cargo test 2>&1 | grep -A2 error | grep -v warn",
     ] {
         assert!(rw(cmd).is_none(), "{cmd}");
         assert!(
@@ -147,45 +145,35 @@ fn a_head_that_cuts_the_tail_keeps_the_old_verdict() {
 }
 
 #[test]
-fn sort_and_uniq_chains_run_as_written() {
+fn chains_that_no_run_flag_expresses_run_as_written() {
     for cmd in [
         "cargo test 2>&1 | grep FAIL | sort | uniq -c",
         "npm run build | sort -u",
         "cargo test 2>&1 | sort | uniq",
         "acus run 'cargo test' | grep FAIL | sort | uniq",
+        "acus run 'cargo test' | grep a | grep b",
+        "cargo test 2>&1 | grep a | grep b",
+        "cargo test | awk '{print $1}'",
+        "acus run 'cargo test' | awk '{print $1}'",
     ] {
         assert!(crate::check(cmd).is_none(), "{cmd}");
         assert!(rw(cmd).is_none(), "{cmd}");
     }
 }
 
-#[test]
-fn stacked_ctx_greps_run_as_written() {
-    let cmd = "acus run 'cargo test' | grep a | grep b";
-    assert!(crate::check(cmd).is_none(), "{cmd}");
-    assert!(rw(cmd).is_none(), "{cmd}");
-}
-
 // Stacked greps that one run flag set expresses still fold: `grep -v` becomes `--drop`.
 #[test]
 fn stacked_greps_that_fold_keep_their_rewrite() {
+    let cmd = "acus run 'cargo test' | grep -v x | grep y";
+    assert!(
+        matches!(crate::check(cmd), Some(crate::Verdict::Deny(..))),
+        "{cmd}"
+    );
     assert_eq!(
-        rw("acus run 'cargo test' | grep -v x | grep y").as_deref(),
+        rw(cmd).as_deref(),
         Some("acus run 'cargo test' --drop 'x' --grep 'y'")
     );
-}
 
-// A build piped into stacked greps that no run flag set expresses runs as written, as run does.
-#[test]
-fn stacked_build_greps_run_as_written() {
-    let cmd = "cargo test 2>&1 | grep a | grep b";
-    assert!(crate::check(cmd).is_none(), "{cmd}");
-    assert!(rw(cmd).is_none(), "{cmd}");
-}
-
-// A stacked grep that folds keeps its build-pipe refusal and its rewrite.
-#[test]
-fn stacked_build_greps_that_fold_keep_their_rewrite() {
     let cmd = "cargo test 2>&1 | grep -v x | grep y";
     assert!(
         matches!(crate::check(cmd), Some(crate::Verdict::Deny(..))),
@@ -195,28 +183,6 @@ fn stacked_build_greps_that_fold_keep_their_rewrite() {
         rw(cmd).as_deref(),
         Some("acus run 'cargo test' --drop 'x' --grep 'y'")
     );
-}
-
-// Greps with context windows stay refused, as the run form does.
-#[test]
-fn build_greps_with_context_stay_refused() {
-    let cmd = "cargo test 2>&1 | grep -A2 error | grep -v warn";
-    assert!(
-        matches!(crate::check(cmd), Some(crate::Verdict::Deny(..))),
-        "{cmd}"
-    );
-    assert!(rw(cmd).is_none(), "{cmd}");
-}
-
-// awk is no filter the guard refuses: a chain with it has never had a verdict, and still has none.
-#[test]
-fn awk_chains_keep_running_as_written() {
-    for cmd in [
-        "cargo test | awk '{print $1}'",
-        "acus run 'cargo test' | awk '{print $1}'",
-    ] {
-        assert!(crate::check(cmd).is_none(), "{cmd}");
-    }
 }
 
 #[test]
@@ -253,18 +219,5 @@ fn a_send_line_keeps_every_stage_of_the_chain() {
         if let Some(crate::Verdict::Deny(_, reason)) = crate::check(cmd) {
             assert!(!reason.contains("Send instead"), "{cmd}: {reason}");
         }
-    }
-}
-
-#[test]
-fn other_unfoldable_filters_are_still_refused() {
-    for cmd in [
-        "cargo test 2>&1 | tail -n +5 | grep x",
-        "acus run 'cargo test' | tail -n +5 | grep x",
-    ] {
-        assert!(
-            matches!(crate::check(cmd), Some(crate::Verdict::Deny(..))),
-            "{cmd}"
-        );
     }
 }

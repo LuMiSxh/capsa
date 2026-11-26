@@ -3,15 +3,10 @@
 
 use super::files::Files;
 use crate::error::{EditError, Result};
+use crate::parse::markers::{is_base, is_close, is_open, is_separator};
 use crate::parse::{Op, ResolveMode};
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
-
-/// Whether `text` holds a complete git conflict section.
-pub(super) fn has_markers(text: &str) -> bool {
-    let lines: Vec<&str> = text.lines().collect();
-    !scan(&lines).0.is_empty()
-}
 
 /// One conflict section: its marker lines and the content ranges between them, 0-based and
 /// half-open.
@@ -226,24 +221,6 @@ fn section_at(lines: &[&str], start: usize) -> Option<(Section, usize)> {
         },
         end + 1,
     ))
-}
-
-fn is_open(line: &str) -> bool {
-    line.strip_prefix("<<<<<<<")
-        .is_some_and(|label| label.trim() != "SEARCH")
-}
-
-fn is_close(line: &str) -> bool {
-    line.strip_prefix(">>>>>>>")
-        .is_some_and(|label| label.trim() != "REPLACE")
-}
-
-fn is_separator(line: &str) -> bool {
-    line.trim_end() == "======="
-}
-
-fn is_base(line: &str) -> bool {
-    line.starts_with("|||||||")
 }
 
 fn resolve(

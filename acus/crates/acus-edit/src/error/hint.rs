@@ -118,6 +118,12 @@ impl EditError {
             Self::UnterminatedConflict { .. } => Cow::Borrowed(
                 "add the missing `=======` and `>>>>>>>` markers, or edit the file by hand",
             ),
+            Self::UnmatchedConflict { path, .. } => Cow::Owned(format!(
+                "remove the stray marker, resolve the section with `*** Resolve Conflict: {path}`, or pass --allow-broken"
+            )),
+            Self::IntroducedConflict { .. } => Cow::Borrowed(
+                "remove the markers from the REPLACE text, or pass --allow-broken if they are intentional",
+            ),
             Self::NoConflictAtLine { path, .. } => Cow::Owned(format!("acus show {path}")),
             Self::ConflictAlreadyResolved { .. } => {
                 Cow::Borrowed("use one directive per conflict section")

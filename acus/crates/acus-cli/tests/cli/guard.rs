@@ -275,9 +275,10 @@ fn skill_prints_without_stdin() {
     }
 }
 
-/// `hint_every` = 1 shows every hint, and 0 counts as 1.
+/// `hint_every` = 1 shows every hint, and 0 counts as 1; a state directory that cannot be used
+/// (here a file with its name) fails open, so every hint shows.
 #[test]
-fn hint_every_one_shows_every_hint() {
+fn hint_intervals_and_an_unusable_state() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config.toml");
     for every in ["1", "0"] {
@@ -287,16 +288,11 @@ fn hint_every_one_shows_every_hint() {
             assert!(!out.is_empty(), "hint_every = {every}");
         }
     }
-}
 
-/// A state directory that cannot be used (here a file with its name) fails open: every hint
-/// shows.
-#[test]
-fn unusable_hint_state_still_shows_hints() {
-    let dir = tempfile::tempdir().unwrap();
-    let config = dir.path().join("config.toml");
+    let unusable = tempfile::tempdir().unwrap();
+    let config = unusable.path().join("config.toml");
     std::fs::write(&config, "[guard]\nhint_every = 10\n").unwrap();
-    std::fs::write(dir.path().join("guard-hints"), "not a directory").unwrap();
+    std::fs::write(unusable.path().join("guard-hints"), "not a directory").unwrap();
     for _ in 0..3 {
         let out = run_hook(&config, &["hook"], bash_call("s1", "git status"));
         assert!(!out.is_empty());

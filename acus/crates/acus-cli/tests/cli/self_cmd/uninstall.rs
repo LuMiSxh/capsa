@@ -7,29 +7,20 @@ use crate::common::{acus_env, decode, output_retrying_busy};
 
 #[cfg(feature = "cmd-update")]
 #[test]
-fn uninstall_json_is_one_value_and_keeps_the_skill() {
-    let home = tempfile::tempdir().unwrap();
-    let h = home.path().to_str().unwrap();
-    let skill = home.path().join(".claude/skills/acus");
-    std::fs::create_dir_all(&skill).unwrap();
-    std::fs::write(skill.join("SKILL.md"), "x").unwrap();
-    let (code, out, err) = acus_env(
-        &["self", "uninstall", "--dry-run", "--json"],
-        &[("HOME", h), ("USERPROFILE", h)],
-    );
-    assert_eq!(code, 0, "{err}");
-    assert_eq!(json_line(&out)["removed"], false);
-    assert!(skill.join("SKILL.md").is_file());
-}
-
-#[cfg(feature = "cmd-update")]
-#[test]
 fn uninstall_dry_run_removes_nothing() {
     let home = tempfile::tempdir().unwrap();
     let skill = home.path().join(".claude/skills/acus");
     std::fs::create_dir_all(&skill).unwrap();
     std::fs::write(skill.join("SKILL.md"), "x").unwrap();
     let home_str = home.path().to_str().unwrap();
+    let (code, out, err) = acus_env(
+        &["self", "uninstall", "--dry-run", "--json"],
+        &[("HOME", home_str), ("USERPROFILE", home_str)],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(json_line(&out)["removed"], false);
+    assert!(skill.join("SKILL.md").is_file());
+
     let (code, out, err) = acus_env(
         &["self", "uninstall", "--dry-run"],
         &[("HOME", home_str), ("USERPROFILE", home_str)],

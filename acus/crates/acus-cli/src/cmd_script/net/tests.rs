@@ -166,6 +166,14 @@ fn a_redirect_into_a_denied_host_or_scheme_is_refused() {
         "{}",
         err.message
     );
+    for url in ["file:///etc/passwd", "ftp://example.test/file"] {
+        let err = run(url, &[]).err().expect("refused");
+        assert!(
+            err.message.contains("only http and https"),
+            "{}",
+            err.message
+        );
+    }
 }
 
 #[test]
@@ -195,18 +203,6 @@ fn a_webfetch_deny_rule_refuses_the_host() {
         "{}",
         err.message
     );
-}
-
-#[test]
-fn only_http_and_https_are_fetched() {
-    for url in ["file:///etc/passwd", "ftp://example.test/file"] {
-        let err = run(url, &[]).err().expect("refused");
-        assert!(
-            err.message.contains("only http and https"),
-            "{}",
-            err.message
-        );
-    }
 }
 
 #[test]

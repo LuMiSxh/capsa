@@ -64,7 +64,7 @@ fn diff_outlines_added_files_and_names_the_body() {
 }
 
 #[test]
-fn moves_across_files_print_the_source_summary_and_one_destination_line() {
+fn moves_between_files_and_within_one_are_summarised() {
     let d = repo();
     std::fs::write(
         d.path().join("a.rs"),
@@ -85,20 +85,17 @@ fn moves_across_files_print_the_source_summary_and_one_destination_line() {
         out,
         "on main · unstaged 2\nM a.rs -4\n  (top level) -1\n  fn b (removed) -3 moved → b.rs\nM b.rs +4\n  (top level) +1\n  moved fn b ← a.rs:5-7 (unchanged)\n== 2 files +4 -4\n"
     );
-}
 
-#[test]
-fn moves_into_an_added_file_mark_the_outline_row() {
-    let d = repo();
+    let added = repo();
     std::fs::write(
-        d.path().join("a.rs"),
+        added.path().join("a.rs"),
         "fn a() {\n    1;\n}\n\nfn b() {\n    2;\n}\n",
     )
     .unwrap();
-    commit(d.path());
-    std::fs::write(d.path().join("a.rs"), "fn a() {\n    1;\n}\n").unwrap();
-    std::fs::write(d.path().join("b.rs"), "fn b() {\n    2;\n}\n").unwrap();
-    let (code, out, _) = acus_in(d.path(), &["diff", "-p"], "");
+    commit(added.path());
+    std::fs::write(added.path().join("a.rs"), "fn a() {\n    1;\n}\n").unwrap();
+    std::fs::write(added.path().join("b.rs"), "fn b() {\n    2;\n}\n").unwrap();
+    let (code, out, _) = acus_in(added.path(), &["diff", "-p"], "");
     assert_eq!(code, 0);
     assert!(out.contains("  fn b (removed) -3 moved → b.rs\n"), "{out}");
     assert!(
@@ -107,23 +104,20 @@ fn moves_into_an_added_file_mark_the_outline_row() {
     );
     assert!(out.contains("… body: acus show b.rs\n"), "{out}");
     assert!(!out.contains("\t+    2;"), "{out}");
-}
 
-#[test]
-fn a_move_within_one_file_shows_both_sides() {
-    let d = repo();
+    let within = repo();
     std::fs::write(
-        d.path().join("a.rs"),
+        within.path().join("a.rs"),
         "fn a() {\n    1;\n}\n\nfn b() {\n    2;\n}\n\nfn c() {\n    3;\n}\n",
     )
     .unwrap();
-    commit(d.path());
+    commit(within.path());
     std::fs::write(
-        d.path().join("a.rs"),
+        within.path().join("a.rs"),
         "fn b() {\n    2;\n}\n\nfn c() {\n    3;\n}\n\nfn a() {\n    1;\n}\n",
     )
     .unwrap();
-    let (code, out, _) = acus_in(d.path(), &["diff", "-p"], "");
+    let (code, out, _) = acus_in(within.path(), &["diff", "-p"], "");
     assert_eq!(code, 0);
     assert!(out.contains("  fn a (removed) -3 moved → a.rs\n"), "{out}");
     assert!(
@@ -132,87 +126,78 @@ fn a_move_within_one_file_shows_both_sides() {
     );
     assert!(!out.contains("\t-    1;"), "{out}");
     assert!(!out.contains("\t+    1;"), "{out}");
-}
 
-#[test]
-fn an_edit_shifted_down_by_inserted_lines_is_not_a_move() {
-    let d = repo();
+    let edited = repo();
     std::fs::write(
-        d.path().join("a.rs"),
-        "fn a() {\n    1;\n}\n\nfn f() -> u8 { 1 }\n",
-    )
-    .unwrap();
-    commit(d.path());
-    std::fs::write(
-        d.path().join("a.rs"),
-        "fn x1() {}\nfn x2() {}\nfn x3() {}\nfn x4() {}\nfn x5() {}\n\nfn a() {\n    1;\n}\n\nfn f() -> u8 { 2 }\n",
-    )
-    .unwrap();
-    let (code, out, _) = acus_in(d.path(), &["diff", "-p"], "");
-    assert_eq!(code, 0);
-    assert!(!out.contains("moved ←"), "{out}");
-    assert!(!out.contains("moved →"), "{out}");
-    assert!(out.contains("  fn f 11-11 +1 -1\n"), "{out}");
-}
-
-#[test]
-fn identical_functions_in_different_files_are_not_paired() {
-    let d = repo();
-    std::fs::write(d.path().join("a.rs"), "fn f() {\n  1;\n}\n").unwrap();
-    std::fs::write(d.path().join("b.rs"), "fn f() {\n  1;\n}\n").unwrap();
-    commit(d.path());
-    std::fs::write(d.path().join("a.rs"), "").unwrap();
-    std::fs::write(d.path().join("b.rs"), "fn f() {\n    1;\n}\n").unwrap();
-    let (code, out, _) = acus_in(d.path(), &["diff", "-p"], "");
-    assert_eq!(code, 0);
-    assert!(out.contains("  fn f (removed) -3\n"), "{out}");
-    assert!(!out.contains("moved ←"), "{out}");
-    assert!(!out.contains("moved →"), "{out}");
-}
-
-#[test]
-fn a_copy_that_stays_in_its_file_is_not_a_move() {
-    let d = repo();
-    std::fs::write(
-        d.path().join("a.py"),
-        "def f():\n    1\n\n\ndef f():\n    1\n",
-    )
-    .unwrap();
-    std::fs::write(d.path().join("b.py"), "def keep():\n    2\n").unwrap();
-    commit(d.path());
-    std::fs::write(d.path().join("a.py"), "def f():\n    1\n").unwrap();
-    std::fs::write(
-        d.path().join("b.py"),
-        "def keep():\n    2\n\n\ndef f():\n    1\n",
-    )
-    .unwrap();
-    let (code, out, _) = acus_in(d.path(), &["diff", "-p"], "");
-    assert_eq!(code, 0);
-    assert!(!out.contains("moved ←"), "{out}");
-    assert!(!out.contains("moved →"), "{out}");
-}
-
-#[test]
-fn a_moved_and_edited_function_prints_only_the_body_diff() {
-    let d = repo();
-    std::fs::write(
-        d.path().join("a.rs"),
+        edited.path().join("a.rs"),
         "fn a() {\n    1;\n}\n\nfn b() {\n    2;\n}\n",
     )
     .unwrap();
-    std::fs::write(d.path().join("b.rs"), "fn keep() {}\n").unwrap();
-    commit(d.path());
-    std::fs::write(d.path().join("a.rs"), "fn a() {\n    1;\n}\n").unwrap();
+    std::fs::write(edited.path().join("b.rs"), "fn keep() {}\n").unwrap();
+    commit(edited.path());
+    std::fs::write(edited.path().join("a.rs"), "fn a() {\n    1;\n}\n").unwrap();
     std::fs::write(
-        d.path().join("b.rs"),
+        edited.path().join("b.rs"),
         "fn keep() {}\n\nfn b() {\n    3;\n}\n",
     )
     .unwrap();
-    let (code, out, _) = acus_in(d.path(), &["diff", "-p"], "");
+    let (code, out, _) = acus_in(edited.path(), &["diff", "-p"], "");
     assert_eq!(code, 0);
     assert!(out.contains("  moved fn b ← a.rs:5-7 (edited)\n"), "{out}");
     assert!(out.contains("\t-    2;\n4\t+    3;\n"), "{out}");
     assert!(!out.contains("\t-fn b() {"), "{out}");
+}
+
+#[test]
+fn edits_and_copies_are_not_moves() {
+    let shifted = repo();
+    std::fs::write(
+        shifted.path().join("a.rs"),
+        "fn a() {\n    1;\n}\n\nfn f() -> u8 { 1 }\n",
+    )
+    .unwrap();
+    commit(shifted.path());
+    std::fs::write(
+        shifted.path().join("a.rs"),
+        "fn x1() {}\nfn x2() {}\nfn x3() {}\nfn x4() {}\nfn x5() {}\n\nfn a() {\n    1;\n}\n\nfn f() -> u8 { 2 }\n",
+    )
+    .unwrap();
+    let (code, out, _) = acus_in(shifted.path(), &["diff", "-p"], "");
+    assert_eq!(code, 0);
+    assert!(!out.contains("moved ←"), "{out}");
+    assert!(!out.contains("moved →"), "{out}");
+    assert!(out.contains("  fn f 11-11 +1 -1\n"), "{out}");
+
+    let identical = repo();
+    std::fs::write(identical.path().join("a.rs"), "fn f() {\n  1;\n}\n").unwrap();
+    std::fs::write(identical.path().join("b.rs"), "fn f() {\n  1;\n}\n").unwrap();
+    commit(identical.path());
+    std::fs::write(identical.path().join("a.rs"), "").unwrap();
+    std::fs::write(identical.path().join("b.rs"), "fn f() {\n    1;\n}\n").unwrap();
+    let (code, out, _) = acus_in(identical.path(), &["diff", "-p"], "");
+    assert_eq!(code, 0);
+    assert!(out.contains("  fn f (removed) -3\n"), "{out}");
+    assert!(!out.contains("moved ←"), "{out}");
+    assert!(!out.contains("moved →"), "{out}");
+
+    let copy = repo();
+    std::fs::write(
+        copy.path().join("a.py"),
+        "def f():\n    1\n\n\ndef f():\n    1\n",
+    )
+    .unwrap();
+    std::fs::write(copy.path().join("b.py"), "def keep():\n    2\n").unwrap();
+    commit(copy.path());
+    std::fs::write(copy.path().join("a.py"), "def f():\n    1\n").unwrap();
+    std::fs::write(
+        copy.path().join("b.py"),
+        "def keep():\n    2\n\n\ndef f():\n    1\n",
+    )
+    .unwrap();
+    let (code, out, _) = acus_in(copy.path(), &["diff", "-p"], "");
+    assert_eq!(code, 0);
+    assert!(!out.contains("moved ←"), "{out}");
+    assert!(!out.contains("moved →"), "{out}");
 }
 
 #[test]

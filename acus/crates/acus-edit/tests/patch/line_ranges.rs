@@ -22,7 +22,7 @@ fn expect_ignores_trailing_whitespace_only() {
 }
 
 #[test]
-fn move_lines_up_and_down_within_a_file() {
+fn move_lines_within_a_file() {
     let d = dir(&[("a.txt", "a\nb\nc\nd\ne\n")]);
     run(
         d.path(),
@@ -37,10 +37,7 @@ fn move_lines_up_and_down_within_a_file() {
     )
     .unwrap();
     assert_eq!(read(d.path(), "a.txt"), "c\na\nb\nd\ne\n");
-}
 
-#[test]
-fn move_lines_to_the_start_of_the_file_with_after_zero() {
     let d = dir(&[("a.txt", "a\nb\nc\n")]);
     run(
         d.path(),
@@ -51,7 +48,7 @@ fn move_lines_to_the_start_of_the_file_with_after_zero() {
 }
 
 #[test]
-fn move_lines_across_files() {
+fn move_lines_across_files_and_to_a_symbol() {
     let d = dir(&[("a.txt", "a\nb\nc\n"), ("b.txt", "x\ny\n")]);
     let c = run(
         d.path(),
@@ -62,10 +59,7 @@ fn move_lines_across_files() {
     assert_eq!(read(d.path(), "b.txt"), "x\nb\ny\n");
     let s: Vec<_> = c.iter().map(ToString::to_string).collect();
     assert_eq!(s, ["M a.txt +0 -1", "M b.txt +1 -0"]);
-}
 
-#[test]
-fn move_lines_after_a_symbol_goes_below_its_last_line() {
     let d = dir(&[
         ("a.rs", "fn one() {\n    1\n}\n\nfn two() {\n    2\n}\n"),
         ("notes.txt", "const X: u8 = 1;\n"),
@@ -83,17 +77,14 @@ fn move_lines_after_a_symbol_goes_below_its_last_line() {
 }
 
 #[test]
-fn expect_mismatch_refuses_and_writes_nothing() {
+fn bad_ranges_are_refused_and_write_nothing() {
     let d = dir(&[("a.txt", "a\nb\nc\n")]);
     let e = run(d.path(), "*** Delete Lines: a.txt:2-2\n*** Expect: x\n")
         .unwrap_err()
         .shown();
     assert!(e.contains("but line 2 is `b`"), "{e}");
     assert_eq!(read(d.path(), "a.txt"), "a\nb\nc\n");
-}
 
-#[test]
-fn overlapping_ranges_are_refused() {
     let d = dir(&[("a.txt", "a\nb\nc\nd\n")]);
     let e = run(
         d.path(),
@@ -103,20 +94,14 @@ fn overlapping_ranges_are_refused() {
     .shown();
     assert!(e.contains("1-2 and 2-3 overlap"), "{e}");
     assert_eq!(read(d.path(), "a.txt"), "a\nb\nc\nd\n");
-}
 
-#[test]
-fn ranges_past_the_end_of_the_file_are_refused() {
     let d = dir(&[("a.txt", "a\nb\nc\n")]);
     let e = run(d.path(), "*** Delete Lines: a.txt:2-9\n*** Expect: b\n")
         .unwrap_err()
         .shown();
     assert!(e.contains("a.txt:2-9: the file has 3 lines"), "{e}");
     assert_eq!(read(d.path(), "a.txt"), "a\nb\nc\n");
-}
 
-#[test]
-fn a_move_target_inside_the_moved_lines_is_refused() {
     let d = dir(&[("a.txt", "a\nb\nc\nd\n")]);
     let e = run(
         d.path(),

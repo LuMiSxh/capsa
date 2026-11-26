@@ -391,14 +391,6 @@ mod rule_names {
         for &r in Rule::ALL {
             assert_eq!(Rule::parse(r.as_str()), Some(r));
         }
-    }
-
-    /// Names the two folds here: a rename would split `guard.jsonl` counts.
-    #[test]
-    fn new_rule_names_parse_back() {
-        for &r in Rule::ALL {
-            assert_eq!(Rule::parse(r.as_str()), Some(r));
-        }
         assert_eq!(Rule::AcusPipe.as_str(), "acus-pipe");
         assert_eq!(Rule::TaskLog.as_str(), "task-log");
     }

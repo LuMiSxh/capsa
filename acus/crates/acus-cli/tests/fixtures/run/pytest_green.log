@@ -1,0 +1,8 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.0, pytest-8.0.0, pluggy-1.5.0
+rootdir: /x
+collected 3 items
+
+tests/test_a.py ...                                                       [100%]
+
+============================== 3 passed in 0.12s ===============================

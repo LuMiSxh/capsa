@@ -21,10 +21,7 @@ fn commands_can_be_disabled_at_runtime() {
         err.starts_with("error: acus find is disabled by configuration\nhint: "),
         "{err}"
     );
-}
 
-#[test]
-fn invalid_config_is_reported() {
     let d = tempfile::tempdir().unwrap();
     let cfg = d.path().join("c.toml");
     std::fs::write(&cfg, "[commands]\ndisabld = []\n").unwrap();

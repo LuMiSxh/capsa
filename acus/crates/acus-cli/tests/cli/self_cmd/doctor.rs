@@ -202,7 +202,7 @@ fn doctor_fix_leaves_guard_logs_left_beside_the_config() {
 }
 
 #[test]
-fn doctor_fix_leaves_a_missing_skill_to_its_hint() {
+fn doctor_fix_handles_the_skill() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let claude = dir.path().join("claude");
@@ -222,13 +222,10 @@ fn doctor_fix_leaves_a_missing_skill_to_its_hint() {
     assert_eq!(skill["name"], "claude skill");
     assert_eq!(skill["status"], "warn", "{skill}");
     assert_eq!(skill["hint"], "run acus self setup", "{skill}");
-}
 
-#[test]
-fn doctor_fix_updates_an_outdated_skill() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let claude = dir.path().join("claude");
+    let outdated = tempfile::tempdir().unwrap();
+    let home = outdated.path().join("home");
+    let claude = outdated.path().join("claude");
     std::fs::create_dir(&home).unwrap();
     let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
     assert_eq!(acus_env(&["self", "setup"], &env).0, 0);
@@ -284,10 +281,10 @@ fn doctor_fix_keeps_a_pretooluse_matcher_the_user_chose() {
 }
 
 #[test]
-fn doctor_warns_when_the_hook_matcher_misses_a_tool() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let claude = dir.path().join("claude");
+fn doctor_warns_about_hook_registrations() {
+    let misses = tempfile::tempdir().unwrap();
+    let home = misses.path().join("home");
+    let claude = misses.path().join("claude");
     std::fs::create_dir_all(&claude).unwrap();
     std::fs::create_dir(&home).unwrap();
     let hooks = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"acus hook 2>/dev/null || true"}]}]}}"#;
@@ -308,22 +305,19 @@ fn doctor_warns_when_the_hook_matcher_misses_a_tool() {
         guard["detail"].as_str().unwrap().contains("Grep"),
         "{guard}"
     );
-}
 
-#[test]
-fn doctor_flags_the_old_hook_entries() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let claude = dir.path().join("claude");
+    let old = tempfile::tempdir().unwrap();
+    let home = old.path().join("home");
+    let claude = old.path().join("claude");
     std::fs::create_dir_all(&claude).unwrap();
     std::fs::create_dir(&home).unwrap();
-    let old = r#"{"hooks":{
+    let old_entries = r#"{"hooks":{
         "SessionStart":[{"matcher":"startup|clear|compact",
             "hooks":[{"type":"command","command":"acus self skill 2>/dev/null || true"}]}],
         "PreToolUse":[{"matcher":"Bash|Read|Grep|Glob|PowerShell",
             "hooks":[{"type":"command","command":"acus guard 2>/dev/null || true"}]}]
     }}"#;
-    std::fs::write(claude.join("settings.json"), old).unwrap();
+    std::fs::write(claude.join("settings.json"), old_entries).unwrap();
     let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
 
     let (code, out, err) = acus_env(&["self", "doctor", "--json"], &env);
@@ -346,13 +340,10 @@ fn doctor_flags_the_old_hook_entries() {
             "{check}"
         );
     }
-}
 
-#[test]
-fn doctor_warns_when_subagent_start_is_not_registered() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let claude = dir.path().join("claude");
+    let subagent = tempfile::tempdir().unwrap();
+    let home = subagent.path().join("home");
+    let claude = subagent.path().join("claude");
     std::fs::create_dir_all(&claude).unwrap();
     std::fs::create_dir(&home).unwrap();
     std::fs::write(claude.join("settings.json"), "{}").unwrap();
@@ -412,7 +403,7 @@ fn doctor_fails_when_the_guard_log_is_read_only() {
 }
 
 #[test]
-fn doctor_warns_about_a_guard_log_left_beside_the_config() {
+fn doctor_warns_about_guard_logs_left_beside_the_config() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let claude = dir.path().join("claude");
@@ -435,22 +426,19 @@ fn doctor_warns_about_a_guard_log_left_beside_the_config() {
         .unwrap();
     assert_eq!(check["status"], "warn", "{check}");
     assert_eq!(check["hint"], "run acus self setup", "{check}");
-}
 
-#[test]
-fn doctor_warns_about_guard_log_files_left_beside_a_state_log() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let claude = dir.path().join("claude");
+    let rotated = tempfile::tempdir().unwrap();
+    let home = rotated.path().join("home");
+    let claude = rotated.path().join("claude");
     std::fs::create_dir(&home).unwrap();
-    std::fs::write(dir.path().join("guard.jsonl"), "").unwrap();
-    std::fs::write(dir.path().join("guard.jsonl.old"), "").unwrap();
-    let state = dir.path().join("state").join("acus");
+    std::fs::write(rotated.path().join("guard.jsonl"), "").unwrap();
+    std::fs::write(rotated.path().join("guard.jsonl.old"), "").unwrap();
+    let state = rotated.path().join("state").join("acus");
     std::fs::create_dir_all(&state).unwrap();
     std::fs::write(state.join("guard.jsonl"), "").unwrap();
     let mut env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap()).to_vec();
-    let config = dir.path().join("config.toml");
-    let state_root = dir.path().join("state");
+    let config = rotated.path().join("config.toml");
+    let state_root = rotated.path().join("state");
     env.push(("ACUS_CONFIG", config.to_str().unwrap()));
     env.push(("XDG_STATE_HOME", state_root.to_str().unwrap()));
 

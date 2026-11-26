@@ -94,6 +94,14 @@ fn saving_unchanged_content_creates_no_version() {
     assert_eq!(code, 0);
     assert!(out.starts_with("unchanged: greet@1"), "{out}");
     assert!(!sb.repo().join(".acus/scripts/greet/v2.js").exists());
+
+    let orphan = Sandbox::new();
+    let dir = orphan.repo().join(".acus/scripts/greet");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("v1.js"), "orphan").unwrap();
+    let (code, out, err) = orphan.save("greet", GREET);
+    assert_eq!((code, out.as_str()), (0, "saved greet@2 (repo)\n"), "{err}");
+    assert_eq!(orphan.acus(&["greet", "who=o"], "").1, "hello o\n");
 }
 
 #[test]
@@ -149,17 +157,6 @@ fn a_script_imports_a_pinned_repo_script_and_refuses_relative_imports() {
     let (code, _, err) = sb.save("relative", &relative);
     assert_eq!(code, 2);
     assert!(err.contains("is refused"), "{err}");
-}
-
-#[test]
-fn save_skips_a_version_file_left_without_a_meta_entry() {
-    let sb = Sandbox::new();
-    let dir = sb.repo().join(".acus/scripts/greet");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("v1.js"), "orphan").unwrap();
-    let (code, out, err) = sb.save("greet", GREET);
-    assert_eq!((code, out.as_str()), (0, "saved greet@2 (repo)\n"), "{err}");
-    assert_eq!(sb.acus(&["greet", "who=o"], "").1, "hello o\n");
 }
 
 #[test]
@@ -227,7 +224,7 @@ fn last_run(sb: &Sandbox) -> serde_json::Value {
 }
 
 #[test]
-fn an_inline_program_is_logged_without_a_name_and_with_its_host_calls() {
+fn an_inline_program_is_logged_without_a_name() {
     let sb = Sandbox::new();
     let code = "await find('needle'); await find('other'); return 1";
     assert_eq!(
@@ -244,11 +241,7 @@ fn an_inline_program_is_logged_without_a_name_and_with_its_host_calls() {
     );
     assert!(run.get("name").is_none(), "{run}");
     assert!(run["cwd"].is_string() && run["ms"].is_u64(), "{run}");
-}
 
-#[test]
-fn a_failing_inline_program_from_stdin_is_logged_as_not_ok() {
-    let sb = Sandbox::new();
     let (code, _, err) = sb.acus(&[], "throw new Error(\"boom\");");
     assert_eq!(code, 2, "{err}");
     let run = last_run(&sb);

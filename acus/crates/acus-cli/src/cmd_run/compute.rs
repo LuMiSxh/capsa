@@ -2,7 +2,7 @@
 //! Gathers everything `acus run` prints, without writing to stdout.
 
 use super::narrow::narrow;
-use super::noise::{clean, quiet, save_log};
+use super::noise::{Stats, Summary, clean, keep, quiet, save_log};
 use super::refs::{refs, snippet};
 use super::repeat::{self, Streak};
 use super::{Args, Source, inputs, source};
@@ -29,27 +29,28 @@ pub(crate) struct RunReport {
     pub(super) input_log: Option<(PathBuf, usize)>,
     /// Seconds since the `--log` input was last written, when it may still grow.
     pub(super) growing: Option<u64>,
-    /// Lines kept after the noise filter, `--grep` and `--tail`.
+    /// Lines kept after the noise filter, `--grep`, `--tail` and `--max-output`.
     pub(super) lines: Vec<String>,
-    /// Noise lines dropped, and tests that passed.
+    /// Noise lines dropped, and the counts the summaries reported.
     pub(super) dropped: usize,
-    pub(super) passed: usize,
+    pub(super) summary: Summary,
+    /// `--explain`: the detected tool and what each kind of noise dropped.
+    pub(super) explain: bool,
+    pub(super) profile: Option<String>,
+    pub(super) stats: Stats,
     /// Lines `--grep` dropped, and whether any line matched it.
     pub(super) grep_dropped: usize,
     pub(super) nothing_matched: bool,
     /// Lines `--tail` dropped.
     pub(super) tail_dropped: usize,
-    /// Lines left out between the head and tail halves of `--max-output`.
-    pub(super) omitted: usize,
     /// The full output saved for a rerun: its path and line count.
     pub(super) saved_log: Option<(PathBuf, usize)>,
     /// The code at each reference, grouped by snippet.
     pub(super) snippets: Vec<Snippet>,
     /// References past `--max-refs`.
     pub(super) more_locations: usize,
-    /// `--head` budget and the line cap that decides the head and tail halves.
+    /// `--head` budget.
     pub(super) head: Option<usize>,
-    pub(super) max_output: usize,
     /// `--max-refs`, named in the footer for the locations it left out.
     pub(super) max_refs: usize,
     /// `--cut`, which clips each printed line.
@@ -96,11 +97,18 @@ pub(crate) fn compute(a: &Args, out: &Out, cfg: &Config) -> Result<RunReport> {
     let text = if a.raw { raw } else { clean(&raw) };
     let cwd = std::env::current_dir()?;
     let all: Vec<&str> = text.lines().collect();
-    let (lines, passed, dropped) = if a.raw {
-        (all.iter().map(|l| l.to_string()).collect(), 0, 0)
+    let (lines, summary, stats, profile) = if a.raw {
+        (
+            all.iter().map(|l| l.to_string()).collect(),
+            Summary::default(),
+            Stats::default(),
+            None,
+        )
     } else {
-        quiet(&all, &extra)
+        let q = quiet(&all, &extra, a.explain);
+        (q.lines, q.summary, q.stats, q.profile)
     };
+    let dropped = if a.raw { 0 } else { all.len() - lines.len() };
     let repeat = command
         .as_deref()
         .and_then(|c| repeat::note(&cwd, c, code, &lines));
@@ -111,8 +119,11 @@ pub(crate) fn compute(a: &Args, out: &Out, cfg: &Config) -> Result<RunReport> {
         repeat,
         input_log: a.log.as_ref().map(|p| (p.clone(), all.len())),
         growing: a.log.as_deref().and_then(growing_age),
+        summary,
+        stats,
+        profile: profile.map(str::to_owned),
+        explain: a.explain,
         head: a.head.map(|n| n as usize),
-        max_output: a.max_output,
         max_refs: a.max_refs,
         cut: a.cut,
         ..RunReport::default()
@@ -139,22 +150,26 @@ pub(crate) fn compute(a: &Args, out: &Out, cfg: &Config) -> Result<RunReport> {
     let nothing_matched = grep
         .as_ref()
         .is_some_and(|re| !lines.is_empty() && !lines.iter().any(|l| re.is_match(l)));
-    let narrowed = narrow(
+    let mut narrowed = narrow(
         lines,
         (a.tail, grep.as_ref(), context),
         (a.max_output, a.max_lines),
     );
+    if a.tail.is_none() && narrowed.lines.len() > a.max_output {
+        let (kept, budget_dropped) = keep(
+            std::mem::take(&mut narrowed.lines),
+            a.max_output,
+            a.max_lines,
+        );
+        narrowed.lines = kept;
+        narrowed.budget_dropped = budget_dropped;
+    }
     // Only what is shown decides which code is shown.
-    let found = if narrowing {
-        refs(&narrowed.lines.join("\n"), &cwd)
-    } else {
-        refs(&text, &cwd)
-    };
+    let found = refs(&narrowed.lines.join("\n"), &cwd);
     let (snippets, more_locations) = group_snippets(found, a);
-    let omitted = omitted_count(a, narrowed.lines.len());
     // Whatever is not printed stays readable without running the command again.
     // Dropped noise matters only when looking into a failure.
-    let keep_log = omitted > 0
+    let keep_log = narrowed.budget_dropped > 0
         || narrowed.grep_dropped + narrowed.tail_dropped > 0
         || timed_out
         || (dropped > 0 && code != 0);
@@ -165,13 +180,11 @@ pub(crate) fn compute(a: &Args, out: &Out, cfg: &Config) -> Result<RunReport> {
         .map(|p| (p, text.lines().count()));
     report.lines = narrowed.lines;
     report.dropped = dropped;
-    report.passed = passed;
     report.grep_dropped = narrowed.grep_dropped;
     report.tail_dropped = narrowed.tail_dropped;
     report.nothing_matched = nothing_matched;
     report.snippets = snippets;
     report.more_locations = more_locations;
-    report.omitted = omitted;
     report.saved_log = saved_log;
     Ok(report)
 }
@@ -216,16 +229,6 @@ fn group_snippets(found: Vec<(PathBuf, usize)>, a: &Args) -> (Vec<Snippet>, usiz
         }
     }
     (shown, more)
-}
-
-/// Lines between the head and tail halves that `--max-output` leaves out.
-fn omitted_count(a: &Args, total: usize) -> usize {
-    if a.tail.is_some() {
-        0
-    } else {
-        let half = a.max_output.max(2) / 2;
-        total.saturating_sub(half * 2)
-    }
 }
 
 /// Seconds since `path` was last written, when it may still be growing.

@@ -13,21 +13,6 @@ fn patch_help_documents_replace_all() {
 }
 
 #[test]
-fn patch_check_counts_only_the_changed_lines() {
-    let d = tempfile::tempdir().unwrap();
-    let original = "fn f() {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n}\n";
-    std::fs::write(d.path().join("a.rs"), original).unwrap();
-    let p = "*** Begin Patch\n*** Update File: a.rs\n<<<<<<< SEARCH\n    let x = 1;\n    let y = 2;\n    let z = 3;\n=======\n    let x = 1;\n    let y = 2;\n    let z = 3;\n    let w = 4;\n    let v = 5;\n>>>>>>> REPLACE\n*** End Patch\n";
-    let (code, out, _) = acus_in(d.path(), &["patch", "--check"], p);
-    assert_eq!(code, 0);
-    assert!(out.starts_with("would update a.rs +2 -0\n"), "{out}");
-    assert_eq!(
-        std::fs::read_to_string(d.path().join("a.rs")).unwrap(),
-        original
-    );
-}
-
-#[test]
 fn patch_add_file_prints_only_the_summary() {
     let d = tempfile::tempdir().unwrap();
     let body: String = (1..=30).map(|i| format!("+fn g{i}() {{}}\n")).collect();
@@ -147,106 +132,77 @@ fn patch_refuses_to_break_syntax_unless_allowed() {
 }
 
 #[test]
-fn patch_accepts_a_c_attribute_declaration_added_beside_one() {
-    let d = tempfile::tempdir().unwrap();
-    let file = d.path().join("main.c");
-    let before = "#ifdef __APPLE__\n__asm__(\".zerofill WINE_RESERVE,WINE_RESERVE\");\nstatic char __wine_reserve[0x1fffff000] __attribute__((section(\"WINE_RESERVE, WINE_RESERVE\")));\n#endif\n\nstatic const int preload_info[] = {\n    0\n};\n";
-    std::fs::write(&file, before).unwrap();
-    let p = "*** Begin Patch\n*** Update File: main.c\n<<<<<<< SEARCH\nstatic const int preload_info[] = {\n=======\n__asm__(\".zerofill WINE_TOP_DOWN,WINE_TOP_DOWN\");\nstatic char __wine_top_down[0x001ff0000] __attribute__((section(\"WINE_TOP_DOWN, WINE_TOP_DOWN\")));\n\nstatic const int preload_info[] = {\n>>>>>>> REPLACE\n*** End Patch\n";
-    let (code, _, err) = acus_in(d.path(), &["patch", "-q"], p);
-    assert_eq!(code, 0, "{err}");
-    assert!(
-        std::fs::read_to_string(&file)
-            .unwrap()
-            .contains("__wine_top_down[0x001ff0000] __attribute__"),
-    );
+fn patch_accepts_tolerated_syntax_in_c_and_jsonc() {
+    let cases = [
+        (
+            "main.c",
+            "#ifdef __APPLE__\n__asm__(\".zerofill WINE_RESERVE,WINE_RESERVE\");\nstatic char __wine_reserve[0x1fffff000] __attribute__((section(\"WINE_RESERVE, WINE_RESERVE\")));\n#endif\n\nstatic const int preload_info[] = {\n    0\n};\n",
+            "*** Begin Patch\n*** Update File: main.c\n<<<<<<< SEARCH\nstatic const int preload_info[] = {\n=======\n__asm__(\".zerofill WINE_TOP_DOWN,WINE_TOP_DOWN\");\nstatic char __wine_top_down[0x001ff0000] __attribute__((section(\"WINE_TOP_DOWN, WINE_TOP_DOWN\")));\n\nstatic const int preload_info[] = {\n>>>>>>> REPLACE\n*** End Patch\n",
+            "__wine_top_down[0x001ff0000] __attribute__",
+        ),
+        (
+            "settings.json",
+            "// Zed settings\n{\n  \"theme\": \"One Dark\", // inline\n  \"tab_size\": 4,\n}\n",
+            "*** Begin Patch\n*** Update File: settings.json\n<<<<<<< SEARCH\n  \"tab_size\": 4,\n=======\n  \"tab_size\": 4,\n  \"format_on_save\": \"on\",\n>>>>>>> REPLACE\n*** End Patch\n",
+            "\"format_on_save\": \"on\",\n}",
+        ),
+    ];
+    for (name, before, patch, expected) in cases {
+        let d = tempfile::tempdir().unwrap();
+        let file = d.path().join(name);
+        std::fs::write(&file, before).unwrap();
+        let (code, _, err) = acus_in(d.path(), &["patch", "-q"], patch);
+        assert_eq!(code, 0, "{name}: {err}");
+        assert!(
+            std::fs::read_to_string(&file).unwrap().contains(expected),
+            "{name}: {err}"
+        );
+    }
 }
 
 #[test]
-fn patch_accepts_an_entry_added_to_a_zed_style_jsonc_file() {
-    let d = tempfile::tempdir().unwrap();
-    let file = d.path().join("settings.json");
-    let before =
-        "// Zed settings\n{\n  \"theme\": \"One Dark\", // inline\n  \"tab_size\": 4,\n}\n";
-    std::fs::write(&file, before).unwrap();
-    let p = "*** Begin Patch\n*** Update File: settings.json\n<<<<<<< SEARCH\n  \"tab_size\": 4,\n=======\n  \"tab_size\": 4,\n  \"format_on_save\": \"on\",\n>>>>>>> REPLACE\n*** End Patch\n";
-    let (code, _, err) = acus_in(d.path(), &["patch", "-q"], p);
-    assert_eq!(code, 0, "{err}");
-    assert!(
-        std::fs::read_to_string(&file)
-            .unwrap()
-            .contains("\"format_on_save\": \"on\",\n}")
-    );
-}
-
-#[test]
-fn patch_refuses_a_broken_brace_in_a_jsonc_file() {
-    let d = tempfile::tempdir().unwrap();
-    let file = d.path().join("settings.json");
-    let before = "// Zed settings\n{\n  \"tab_size\": 4,\n}\n";
-    std::fs::write(&file, before).unwrap();
-    let p = "*** Begin Patch\n*** Update File: settings.json\n<<<<<<< SEARCH\n  \"tab_size\": 4,\n}\n=======\n  \"tab_size\": 4,\n>>>>>>> REPLACE\n*** End Patch\n";
-    let (code, _, err) = acus_in(d.path(), &["patch"], p);
-    assert_eq!(code, 2);
-    assert!(
-        err.starts_with("error: patch would break the syntax of settings.json near line"),
-        "{err}"
-    );
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
-}
-
-#[test]
-fn patch_still_refuses_a_trailing_comma_added_to_strict_json() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("a.json"), "{\n  \"a\": 1\n}\n").unwrap();
-    let p = "*** Begin Patch\n*** Update File: a.json\n<<<<<<< SEARCH\n  \"a\": 1\n=======\n  \"a\": 1,\n>>>>>>> REPLACE\n*** End Patch\n";
-    let (code, _, err) = acus_in(d.path(), &["patch"], p);
-    assert_eq!(code, 2, "{err}");
-    assert!(
-        err.starts_with("error: patch would break the syntax of a.json near line 2"),
-        "{err}"
-    );
-}
-
-#[test]
-fn patch_still_refuses_swift_import_fused_to_an_identifier() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("a.swift"), "import Foo\n\nfunc f() {}\n").unwrap();
-    let p = "*** Begin Patch\n*** Update File: a.swift\n<<<<<<< SEARCH\nimport Foo\n=======\nimport Aimport B\n>>>>>>> REPLACE\n*** End Patch\n";
-    let (code, _, err) = acus_in(d.path(), &["patch"], p);
-    assert_eq!(code, 2);
-    assert!(
-        err.starts_with("error: patch would break the syntax of a.swift near line 1"),
-        "{err}"
-    );
-}
-
-#[test]
-fn patch_still_refuses_an_unclosed_rust_block() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("a.rs"), "fn a() {\n    x();\n}\n").unwrap();
-    let p = "*** Begin Patch\n*** Update File: a.rs\n<<<<<<< SEARCH\n    x();\n}\n=======\n    x();\n>>>>>>> REPLACE\n*** End Patch\n";
-    let (code, _, err) = acus_in(d.path(), &["patch"], p);
-    assert_eq!(code, 2);
-    assert!(
-        err.starts_with("error: patch would break the syntax of a.rs"),
-        "{err}"
-    );
-}
-
-#[test]
-fn patch_notes_a_search_matched_with_crlf_line_endings() {
-    let d = tempfile::tempdir().unwrap();
-    let file = d.path().join("w.txt");
-    std::fs::write(&file, "a\r\nb\r\nc\r\n").unwrap();
-    let p = "*** Begin Patch\n*** Update File: w.txt\n<<<<<<< SEARCH\na\nb\n=======\nA\nB\n>>>>>>> REPLACE\n*** End Patch\n";
-    let (code, out, _) = acus_in(d.path(), &["patch", "-q"], p);
-    assert_eq!(code, 0);
-    assert_eq!(
-        out,
-        "M w.txt +2 -2\nnote: matched with CRLF line endings in w.txt block 1\n"
-    );
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "A\r\nB\r\nc\r\n");
+fn patch_refuses_to_break_the_syntax_of_each_language() {
+    let cases = [
+        (
+            "settings.json",
+            "// Zed settings\n{\n  \"tab_size\": 4,\n}\n",
+            "*** Begin Patch\n*** Update File: settings.json\n<<<<<<< SEARCH\n  \"tab_size\": 4,\n}\n=======\n  \"tab_size\": 4,\n>>>>>>> REPLACE\n*** End Patch\n",
+            "error: patch would break the syntax of settings.json near line",
+            true,
+        ),
+        (
+            "a.json",
+            "{\n  \"a\": 1\n}\n",
+            "*** Begin Patch\n*** Update File: a.json\n<<<<<<< SEARCH\n  \"a\": 1\n=======\n  \"a\": 1,\n>>>>>>> REPLACE\n*** End Patch\n",
+            "error: patch would break the syntax of a.json near line 2",
+            false,
+        ),
+        (
+            "a.swift",
+            "import Foo\n\nfunc f() {}\n",
+            "*** Begin Patch\n*** Update File: a.swift\n<<<<<<< SEARCH\nimport Foo\n=======\nimport Aimport B\n>>>>>>> REPLACE\n*** End Patch\n",
+            "error: patch would break the syntax of a.swift near line 1",
+            false,
+        ),
+        (
+            "a.rs",
+            "fn a() {\n    x();\n}\n",
+            "*** Begin Patch\n*** Update File: a.rs\n<<<<<<< SEARCH\n    x();\n}\n=======\n    x();\n>>>>>>> REPLACE\n*** End Patch\n",
+            "error: patch would break the syntax of a.rs",
+            false,
+        ),
+    ];
+    for (name, before, patch, expected, unchanged) in cases {
+        let d = tempfile::tempdir().unwrap();
+        let file = d.path().join(name);
+        std::fs::write(&file, before).unwrap();
+        let (code, _, err) = acus_in(d.path(), &["patch"], patch);
+        assert_eq!(code, 2, "{name}: {err}");
+        assert!(err.starts_with(expected), "{name}: {err}");
+        if unchanged {
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), before, "{name}");
+        }
+    }
 }
 
 #[test]
@@ -271,6 +227,18 @@ fn patch_reports_tolerant_matches_and_new_directives() {
     );
     assert_eq!(code, 2);
     assert!(err.contains("block 1: SEARCH not found"), "{err}");
+
+    let crlf = tempfile::tempdir().unwrap();
+    let file = crlf.path().join("w.txt");
+    std::fs::write(&file, "a\r\nb\r\nc\r\n").unwrap();
+    let p = "*** Begin Patch\n*** Update File: w.txt\n<<<<<<< SEARCH\na\nb\n=======\nA\nB\n>>>>>>> REPLACE\n*** End Patch\n";
+    let (code, out, _) = acus_in(crlf.path(), &["patch", "-q"], p);
+    assert_eq!(code, 0);
+    assert_eq!(
+        out,
+        "M w.txt +2 -2\nnote: matched with CRLF line endings in w.txt block 1\n"
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "A\r\nB\r\nc\r\n");
 }
 
 #[test]
@@ -338,13 +306,14 @@ fn patch_config_fuzzy_applies_until_no_fuzzy_is_given() {
 }
 
 #[test]
-fn patch_fuzzy_check_writes_nothing_and_notes_the_match() {
+fn patch_fuzzy_notes_the_match_in_every_output_mode() {
     let d = tempfile::tempdir().unwrap();
     let file = d.path().join("src/a.rs");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     let before = "fn f() {\n\tlet  x = 1;\n}\n";
     std::fs::write(&file, before).unwrap();
     let p = "*** Update File: src/a.rs\n<<<<<<< SEARCH\nfn f() {\n\n    let x = 1;\n}\n=======\nfn f() {\n    let x = 2;\n}\n>>>>>>> REPLACE\n";
+
     let (code, out, err) = acus_in(d.path(), &["patch", "-q", "--fuzzy", "--check"], p);
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     assert_eq!(
@@ -354,35 +323,7 @@ fn patch_fuzzy_check_writes_nothing_and_notes_the_match() {
          (check only, nothing written)\n"
     );
     assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
-}
 
-#[test]
-fn patch_fuzzy_diff_shows_the_diff_and_the_note() {
-    let d = tempfile::tempdir().unwrap();
-    let file = d.path().join("src/a.rs");
-    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    std::fs::write(&file, "fn f() {\n\tlet  x = 1;\n}\n").unwrap();
-    let p = "*** Update File: src/a.rs\n<<<<<<< SEARCH\nfn f() {\n\n    let x = 1;\n}\n=======\nfn f() {\n    let x = 2;\n}\n>>>>>>> REPLACE\n";
-    let (code, out, err) = acus_in(d.path(), &["patch", "--fuzzy", "--diff"], p);
-    assert_eq!((code, err.as_str()), (0, ""), "{out}");
-    assert!(out.starts_with("--- a/src/a.rs\n+++ b/src/a.rs\n"), "{out}");
-    assert!(
-        out.contains("note: matched fuzzily (whitespace): src/a.rs block 1 at 1-3"),
-        "{out}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(&file).unwrap(),
-        "fn f() {\n    let x = 2;\n}\n"
-    );
-}
-
-#[test]
-fn patch_fuzzy_json_carries_the_note() {
-    let d = tempfile::tempdir().unwrap();
-    let file = d.path().join("src/a.rs");
-    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    std::fs::write(&file, "fn f() {\n\tlet  x = 1;\n}\n").unwrap();
-    let p = "*** Update File: src/a.rs\n<<<<<<< SEARCH\nfn f() {\n\n    let x = 1;\n}\n=======\nfn f() {\n    let x = 2;\n}\n>>>>>>> REPLACE\n";
     let (code, out, err) = acus_in(d.path(), &["patch", "--fuzzy", "--json"], p);
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -391,6 +332,19 @@ fn patch_fuzzy_json_carries_the_note() {
         serde_json::json!(["note: matched fuzzily (whitespace): src/a.rs block 1 at 1-3"])
     );
     assert_eq!(v["written"], true);
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fn f() {\n    let x = 2;\n}\n"
+    );
+
+    std::fs::write(&file, before).unwrap();
+    let (code, out, err) = acus_in(d.path(), &["patch", "--fuzzy", "--diff"], p);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    assert!(out.starts_with("--- a/src/a.rs\n+++ b/src/a.rs\n"), "{out}");
+    assert!(
+        out.contains("note: matched fuzzily (whitespace): src/a.rs block 1 at 1-3"),
+        "{out}"
+    );
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
         "fn f() {\n    let x = 2;\n}\n"
@@ -443,6 +397,26 @@ fn patch_check_writes_nothing_and_exits_0() {
         std::fs::read_to_string(d.path().join("a.rs")).unwrap(),
         "fn f() {\n    1\n}\n"
     );
+
+    let counts = tempfile::tempdir().unwrap();
+    let original = "fn f() {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n}\n";
+    std::fs::write(counts.path().join("a.rs"), original).unwrap();
+    let p = "*** Begin Patch\n*** Update File: a.rs\n<<<<<<< SEARCH\n    let x = 1;\n    let y = 2;\n    let z = 3;\n=======\n    let x = 1;\n    let y = 2;\n    let z = 3;\n    let w = 4;\n    let v = 5;\n>>>>>>> REPLACE\n*** End Patch\n";
+    let (code, out, _) = acus_in(counts.path(), &["patch", "--check"], p);
+    assert_eq!(code, 0);
+    assert!(out.starts_with("would update a.rs +2 -0\n"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(counts.path().join("a.rs")).unwrap(),
+        original
+    );
+
+    let added = tempfile::tempdir().unwrap();
+    std::fs::write(added.path().join("old.rs"), "gone\n").unwrap();
+    let p = "*** Begin Patch\n*** Add File: new.rs\n+fn hi() {}\n*** Delete File: old.rs\n*** End Patch\n";
+    let (code, _, _) = acus_in(added.path(), &["patch", "--check"], p);
+    assert_eq!(code, 0);
+    assert!(!added.path().join("new.rs").exists());
+    assert!(added.path().join("old.rs").exists());
 }
 
 #[test]
@@ -465,17 +439,6 @@ fn patch_check_failing_search_exits_2_and_changes_nothing() {
         std::fs::read_to_string(d.path().join("b.rs")).unwrap(),
         "fn g() {}\n"
     );
-}
-
-#[test]
-fn patch_check_add_and_delete_change_nothing_on_disk() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("old.rs"), "gone\n").unwrap();
-    let p = "*** Begin Patch\n*** Add File: new.rs\n+fn hi() {}\n*** Delete File: old.rs\n*** End Patch\n";
-    let (code, _, _) = acus_in(d.path(), &["patch", "--check"], p);
-    assert_eq!(code, 0);
-    assert!(!d.path().join("new.rs").exists());
-    assert!(d.path().join("old.rs").exists());
 }
 
 #[test]
@@ -519,26 +482,23 @@ fn patch_check_refuses_fmt() {
 const EDIT_THEN_MOVE: &str = "*** Begin Patch\n*** Update File: a.txt\n<<<<<<< SEARCH\nb\n=======\nx\n>>>>>>> REPLACE\n*** Update File: a.txt\n*** Move to: m.txt\n<<<<<<< SEARCH\nc\n=======\ny\n>>>>>>> REPLACE\n*** End Patch\n";
 
 #[test]
-fn patch_edit_then_move_prints_one_line_with_net_counts() {
+fn patch_edit_then_move_has_one_change() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("a.txt"), "a\nb\nc\nd\n").unwrap();
     let (code, out, _) = acus_in(d.path(), &["patch"], EDIT_THEN_MOVE);
     assert_eq!(code, 0);
     assert_eq!(out, "R a.txt -> m.txt +2 -2\n");
-}
 
-#[test]
-fn patch_json_edit_then_move_has_one_change() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("a.txt"), "a\nb\nc\nd\n").unwrap();
-    let (code, out, err) = acus_in(d.path(), &["patch", "--json"], EDIT_THEN_MOVE);
+    let json = tempfile::tempdir().unwrap();
+    std::fs::write(json.path().join("a.txt"), "a\nb\nc\nd\n").unwrap();
+    let (code, out, err) = acus_in(json.path(), &["patch", "--json"], EDIT_THEN_MOVE);
     assert_eq!(code, 0, "{err}");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["changes"], serde_json::json!(["R a.txt -> m.txt +2 -2"]));
     assert_eq!(v["written"], true);
-    assert!(!d.path().join("a.txt").exists());
+    assert!(!json.path().join("a.txt").exists());
     assert_eq!(
-        std::fs::read_to_string(d.path().join("m.txt")).unwrap(),
+        std::fs::read_to_string(json.path().join("m.txt")).unwrap(),
         "a\nx\ny\nd\n"
     );
 }

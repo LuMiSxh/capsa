@@ -1,0 +1,11 @@
+bun test v1.1.0
+
+a.test.ts:
+(pass) adds [0.02ms]
+(pass) subtracts [0.01ms]
+(pass) multiplies [0.03ms]
+
+ 3 pass
+ 0 fail
+ 5 expect() calls
+Ran 3 tests across 1 file. [10.00ms]

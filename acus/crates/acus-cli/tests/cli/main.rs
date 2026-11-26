@@ -19,6 +19,7 @@ mod permission_mode;
 mod rev;
 mod run;
 mod run_config_misc;
+mod run_corpus;
 #[cfg(feature = "script")]
 mod script;
 #[cfg(feature = "script")]

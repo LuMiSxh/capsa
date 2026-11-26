@@ -1,0 +1,11 @@
+◇ Test run started.
+↳ Testing Library Version: 6.0 (1234)
+◇ Suite "FooTests" started.
+◇ Test "a" started.
+✔ Test "a" passed after 0.001 seconds.
+◇ Test "b" started.
+✔ Test "b" passed after 0.001 seconds.
+◇ Test "c" started.
+✘ Test "c" recorded an issue at FooTests.swift:2:5: Expectation failed: (1 == 2)
+✘ Test "c" failed after 0.001 seconds with 1 issue.
+✘ Test run with 3 tests failed after 0.002 seconds with 1 issue.

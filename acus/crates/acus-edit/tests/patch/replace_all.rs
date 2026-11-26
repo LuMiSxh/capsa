@@ -32,7 +32,7 @@ fn replace_all_literal_and_regex_across_files() {
 }
 
 #[test]
-fn replace_all_multiline_and_globs() {
+fn replace_all_takes_globs_and_dirs() {
     let d = dir(&[
         ("a.py", "x = 1\nif a:\n    go()\n\nif a:\n    go()\n"),
         ("b.rs", "if a:\n    go()\n"),
@@ -44,10 +44,7 @@ fn replace_all_multiline_and_globs() {
     .unwrap();
     assert_eq!(read(d.path(), "a.py"), "x = 1\ngo_if(a)\n\ngo_if(a)\n");
     assert_eq!(read(d.path(), "b.rs"), "if a:\n    go()\n");
-}
 
-#[test]
-fn replace_all_takes_dirs_whole_and_globs_anywhere() {
     let d = dir(&[
         ("web/a.ts", "old\n"),
         ("src/b.rs", "old\n"),

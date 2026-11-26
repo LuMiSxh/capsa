@@ -162,7 +162,7 @@ fn moved_symbols_take_the_indent_of_their_new_place() {
 }
 
 #[test]
-fn a_type_and_its_impl_are_refused_by_move_and_delete() {
+fn a_type_and_its_impl_is_ambiguous_for_every_symbol_op() {
     let src = "enum Mode {\n    A,\n}\n\nimpl Mode {\n    fn f() {}\n}\n\nfn main() {}\n";
     let d = dir(&[("mode.rs", src), ("b.rs", "fn b() {}\n")]);
     let msg = "mode.rs#Mode is ambiguous: enum Mode (1-3), impl Mode (5-7)";
@@ -175,6 +175,14 @@ fn a_type_and_its_impl_are_refused_by_move_and_delete() {
         "*** Move Symbol: mode.rs#main\n*** After: mode.rs#Mode\n",
     )
     .unwrap_err();
+    assert!(e.to_string().contains(msg), "{e:#}");
+    let e = run(
+        d.path(),
+        "*** Replace Symbol: mode.rs#Mode\n+struct Mode;\n",
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains(msg), "{e:#}");
+    let e = run(d.path(), "*** Insert After: mode.rs#Mode\n+fn g() {}\n").unwrap_err();
     assert!(e.to_string().contains(msg), "{e:#}");
     assert_eq!(read(d.path(), "mode.rs"), src);
     assert_eq!(read(d.path(), "b.rs"), "fn b() {}\n");
@@ -194,30 +202,6 @@ fn methods_and_unique_names_still_move_and_delete() {
     run(d.path(), "*** Move Symbol: mode.rs#main\n*** To: b.rs\n").unwrap();
     assert_eq!(read(d.path(), "b.rs"), "fn b() {}\n\nfn main() {}\n");
     assert!(!read(d.path(), "mode.rs").contains("fn main"));
-}
-
-#[test]
-fn replace_symbol_refuses_a_type_and_its_impl() {
-    let src = "enum Mode {\n    A,\n}\n\nimpl Mode {\n    fn f() {}\n}\n";
-    let d = dir(&[("mode.rs", src)]);
-    let e = run(
-        d.path(),
-        "*** Replace Symbol: mode.rs#Mode\n+struct Mode;\n",
-    )
-    .unwrap_err();
-    let msg = "mode.rs#Mode is ambiguous: enum Mode (1-3), impl Mode (5-7)";
-    assert!(e.to_string().contains(msg), "{e:#}");
-    assert_eq!(read(d.path(), "mode.rs"), src);
-}
-
-#[test]
-fn insert_refuses_a_type_and_its_impl() {
-    let src = "enum Mode {\n    A,\n}\n\nimpl Mode {\n    fn f() {}\n}\n";
-    let d = dir(&[("mode.rs", src)]);
-    let e = run(d.path(), "*** Insert After: mode.rs#Mode\n+fn g() {}\n").unwrap_err();
-    let msg = "mode.rs#Mode is ambiguous: enum Mode (1-3), impl Mode (5-7)";
-    assert!(e.to_string().contains(msg), "{e:#}");
-    assert_eq!(read(d.path(), "mode.rs"), src);
 }
 
 #[test]

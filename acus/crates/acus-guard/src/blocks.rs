@@ -119,27 +119,21 @@ mod tests {
     }
 
     #[test]
-    fn trim_drops_the_session_with_the_oldest_activity() {
+    fn trim_drops_the_oldest_session_but_never_the_kept_one() {
         let kept = trimmed(
             &[("a", 1), ("b", 2), ("c", 3)],
             "c",
             &[("a", 5), ("b", 1), ("c", 3)],
         );
         assert_eq!(kept, ["a", "c"]);
-    }
 
-    #[test]
-    fn trim_never_drops_the_session_being_written() {
         let kept = trimmed(
             &[("a", 1), ("b", 2), ("c", 3)],
             "a",
             &[("a", 0), ("b", 5), ("c", 6)],
         );
         assert_eq!(kept, ["a", "c"]);
-    }
 
-    #[test]
-    fn trim_leaves_a_bulletin_within_the_limit_alone() {
         let kept = trimmed(&[("a", 1), ("b", 2)], "a", &[("a", 0), ("b", 0)]);
         assert_eq!(kept, ["a", "b"]);
     }

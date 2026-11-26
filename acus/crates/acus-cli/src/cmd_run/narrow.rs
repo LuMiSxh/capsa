@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 
 /// Lines starting an error or failure: compiler errors, failed tests, panics, tracebacks.
 #[expect(clippy::unwrap_used, reason = "a constant pattern")]
-static FAILURE: LazyLock<Regex> = LazyLock::new(|| {
+pub(super) static FAILURE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^\s*(error(\[\w+\])?[:\s]|error TS\d+|Error:|FAILED\b|FAIL\b|failures:|--- FAIL|---- .+ ----$|thread '.*' panicked|Traceback \(most recent call last\)|AssertionError|not ok |Test Case .* failed|[×✗✖] )|\S: error[:\[ ]|panicked at |\btest .* FAILED$",
     )
@@ -18,6 +18,8 @@ pub(super) struct Narrowed {
     pub(super) lines: Vec<String>,
     pub(super) grep_dropped: usize,
     pub(super) tail_dropped: usize,
+    /// Lines `--max-output` left out after grep and tail.
+    pub(super) budget_dropped: usize,
 }
 
 /// Keeps the lines matching `re`, or with `context` (`-B`, `-A`) also the lines within that
@@ -80,6 +82,7 @@ pub(super) fn narrow(
             lines,
             grep_dropped,
             tail_dropped: 0,
+            budget_dropped: 0,
         };
     };
     let len = lines.len();
@@ -129,6 +132,7 @@ pub(super) fn narrow(
         lines: out,
         grep_dropped,
         tail_dropped,
+        budget_dropped: 0,
     }
 }
 

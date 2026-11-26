@@ -74,7 +74,7 @@ fn env_masks_the_value_of_a_secret_name() {
 }
 
 #[test]
-fn parse_toml_returns_the_document_as_json() {
+fn parse_toml_returns_the_document_as_json_and_refuses_invalid_text() {
     let sandbox = Sandbox::new(&[]);
     let program = r#"return JSON.stringify(await parse.toml('title = "x"\n[owner]\nname = "a"\nwhen = 1979-05-27T07:32:00Z\n'));"#;
     let (code, out, err) = sandbox.script(program, &[]);
@@ -83,19 +83,10 @@ fn parse_toml_returns_the_document_as_json() {
         out,
         "{\"owner\":{\"name\":\"a\",\"when\":\"1979-05-27T07:32:00Z\"},\"title\":\"x\"}\n"
     );
-}
-
-#[test]
-fn parse_toml_refuses_text_that_is_not_toml() {
-    let sandbox = Sandbox::new(&[]);
     let (code, _, err) = sandbox.script("return await parse.toml('a =');", &[]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("cannot parse TOML"), "{err}");
-}
 
-#[test]
-fn parse_yaml_returns_the_first_document_as_json() {
-    let sandbox = Sandbox::new(&[]);
     let program = r#"return JSON.stringify(await parse.yaml('title: x\nowner:\n  name: a\n---\nlater: 1\n'));"#;
     let (code, out, err) = sandbox.script(program, &[]);
     assert_eq!(code, 0, "{err}");
@@ -146,15 +137,12 @@ fn fetch_returns_status_url_and_text_with_grep_and_head_applied() {
         out,
         format!("{{\"status\":200,\"url\":\"{base}/page\",\"text\":\"one\"}}\n")
     );
-}
 
-#[test]
-fn fetch_deny_in_the_config_refuses_the_host() {
-    let base = serve("unused\n");
+    let denied = serve("unused\n");
     let sandbox = Sandbox::new(&[]);
     let config = sandbox.dir.path().join("acus.toml");
     std::fs::write(&config, "[script]\nfetch_deny = [\"127.0.0.1\"]\n").unwrap();
-    let program = format!("return await fetch('{base}/page');");
+    let program = format!("return await fetch('{denied}/page');");
     let env = [("ACUS_CONFIG", config.to_str().unwrap())];
     let (code, _, err) = sandbox.script(&program, &env);
     assert_eq!(code, 2, "{err}");

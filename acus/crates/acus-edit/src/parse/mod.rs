@@ -4,6 +4,7 @@
 mod addr;
 mod body;
 mod directives;
+pub(crate) mod markers;
 mod ops;
 
 use crate::error::{EditError, Result};
@@ -258,18 +259,23 @@ fn unfinished_lines(op: &Op) -> Option<EditError> {
 pub fn parse(text: &str) -> Result<Vec<Op>> {
     let mut ops: Vec<Op> = Vec::new();
     let mut stage: Stage = None;
-    for (i, line) in text.trim_end().lines().enumerate() {
+    let text = text.trim_end();
+    // A SEARCH half may quote a whole conflict section; its `=======` is text, not the block's
+    // separator. Only a closed section counts, so an orphan marker stays searchable text.
+    let inside = markers::in_conflict_lines(text);
+    for (i, line) in text.lines().enumerate() {
         let n = i + 1;
+        let in_conflict = inside.get(i).copied().unwrap_or(false);
         // Block contents are verbatim, even lines that look like directives.
         if stage.is_some() {
-            body(ops.last_mut(), line, n, &mut stage)?;
+            body(ops.last_mut(), line, n, &mut stage, in_conflict)?;
             continue;
         }
         if line == "*** Begin Patch" || line == "*** End Patch" {
             continue;
         }
         if !directive(line, n, &mut ops)? {
-            body(ops.last_mut(), line, n, &mut stage)?;
+            body(ops.last_mut(), line, n, &mut stage, in_conflict)?;
         }
     }
     if stage.is_some() {

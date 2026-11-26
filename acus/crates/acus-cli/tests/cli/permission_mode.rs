@@ -85,7 +85,7 @@ impl Sandbox {
 }
 
 #[test]
-fn user_prompt_submit_and_post_tool_use_record_the_permission_mode() {
+fn the_mode_hooks_record_the_permission_mode() {
     let sandbox = Sandbox::new();
     assert_eq!(sandbox.recorded(), None);
     sandbox.mode("plan");
@@ -97,10 +97,7 @@ fn user_prompt_submit_and_post_tool_use_record_the_permission_mode() {
         "permission_mode": "acceptEdits",
     }));
     assert_eq!(sandbox.recorded().as_deref(), Some("acceptEdits"));
-}
 
-#[test]
-fn pre_tool_use_records_the_mode_only_when_the_event_has_one() {
     let sandbox = Sandbox::new();
     let call = |extra: Value| {
         let mut event = json!({

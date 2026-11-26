@@ -4,7 +4,11 @@
 use super::*;
 
 #[test]
-fn sed_ranges_and_head_counts_piped_into_head_or_tail_fold_to_one_range() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table of range and search folds; splitting it scatters the cases"
+)]
+fn folds_ranges_and_searches_into_one_acus_call() {
     for (cmd, want) in [
         (
             "sed -n 10,40p src/a.rs | head -5",
@@ -60,14 +64,7 @@ fn sed_ranges_and_head_counts_piped_into_head_or_tail_fold_to_one_range() {
             "cat src/a.rs 2>/dev/null | head -20 | tail -5",
             "acus show 'src/a.rs:16-20' 2>/dev/null",
         ),
-    ] {
-        assert_eq!(rw(cmd, None).as_deref(), Some(want), "{cmd}");
-    }
-}
-
-#[test]
-fn cat_piped_into_sed_ranges_folds_with_and_without_a_head_or_tail() {
-    for (cmd, want) in [
+        // A `cat` piped into `sed -n` folds with and without a head or tail.
         (
             "cat src/a.rs | sed -n 25,204p",
             "acus show 'src/a.rs:25-204'",
@@ -94,35 +91,23 @@ fn cat_piped_into_sed_ranges_folds_with_and_without_a_head_or_tail() {
             "cat src/a.rs 2>/dev/null | sed -n '25,204p' | head -10",
             "acus show 'src/a.rs:25-34' 2>/dev/null",
         ),
+        // A drive path is a path: its `:` belongs to the drive, and a range follows the last `:`.
+        // Pure strings, so every OS runs them.
+        (r"head -20 'C:\work\a.rs'", r"acus show 'C:\work\a.rs:1-20'"),
+        ("head -20 C:/work/a.rs", "acus show 'C:/work/a.rs:1-20'"),
+        ("tail -5 C:/work/a.rs", "acus show 'C:/work/a.rs:-5'"),
+        ("sed -n 2,4p C:/work/a.rs", "acus show 'C:/work/a.rs:2-4'"),
+        ("cat C:/work/a.rs", "acus show 'C:/work/a.rs'"),
+        (r"cat 'C:\work\a.rs'", r"acus show 'C:\work\a.rs'"),
+        // Unquoted, bash reads `\w` as `w`: that is not the file the command names, so no rewrite.
+        (r"head -20 C:\work\a.rs", ""),
     ] {
-        assert_eq!(rw(cmd, None).as_deref(), Some(want), "{cmd}");
+        if want.is_empty() {
+            assert_eq!(rw(cmd, None), None, "{cmd}");
+        } else {
+            assert_eq!(rw(cmd, None).as_deref(), Some(want), "{cmd}");
+        }
     }
-}
-
-#[test]
-fn span_folds_refuse_zero_open_reversed_and_overflowing_counts() {
-    // A window open to the end is a read of its own, and `tail` over it stays as a display filter.
-    assert_eq!(
-        rw("sed -n '10,$p' src/a.rs | tail -5", None).as_deref(),
-        Some("acus show 'src/a.rs:10-' | tail -5")
-    );
-    for cmd in [
-        "sed -n 10,40p src/a.rs | head -0",
-        "sed -n 10,40p src/a.rs | tail -0",
-        "sed -n 40,10p src/a.rs | head -5",
-        "sed -n 10,40p src/a.rs | head -c 5",
-        "sed -n 10,40p src/a.rs | head -n +3",
-        "sed -n 10,40p src/a.rs | head -5 | grep x",
-        "head -20 src/a.rs | head -5 | grep x",
-        "cat src/a.rs | sed -n 25,204p | grep x",
-        "sed -n 10,40p | head -5",
-    ] {
-        assert_eq!(rw(cmd, None), None, "{cmd}");
-    }
-}
-
-#[test]
-fn grep_piped_into_head_or_tail_becomes_find_with_its_limit() {
     // `--last` needs one regular file: the fixed scope has `src/a.rs` as one.
     let scope = Scope::fixed("/repo");
     for (cmd, want) in [
@@ -164,6 +149,55 @@ fn grep_piped_into_head_or_tail_becomes_find_with_its_limit() {
         ),
     ] {
         assert_eq!(rw(cmd, Some(&scope)).as_deref(), Some(want), "{cmd}");
+    }
+    // A read piped into grep folds to one find over the range.
+    for (cmd, want) in [
+        (
+            "sed -n 10,20p src/a.rs | grep x",
+            "acus find 'x' 'src/a.rs:10-20'",
+        ),
+        ("cat src/a.rs | grep x", "acus find 'x' 'src/a.rs'"),
+        (
+            "head -20 AGENTS.md | grep x",
+            "acus find 'x' 'AGENTS.md:1-20'",
+        ),
+        ("tail -5 AGENTS.md | grep x", "acus find 'x' 'AGENTS.md:-5'"),
+        (
+            "sed -n '30,$p' AGENTS.md | grep x",
+            "acus find 'x' 'AGENTS.md:30-'",
+        ),
+        (
+            "cat src/a.rs | grep x | head -3",
+            "acus find 'x' 'src/a.rs' --max-hits 3",
+        ),
+    ] {
+        assert_eq!(rw(cmd, None).as_deref(), Some(want), "{cmd}");
+    }
+    // A read of one file that greps it passes when it is a plain display of a manifest.
+    assert!(check("cat Cargo.toml | grep version").is_none());
+    // More than one file is not one range: it stays refused.
+    assert!(check("sed -n 1,5p AGENTS.md crates/acus-cli/src/main.rs | grep x").is_some());
+}
+
+#[test]
+fn span_folds_refuse_zero_open_reversed_and_overflowing_counts() {
+    // A window open to the end is a read of its own, and `tail` over it stays as a display filter.
+    assert_eq!(
+        rw("sed -n '10,$p' src/a.rs | tail -5", None).as_deref(),
+        Some("acus show 'src/a.rs:10-' | tail -5")
+    );
+    for cmd in [
+        "sed -n 10,40p src/a.rs | head -0",
+        "sed -n 10,40p src/a.rs | tail -0",
+        "sed -n 40,10p src/a.rs | head -5",
+        "sed -n 10,40p src/a.rs | head -c 5",
+        "sed -n 10,40p src/a.rs | head -n +3",
+        "sed -n 10,40p src/a.rs | head -5 | grep x",
+        "head -20 src/a.rs | head -5 | grep x",
+        "cat src/a.rs | sed -n 25,204p | grep x",
+        "sed -n 10,40p | head -5",
+    ] {
+        assert_eq!(rw(cmd, None), None, "{cmd}");
     }
 }
 
@@ -218,33 +252,6 @@ fn grep_tail_gets_last_only_for_one_regular_file() {
             rw(cmd, Some(&scope)).is_none_or(|c| !c.contains("--last")),
             "{cmd}"
         );
-    }
-}
-
-// A drive path is a path: its `:` belongs to the drive, and a range follows the last `:`. Pure
-// strings, so every OS runs them.
-#[test]
-fn drive_paths_fold_like_unix_paths() {
-    for (cmd, want) in [
-        (
-            r"head -20 'C:\work\a.rs'",
-            Some(r"acus show 'C:\work\a.rs:1-20'"),
-        ),
-        (
-            "head -20 C:/work/a.rs",
-            Some("acus show 'C:/work/a.rs:1-20'"),
-        ),
-        ("tail -5 C:/work/a.rs", Some("acus show 'C:/work/a.rs:-5'")),
-        (
-            "sed -n 2,4p C:/work/a.rs",
-            Some("acus show 'C:/work/a.rs:2-4'"),
-        ),
-        ("cat C:/work/a.rs", Some("acus show 'C:/work/a.rs'")),
-        (r"cat 'C:\work\a.rs'", Some(r"acus show 'C:\work\a.rs'")),
-        // Unquoted, bash reads `\w` as `w`: that is not the file the command names, so no rewrite.
-        (r"head -20 C:\work\a.rs", None),
-    ] {
-        assert_eq!(rw(cmd, None).as_deref(), want, "{cmd}");
     }
 }
 
@@ -348,34 +355,4 @@ fn grep_head_refusal_names_the_limit_it_would_fold_to() {
         reason.contains("Replace it with `acus find 'fn' 'src/a.rs' -l`"),
         "{reason}"
     );
-}
-
-#[test]
-fn read_piped_into_grep_folds_to_one_find_over_the_range() {
-    for (cmd, want) in [
-        (
-            "sed -n 10,20p src/a.rs | grep x",
-            "acus find 'x' 'src/a.rs:10-20'",
-        ),
-        ("cat src/a.rs | grep x", "acus find 'x' 'src/a.rs'"),
-        (
-            "head -20 AGENTS.md | grep x",
-            "acus find 'x' 'AGENTS.md:1-20'",
-        ),
-        ("tail -5 AGENTS.md | grep x", "acus find 'x' 'AGENTS.md:-5'"),
-        (
-            "sed -n '30,$p' AGENTS.md | grep x",
-            "acus find 'x' 'AGENTS.md:30-'",
-        ),
-        (
-            "cat src/a.rs | grep x | head -3",
-            "acus find 'x' 'src/a.rs' --max-hits 3",
-        ),
-    ] {
-        assert_eq!(rw(cmd, None).as_deref(), Some(want), "{cmd}");
-    }
-    // A read of one file that greps it passes when it is a plain display of a manifest.
-    assert!(check("cat Cargo.toml | grep version").is_none());
-    // More than one file is not one range: it stays refused.
-    assert!(check("sed -n 1,5p AGENTS.md crates/acus-cli/src/main.rs | grep x").is_some());
 }

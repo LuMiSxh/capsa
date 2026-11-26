@@ -265,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_ignores_timings_but_not_the_error() {
+    fn failure_returns_a_stable_fingerprint_and_its_key_line() {
         let run =
             |secs: &str, err: &str| failure(1, &[format!("Finished in {secs}s"), err.to_owned()]);
         let mismatch = "error[E0308]: mismatched types";
@@ -274,10 +274,6 @@ mod tests {
             run("1.2", mismatch).0,
             run("1.2", "error[E0432]: unresolved").0
         );
-    }
-
-    #[test]
-    fn key_line_is_the_first_failure_line_or_the_last_output_line() {
         let lines = [
             "build ok".to_owned(),
             "error: a".to_owned(),

@@ -1,0 +1,14 @@
+bun test v1.1.0
+
+a.test.ts:
+(pass) adds [0.02ms]
+(fail) divides [0.01ms]
+error: expect(received).toBe(expected)
+
+Expected: 2
+Received: Infinity
+
+ 1 pass
+ 1 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [10.00ms]

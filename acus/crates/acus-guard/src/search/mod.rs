@@ -292,20 +292,13 @@ mod brace_tests {
         }
     }
 
-    // Braces stay literal in a quoted word, so grep's meaning is not a glob list: refused.
+    // Braces stay literal in a quoted word, so grep's meaning is not a glob list; other brace
+    // forms are not plain lists either: both are refused.
     #[test]
-    fn quoted_option_word_with_brace_is_refused() {
+    fn brace_forms_that_are_not_plain_lists_are_refused() {
         for cmd in [
             "grep -rn foo '--exclude-dir={target,node_modules}' .",
             "grep -rn foo \"--exclude-dir={a,b}\" .",
-        ] {
-            assert_eq!(rw(cmd), None, "{cmd}");
-        }
-    }
-
-    #[test]
-    fn other_brace_forms_stay_refused() {
-        for cmd in [
             "grep -rn foo --exclude-dir='{target,node_modules}' .",
             "grep -rn foo --exclude-dir={a/b,c} .",
             "grep -rn foo --exclude-dir={a,,c} .",

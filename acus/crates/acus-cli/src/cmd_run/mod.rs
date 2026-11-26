@@ -31,7 +31,7 @@ pub struct Args {
     /// Shell command, e.g. 'cargo test -q'; stdout and stderr are merged. Default: `[run] command`,
     /// else the project's test command (Cargo.toml, Package.swift, go.mod, package.json, pytest).
     command: Option<String>,
-    /// Output lines kept (head and tail halves).
+    /// Output lines kept: every failure block, then the last N lines.
     #[arg(long, default_value_t = 200)]
     max_output: usize,
     /// Code locations shown.
@@ -46,6 +46,9 @@ pub struct Args {
     /// Keep build noise (progress lines, passing tests, colour codes, repeated lines).
     #[arg(long)]
     raw: bool,
+    /// Say which tool was detected and how many lines each noise kind dropped.
+    #[arg(long)]
+    explain: bool,
     /// Also drop output lines matching this regex (repeatable), e.g. --drop '^warning: unused'.
     #[arg(long, value_name = "REGEX")]
     drop: Vec<String>,
@@ -95,6 +98,7 @@ impl Args {
             max_lines: 40,
             context: 3,
             raw: false,
+            explain: false,
             drop: Vec::new(),
             tail: None,
             grep: None,
@@ -355,12 +359,22 @@ fn shell(cmd: &str) -> Command {
 }
 
 /// The test command of the nearest project root at or above `start`; one directory is checked
-/// in a fixed order, so a Cargo.toml beside a package.json wins.
+/// in a fixed order, so a Cargo.toml beside a package.json wins. Nextest is preferred when it is
+/// installed, because `acus run` then gets its per-test output and its summary.
 fn detect_command(start: &Path) -> Option<String> {
+    detect_command_with(start, capsa_core::which::find("cargo-nextest").is_some())
+}
+
+/// [`detect_command`] with the nextest lookup decided by the caller, so the order is testable.
+fn detect_command_with(start: &Path, nextest: bool) -> Option<String> {
     start.ancestors().find_map(|d| {
         let has = |f: &str| d.join(f).exists();
         Some(if has("Cargo.toml") {
-            "cargo test -q".into()
+            if nextest {
+                "cargo nextest run".into()
+            } else {
+                "cargo test -q".into()
+            }
         } else if has("Package.swift") {
             "swift test".into()
         } else if has("go.mod") {
@@ -386,7 +400,7 @@ fn detect_command(start: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::detect_command;
+    use super::detect_command_with;
 
     #[test]
     fn detects_project_command() {
@@ -396,19 +410,44 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         let touch = |f: &str| std::fs::write(root.join(f), "").unwrap();
         touch("package.json");
-        assert_eq!(detect_command(&sub).as_deref(), Some("npm test"));
+        assert_eq!(
+            detect_command_with(&sub, false).as_deref(),
+            Some("npm test")
+        );
         touch("yarn.lock");
-        assert_eq!(detect_command(&sub).as_deref(), Some("yarn test"));
+        assert_eq!(
+            detect_command_with(&sub, false).as_deref(),
+            Some("yarn test")
+        );
         touch("pnpm-lock.yaml");
-        assert_eq!(detect_command(&sub).as_deref(), Some("pnpm test"));
+        assert_eq!(
+            detect_command_with(&sub, false).as_deref(),
+            Some("pnpm test")
+        );
         touch("pyproject.toml");
-        assert_eq!(detect_command(&sub).as_deref(), Some("pnpm test"));
+        assert_eq!(
+            detect_command_with(&sub, false).as_deref(),
+            Some("pnpm test")
+        );
         touch("go.mod");
-        assert_eq!(detect_command(&sub).as_deref(), Some("go test ./..."));
+        assert_eq!(
+            detect_command_with(&sub, false).as_deref(),
+            Some("go test ./...")
+        );
         touch("Cargo.toml");
-        assert_eq!(detect_command(root).as_deref(), Some("cargo test -q"));
+        assert_eq!(
+            detect_command_with(root, false).as_deref(),
+            Some("cargo test -q")
+        );
+        assert_eq!(
+            detect_command_with(root, true).as_deref(),
+            Some("cargo nextest run")
+        );
         // The nearest root wins over a farther one.
         std::fs::write(sub.join("pytest.ini"), "").unwrap();
-        assert_eq!(detect_command(&sub).as_deref(), Some("pytest -q"));
+        assert_eq!(
+            detect_command_with(&sub, false).as_deref(),
+            Some("pytest -q")
+        );
     }
 }

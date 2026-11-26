@@ -37,23 +37,24 @@ fn batch_keeps_the_other_lines_when_one_fails() {
 }
 
 #[test]
-fn batch_refuses_patch_lines_and_names_acus_patch() {
+fn batch_refuses_patch_and_nested_batch_lines() {
     let d = two_files();
-    let (code, out, _) = acus_in(d.path(), &["batch"], "find alpha\npatch\n");
-    assert_eq!(code, 2, "{out}");
-    assert!(out.contains("== find alpha\na.rs\n1\talpha\n"), "{out}");
-    assert!(
-        out.contains("== patch\nerror: `patch` cannot run in a batch\nhint: run `acus patch`"),
-        "{out}"
-    );
-}
-
-#[test]
-fn batch_refuses_nested_batch_lines() {
-    let d = two_files();
-    let (code, out, _) = acus_in(d.path(), &["batch"], "batch\n");
-    assert_eq!(code, 2, "{out}");
-    assert!(out.contains("error: `batch` cannot be nested"), "{out}");
+    for (input, expected) in [
+        (
+            "find alpha\npatch\n",
+            &[
+                "== find alpha\na.rs\n1\talpha\n",
+                "== patch\nerror: `patch` cannot run in a batch\nhint: run `acus patch`",
+            ][..],
+        ),
+        ("batch\n", &["error: `batch` cannot be nested"][..]),
+    ] {
+        let (code, out, _) = acus_in(d.path(), &["batch"], input);
+        assert_eq!(code, 2, "{input}: {out}");
+        for want in expected {
+            assert!(out.contains(want), "{input}: {out}");
+        }
+    }
 }
 
 #[cfg(feature = "script")]
@@ -74,23 +75,20 @@ fn batch_checks_run_lines_with_the_guard() {
     let (code, out, _) = acus_in(d.path(), &["batch"], "run 'cat a.rs'\n");
     assert_eq!(code, 2, "{out}");
     assert!(out.contains("the acus guard blocks it"), "{out}");
-}
 
-#[test]
-fn batch_refuses_run_lines_a_bash_deny_rule_covers() {
-    let d = two_files();
-    std::fs::create_dir(d.path().join(".git")).unwrap();
-    std::fs::create_dir(d.path().join(".claude")).unwrap();
+    let denied = two_files();
+    std::fs::create_dir(denied.path().join(".git")).unwrap();
+    std::fs::create_dir(denied.path().join(".claude")).unwrap();
     std::fs::write(
-        d.path().join(".claude/settings.json"),
+        denied.path().join(".claude/settings.json"),
         r#"{"permissions":{"deny":["Bash(rm:*)"]}}"#,
     )
     .unwrap();
-    let none = d.path().join("none.json");
+    let none = denied.path().join("none.json");
     let managed = none.to_str().unwrap();
     let env = [("ACUS_MANAGED_SETTINGS", managed)];
     let input = "run 'if true; then rm -rf build; fi'\n";
-    let (code, out, _) = acus_in_env(d.path(), &["batch"], input, &env);
+    let (code, out, _) = acus_in_env(denied.path(), &["batch"], input, &env);
     assert_eq!(code, 2, "{out}");
     assert!(out.contains("is denied by `Bash(rm:*)`"), "{out}");
 }
@@ -112,47 +110,44 @@ fn many_hits() -> tempfile::TempDir {
 }
 
 #[test]
-fn batch_head_caps_each_line_and_names_the_rerun() {
+fn batch_applies_head_and_cut_per_line() {
     let d = many_hits();
-    let (code, out, _) = acus_in(d.path(), &["batch", "--head", "3"], "find hit\n");
-    assert_eq!(code, 0, "{out}");
-    assert!(
-        out.contains("… output cut at --head 3; 28 more lines: acus find hit --head 31\n"),
-        "{out}"
-    );
-}
-
-#[test]
-fn batch_head_does_not_override_a_line_head() {
-    let d = many_hits();
-    let (code, out, _) = acus_in(d.path(), &["batch", "--head", "3"], "find hit --head 5\n");
-    assert_eq!(code, 0, "{out}");
-    assert!(out.contains("… output cut at --head 5;"), "{out}");
-    assert!(!out.contains("output cut at --head 3;"), "{out}");
-}
-
-#[test]
-fn batch_cut_clips_each_printed_line_and_marks_it() {
-    let d = many_hits();
-    let (code, out, _) = acus_in(d.path(), &["batch", "--cut", "6"], "find hit\n");
-    assert_eq!(code, 0, "{out}");
-    assert!(out.contains("1\thit … (+1 chars)\n"), "{out}");
-    assert!(!out.contains("hit 10\n"), "{out}");
-}
-
-#[test]
-fn batch_cut_does_not_override_a_line_cut() {
-    let d = many_hits();
-    let (code, out, _) = acus_in(d.path(), &["batch", "--cut", "6"], "find hit --cut 100\n");
-    assert_eq!(code, 0, "{out}");
-    assert!(out.contains("hit 10\n"), "{out}");
-}
-
-#[test]
-fn batch_defaults_neither_head_nor_cut_a_short_output() {
-    let d = many_hits();
-    let (code, out, _) = acus_in(d.path(), &["batch"], "find hit\n");
-    assert_eq!(code, 0, "{out}");
-    assert!(out.contains("hit 30\n"), "{out}");
-    assert!(!out.contains("cut at"), "{out}");
+    for (args, input, present, absent) in [
+        (
+            vec!["--head", "3"],
+            "find hit\n",
+            vec!["… output cut at --head 3; 28 more lines: acus find hit --head 31\n"],
+            vec![],
+        ),
+        (
+            vec!["--head", "3"],
+            "find hit --head 5\n",
+            vec!["… output cut at --head 5;"],
+            vec!["output cut at --head 3;"],
+        ),
+        (
+            vec!["--cut", "6"],
+            "find hit\n",
+            vec!["1\thit … (+1 chars)\n"],
+            vec!["hit 10\n"],
+        ),
+        (
+            vec!["--cut", "6"],
+            "find hit --cut 100\n",
+            vec!["hit 10\n"],
+            vec![],
+        ),
+        (vec![], "find hit\n", vec!["hit 30\n"], vec!["cut at"]),
+    ] {
+        let mut full = vec!["batch"];
+        full.extend(&args);
+        let (code, out, _) = acus_in(d.path(), &full, input);
+        assert_eq!(code, 0, "{args:?}: {out}");
+        for want in present {
+            assert!(out.contains(want), "{args:?}: {out}");
+        }
+        for unwanted in absent {
+            assert!(!out.contains(unwanted), "{args:?}: {out}");
+        }
+    }
 }

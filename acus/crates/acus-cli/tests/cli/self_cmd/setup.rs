@@ -53,6 +53,35 @@ fn setup_dry_run_then_setup_twice_is_idempotent() {
         let detail = check["detail"].as_str().unwrap();
         assert!(detail.starts_with("already set"), "{out}");
     }
+
+    let twice = tempfile::tempdir().unwrap();
+    let home = twice.path().join("home");
+    let claude = twice.path().join("claude");
+    std::fs::create_dir(&home).unwrap();
+    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
+    assert_eq!(acus_env(&["self", "setup"], &env).0, 0);
+    let first = std::fs::read_to_string(claude.join("settings.json")).unwrap();
+
+    let (code, out, err) = acus_env(&["self", "setup", "--json"], &env);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        std::fs::read_to_string(claude.join("settings.json")).unwrap(),
+        first
+    );
+    let v = json_line(&out);
+    let hooks: Vec<_> = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"].as_str().is_some_and(|n| n.starts_with("hook ")))
+        .collect();
+    assert_eq!(hooks.len(), 5, "{out}");
+    for hook in hooks {
+        assert!(
+            hook["detail"].as_str().unwrap().starts_with("already set"),
+            "{hook}"
+        );
+    }
 }
 
 #[cfg(feature = "cmd-update")]
@@ -130,7 +159,7 @@ fn setup_replaces_the_old_hook_entries() {
 }
 
 #[test]
-fn setup_registers_subagent_start_for_every_subagent() {
+fn setup_registers_the_hooks() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let claude = dir.path().join("claude");
@@ -148,13 +177,10 @@ fn setup_registers_subagent_start_for_every_subagent() {
         groups[0]["hooks"][0]["command"], "acus hook 2>/dev/null || true",
         "{text}"
     );
-}
 
-#[test]
-fn setup_scopes_post_tool_use_to_exit_plan_mode() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let claude = dir.path().join("claude");
+    let scoped = tempfile::tempdir().unwrap();
+    let home = scoped.path().join("home");
+    let claude = scoped.path().join("claude");
     std::fs::create_dir(&home).unwrap();
     let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
 
@@ -202,38 +228,6 @@ fn setup_keeps_a_subagent_start_entry_with_a_custom_matcher() {
 }
 
 #[test]
-fn setup_run_twice_writes_the_same_settings() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let claude = dir.path().join("claude");
-    std::fs::create_dir(&home).unwrap();
-    let env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap());
-    assert_eq!(acus_env(&["self", "setup"], &env).0, 0);
-    let first = std::fs::read_to_string(claude.join("settings.json")).unwrap();
-
-    let (code, out, err) = acus_env(&["self", "setup", "--json"], &env);
-    assert_eq!(code, 0, "{err}");
-    assert_eq!(
-        std::fs::read_to_string(claude.join("settings.json")).unwrap(),
-        first
-    );
-    let v = json_line(&out);
-    let hooks: Vec<_> = v["checks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|c| c["name"].as_str().is_some_and(|n| n.starts_with("hook ")))
-        .collect();
-    assert_eq!(hooks.len(), 5, "{out}");
-    for hook in hooks {
-        assert!(
-            hook["detail"].as_str().unwrap().starts_with("already set"),
-            "{hook}"
-        );
-    }
-}
-
-#[test]
 fn setup_add_missing_adds_only_the_hooks_that_are_missing() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
@@ -269,13 +263,10 @@ fn setup_add_missing_adds_only_the_hooks_that_are_missing() {
         (0, ""),
         "second run prints nothing: {err}"
     );
-}
 
-#[test]
-fn setup_add_missing_writes_nothing_before_a_setup() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let claude = dir.path().join("claude");
+    let before = tempfile::tempdir().unwrap();
+    let home = before.path().join("home");
+    let claude = before.path().join("claude");
     std::fs::create_dir_all(&claude).unwrap();
     std::fs::create_dir(&home).unwrap();
     std::fs::write(claude.join("settings.json"), "{}").unwrap();
@@ -290,18 +281,18 @@ fn setup_add_missing_writes_nothing_before_a_setup() {
 }
 
 #[test]
-fn setup_moves_a_guard_log_left_beside_the_config_once() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let claude = dir.path().join("claude");
+fn setup_migrates_guard_logs_left_beside_the_config() {
+    let moved_dir = tempfile::tempdir().unwrap();
+    let home = moved_dir.path().join("home");
+    let claude = moved_dir.path().join("claude");
     std::fs::create_dir(&home).unwrap();
-    let old = dir.path().join("guard.jsonl");
+    let old = moved_dir.path().join("guard.jsonl");
     std::fs::write(&old, "old\n").unwrap();
-    std::fs::write(dir.path().join("guard.jsonl.old"), "older\n").unwrap();
-    let state = tool_state_dir(&dir.path().join("state"), "acus");
+    std::fs::write(moved_dir.path().join("guard.jsonl.old"), "older\n").unwrap();
+    let state = tool_state_dir(&moved_dir.path().join("state"), "acus");
     let mut env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap()).to_vec();
-    let config = dir.path().join("config.toml");
-    let state_root = dir.path().join("state");
+    let config = moved_dir.path().join("config.toml");
+    let state_root = moved_dir.path().join("state");
     env.push(("ACUS_CONFIG", config.to_str().unwrap()));
     env.extend(state_root_env(state_root.to_str().unwrap()));
 
@@ -320,22 +311,19 @@ fn setup_moves_a_guard_log_left_beside_the_config_once() {
     assert_eq!(acus_env(&["self", "setup"], &env).0, 0);
     let kept = std::fs::read_to_string(state.join("guard.jsonl")).unwrap();
     assert_eq!(kept, "old\n", "a second setup finds nothing to move");
-}
 
-#[test]
-fn setup_merges_old_guard_log_files_in_front_of_the_state_log() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let claude = dir.path().join("claude");
+    let merged_dir = tempfile::tempdir().unwrap();
+    let home = merged_dir.path().join("home");
+    let claude = merged_dir.path().join("claude");
     std::fs::create_dir(&home).unwrap();
-    std::fs::write(dir.path().join("guard.jsonl.old"), "older\n").unwrap();
-    std::fs::write(dir.path().join("guard.jsonl"), "old\n").unwrap();
-    let state = tool_state_dir(&dir.path().join("state"), "acus");
+    std::fs::write(merged_dir.path().join("guard.jsonl.old"), "older\n").unwrap();
+    std::fs::write(merged_dir.path().join("guard.jsonl"), "old\n").unwrap();
+    let state = tool_state_dir(&merged_dir.path().join("state"), "acus");
     std::fs::create_dir_all(&state).unwrap();
     std::fs::write(state.join("guard.jsonl"), "current\n").unwrap();
     let mut env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap()).to_vec();
-    let config = dir.path().join("config.toml");
-    let state_root = dir.path().join("state");
+    let config = merged_dir.path().join("config.toml");
+    let state_root = merged_dir.path().join("state");
     env.push(("ACUS_CONFIG", config.to_str().unwrap()));
     env.extend(state_root_env(state_root.to_str().unwrap()));
 
@@ -343,7 +331,7 @@ fn setup_merges_old_guard_log_files_in_front_of_the_state_log() {
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("would merge"), "{out}");
     assert!(
-        dir.path().join("guard.jsonl").exists(),
+        merged_dir.path().join("guard.jsonl").exists(),
         "a dry run merges nothing"
     );
 
@@ -352,25 +340,22 @@ fn setup_merges_old_guard_log_files_in_front_of_the_state_log() {
     assert!(out.contains("merged"), "{out}");
     let merged = std::fs::read_to_string(state.join("guard.jsonl")).unwrap();
     assert_eq!(merged, "older\nold\ncurrent\n");
-    assert!(!dir.path().join("guard.jsonl").exists());
-    assert!(!dir.path().join("guard.jsonl.old").exists());
-}
+    assert!(!merged_dir.path().join("guard.jsonl").exists());
+    assert!(!merged_dir.path().join("guard.jsonl.old").exists());
 
-#[test]
-fn setup_merge_leaves_the_state_rotated_copy_untouched() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let claude = dir.path().join("claude");
+    let kept_dir = tempfile::tempdir().unwrap();
+    let home = kept_dir.path().join("home");
+    let claude = kept_dir.path().join("claude");
     std::fs::create_dir(&home).unwrap();
-    std::fs::write(dir.path().join("guard.jsonl.old"), "older\n").unwrap();
-    std::fs::write(dir.path().join("guard.jsonl"), "old\n").unwrap();
-    let state = tool_state_dir(&dir.path().join("state"), "acus");
+    std::fs::write(kept_dir.path().join("guard.jsonl.old"), "older\n").unwrap();
+    std::fs::write(kept_dir.path().join("guard.jsonl"), "old\n").unwrap();
+    let state = tool_state_dir(&kept_dir.path().join("state"), "acus");
     std::fs::create_dir_all(&state).unwrap();
     std::fs::write(state.join("guard.jsonl"), "current\n").unwrap();
     std::fs::write(state.join("guard.jsonl.old"), "rotated\n").unwrap();
     let mut env = sandboxed(home.to_str().unwrap(), claude.to_str().unwrap()).to_vec();
-    let config = dir.path().join("config.toml");
-    let state_root = dir.path().join("state");
+    let config = kept_dir.path().join("config.toml");
+    let state_root = kept_dir.path().join("state");
     env.push(("ACUS_CONFIG", config.to_str().unwrap()));
     env.extend(state_root_env(state_root.to_str().unwrap()));
 
@@ -379,6 +364,6 @@ fn setup_merge_leaves_the_state_rotated_copy_untouched() {
     assert_eq!(merged, "older\nold\ncurrent\n");
     let rotated = std::fs::read_to_string(state.join("guard.jsonl.old")).unwrap();
     assert_eq!(rotated, "rotated\n");
-    assert!(!dir.path().join("guard.jsonl").exists());
-    assert!(!dir.path().join("guard.jsonl.old").exists());
+    assert!(!kept_dir.path().join("guard.jsonl").exists());
+    assert!(!kept_dir.path().join("guard.jsonl.old").exists());
 }

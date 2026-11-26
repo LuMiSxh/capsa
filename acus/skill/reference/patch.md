@@ -140,6 +140,10 @@ fn ${1}_new(
 - `PATH:LINE --theirs` resolves only the section containing LINE, so one patch can pick different
   sides. Line numbers are from before the patch.
 - A file that still has conflict markers is syntax-checked only on its result.
+- A SEARCH block may quote a whole conflict section, markers included: the `=======` inside it is
+  text, not the block's separator, so one block can replace the section with the resolution.
+- A patch that would leave an unmatched conflict marker, or add markers to a file that had none,
+  is refused before anything is written; `--allow-broken` writes it.
 
 ## Output and checks
 
@@ -156,7 +160,8 @@ fn ${1}_new(
   gofmt) over the whole file and prints the formatted lines. It also changes lines you did not
   edit, so add it only where the project requires formatted code. `acus patch --no-fmt` skips a
   configured `[patch] fmt`.
-- `acus patch --allow-broken` writes a file that gains syntax errors.
+- `acus patch --allow-broken` writes a file that gains syntax errors, or one whose conflict
+  markers would be added or left unmatched.
 - Pick a heredoc delimiter that no line of the patch equals (`PATCH`, or `ACUS_END` when editing
   docs or scripts).
 

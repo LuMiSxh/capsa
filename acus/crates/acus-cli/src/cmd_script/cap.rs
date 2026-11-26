@@ -84,7 +84,7 @@ mod tests {
     }
 
     #[test]
-    fn return_keeps_half_the_lines_when_prints_fill_the_rest() {
+    fn return_keeps_half_the_lines_and_takes_what_prints_leave() {
         let cap = Cap {
             lines: 10,
             bytes: 1000,
@@ -93,14 +93,7 @@ mod tests {
         assert_eq!(out.iter().filter(|l| l.starts_with('p')).count(), 5);
         assert_eq!(out.iter().filter(|l| l.starts_with('r')).count(), 5);
         assert!(out.last().unwrap().starts_with("… cut 90 lines"));
-    }
 
-    #[test]
-    fn return_takes_what_prints_leave() {
-        let cap = Cap {
-            lines: 10,
-            bytes: 1000,
-        };
         let out = apply(&many("p", 2), &many("r", 50), cap);
         assert_eq!(out.iter().filter(|l| l.starts_with('r')).count(), 8);
     }

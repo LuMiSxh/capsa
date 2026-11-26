@@ -26,6 +26,15 @@ fn diff_groups_changes_by_symbol() {
         full,
         "on main · unstaged 1 · untracked 1\nM a.rs +1 -3\n  fn f 1-3 +1 -1\n\t-    one()\n2\t+    two()\n  (top level) -1\n\t-\n  fn gone (removed) -1\n\t-fn gone() {}\n? new.md +1\n1\t+# Hi\n== 2 files +2 -3\n"
     );
+    // The human view aligns file counts.
+    assert_eq!(
+        acus_in(d.path(), &["diff", "--human"], ""),
+        (
+            0,
+            "on main · unstaged 1 · untracked 1\nM a.rs    +1 -3\n  fn f 1-3 +1 -1\n  (top level) -1\n  fn gone (removed) -1\n? new.md     +1\n== 2 files +2 -3\n".into(),
+            String::new()
+        )
+    );
     git(d.path(), &["add", "."]);
     git(d.path(), &["commit", "-qm", "y"]);
     assert_eq!(
@@ -136,29 +145,6 @@ fn untracked_files_are_marked_question_and_staged_new_files_a() {
 }
 
 #[test]
-fn diff_human_view_aligns_file_counts() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::write(
-        d.path().join("a.rs"),
-        "fn f() {\n    one()\n}\n\nfn gone() {}\n",
-    )
-    .unwrap();
-    git(d.path(), &["init", "-q", "-b", "main"]);
-    git(d.path(), &["add", "."]);
-    git(d.path(), &["commit", "-qm", "x"]);
-    std::fs::write(d.path().join("a.rs"), "fn f() {\n    two()\n}\n").unwrap();
-    std::fs::write(d.path().join("new.md"), "# Hi\n").unwrap();
-    assert_eq!(
-        acus_in(d.path(), &["diff", "--human"], ""),
-        (
-            0,
-            "on main · unstaged 1 · untracked 1\nM a.rs    +1 -3\n  fn f 1-3 +1 -1\n  (top level) -1\n  fn gone (removed) -1\n? new.md     +1\n== 2 files +2 -3\n".into(),
-            String::new()
-        )
-    );
-}
-
-#[test]
 fn log_human_view_aligns_commits_in_a_table() {
     let d = tempfile::tempdir().unwrap();
     git(d.path(), &["init", "-q"]);
@@ -226,12 +212,7 @@ fn log_default_is_compact_with_age_and_takes_n() {
     assert!(out.contains(&format!("{h2} c2 (2d ago)")), "{out}");
     assert!(!out.contains(&h1), "{out}");
     assert!(out.contains("== 2 commits"), "{out}");
-}
 
-#[test]
-fn log_takes_head_and_cut() {
-    let d = tempfile::tempdir().unwrap();
-    aged_commits(d.path());
     let (code, out, _) = acus_in(d.path(), &["log", "--head", "1"], "");
     assert_eq!(code, 0);
     assert_eq!(out.lines().count(), 2, "{out}");

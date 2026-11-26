@@ -51,7 +51,7 @@ fn names_the_refused_segment_and_its_replacement_in_compound_commands() {
 }
 
 #[test]
-fn leaves_data_files_plain_files_and_other_commands_output_alone() {
+fn leaves_plain_commands_alone() {
     // Decisions: JSON, TOML and YAML are data, read whole on purpose (the Read tool agrees);
     // searching a log or text file is not a code search; a pipe or stdin is another
     // command's output; `>`/`>>` make a read a copy or an append.
@@ -78,10 +78,7 @@ fn leaves_data_files_plain_files_and_other_commands_output_alone() {
     ] {
         assert_eq!(check(cmd), None, "{cmd}");
     }
-}
-
-#[test]
-fn git_log_oneline_gets_no_hint() {
+    // `git log --oneline`, `git log` and pinned formats get no hint either.
     for cmd in [
         "git log --oneline",
         "git log --oneline -5",
@@ -92,25 +89,9 @@ fn git_log_oneline_gets_no_hint() {
         "git log --oneline -- src/main.rs",
         "git log --oneline | grep fix",
         "git log --oneline 2>&1 | grep -c fix",
-    ] {
-        assert!(check(cmd).is_none(), "{cmd}");
-    }
-}
-
-#[test]
-fn git_status_and_pinned_formats_get_no_hint() {
-    for cmd in [
         "git status -s",
         "git status --short",
         "git log -1 --format=%H",
-    ] {
-        assert!(check(cmd).is_none(), "{cmd}");
-    }
-}
-
-#[test]
-fn git_log_gets_no_hint() {
-    for cmd in [
         "git log",
         "git log -p",
         "git log --stat",
@@ -121,10 +102,30 @@ fn git_log_gets_no_hint() {
     ] {
         assert!(check(cmd).is_none(), "{cmd}");
     }
+    // Filters, data, escapes and heredocs are not touched.
+    for cmd in [
+        "cargo tree | grep serde",
+        "cargo test 2>&1 | tee test.log",
+        "acus run 'cargo test | tail'",
+        "npm install | tail -3",
+        "git commit -m \"fix; grep foo\"",
+        "cat > notes.md <<'EOF'\ngrep foo bar\nEOF",
+        "acus patch <<'P'\nsed -i x a.rs\nP",
+        "cat Cargo.lock",
+        "tail -f server.log",
+        "cat a.rs > b.rs",
+        "sed 's/a/b/' input.txt",
+        "ls src && find . -name '*.rs'",
+        "python3 - <<'EOF'\nimport json\nprint(json.load(open('data.json'))['x'].replace('a','b'))\nEOF",
+        "python3 - <<'EOF'\nrows=open('in.csv').read().replace(';',',')\nopen('out.csv','w').write(rows)\nEOF",
+        "acus patch <<'P'\n*** Update File: tool.py\n<<<<<<< SEARCH\nx\n=======\nopen('a.py','w').write(s.replace('a','b'))\n>>>>>>> REPLACE\nP",
+    ] {
+        assert_eq!(check(cmd), None, "{cmd}");
+    }
 }
 
 #[test]
-fn still_refuses_source_reads_and_searches_that_look_harmless() {
+fn refuses_searches_reads_and_in_place_edits_that_look_harmless() {
     for cmd in [
         "cat src/a.rs 2>&1",
         "cat src/a.rs 2>/dev/null",
@@ -142,6 +143,24 @@ fn still_refuses_source_reads_and_searches_that_look_harmless() {
         "find . -name '*.rs' -exec grep -n foo {} +",
         "ls | xargs grep -l foo",
         "env FOO=1 grep -rn foo src",
+    ] {
+        assert!(matches!(check(cmd), Some(Verdict::Deny(..))), "{cmd}");
+    }
+    for cmd in [
+        "grep -rn foo src",
+        "cd app && rg -n 'fn main'",
+        "git ls-files | xargs grep -n TODO",
+        "sed -n 1,40p src/main.rs",
+        "sed -i '' 's/a/b/' Sources/App.swift",
+        "perl -pi -e 's/a/b/' lib.py",
+        "cat src/a.rs src/b.rs",
+        "X=1 head -50 README.md",
+        "python3 - <<'EOF'\nopen('a.rs','w').write(s.replace('a','b'))\nEOF\ngrep -n x a.rs",
+        "cargo test 2>&1 | grep -E 'FAILED|panicked'",
+        "cd crates && cargo test -q -p acus-cli | tail -30",
+        "swift build 2>&1 | head -50",
+        "npx tsc --noEmit | head",
+        "pnpm run build | tail -20",
     ] {
         assert!(matches!(check(cmd), Some(Verdict::Deny(..))), "{cmd}");
     }
@@ -216,28 +235,6 @@ fn compound_with_one_unrewritable_segment_is_still_refused() {
 }
 
 #[test]
-fn refuses_file_searches_reads_and_in_place_edits() {
-    for cmd in [
-        "grep -rn foo src",
-        "cd app && rg -n 'fn main'",
-        "git ls-files | xargs grep -n TODO",
-        "sed -n 1,40p src/main.rs",
-        "sed -i '' 's/a/b/' Sources/App.swift",
-        "perl -pi -e 's/a/b/' lib.py",
-        "cat src/a.rs src/b.rs",
-        "X=1 head -50 README.md",
-        "python3 - <<'EOF'\nopen('a.rs','w').write(s.replace('a','b'))\nEOF\ngrep -n x a.rs",
-        "cargo test 2>&1 | grep -E 'FAILED|panicked'",
-        "cd crates && cargo test -q -p acus-cli | tail -30",
-        "swift build 2>&1 | head -50",
-        "npx tsc --noEmit | head",
-        "pnpm run build | tail -20",
-    ] {
-        assert!(matches!(check(cmd), Some(Verdict::Deny(..))), "{cmd}");
-    }
-}
-
-#[test]
 fn hints_at_edit_scripts() {
     for cmd in [
         "python3 - <<'EOF'\np='src/a.rs'\ns=open(p).read()\nopen(p,'w').write(s.replace('a','b'))\nEOF",
@@ -264,7 +261,7 @@ fn hints_at_edit_scripts() {
 }
 
 #[test]
-fn hints_at_acus_map_for_recursive_listings() {
+fn hints_at_acus_for_listings_and_plain_git() {
     for cmd in [
         "tree -L 2",
         "ls -laR src",
@@ -288,10 +285,6 @@ fn hints_at_acus_map_for_recursive_listings() {
     ] {
         assert!(check(cmd).is_none(), "{cmd}");
     }
-}
-
-#[test]
-fn hints_at_acus_for_plain_git_status_diff_and_show() {
     for (cmd, rule) in [
         ("git status", "git-status"),
         ("git diff", "git-diff"),
@@ -336,29 +329,6 @@ fn code_extensions_cover_every_outlined_language() {
         assert!(CODE.contains(&ext), "{ext}");
     }
     assert!(!CODE.contains(&"m"));
-}
-
-#[test]
-fn allows_filters_data_and_escapes() {
-    for cmd in [
-        "cargo tree | grep serde",
-        "cargo test 2>&1 | tee test.log",
-        "acus run 'cargo test | tail'",
-        "npm install | tail -3",
-        "git commit -m \"fix; grep foo\"",
-        "cat > notes.md <<'EOF'\ngrep foo bar\nEOF",
-        "acus patch <<'P'\nsed -i x a.rs\nP",
-        "cat Cargo.lock",
-        "tail -f server.log",
-        "cat a.rs > b.rs",
-        "sed 's/a/b/' input.txt",
-        "ls src && find . -name '*.rs'",
-        "python3 - <<'EOF'\nimport json\nprint(json.load(open('data.json'))['x'].replace('a','b'))\nEOF",
-        "python3 - <<'EOF'\nrows=open('in.csv').read().replace(';',',')\nopen('out.csv','w').write(rows)\nEOF",
-        "acus patch <<'P'\n*** Update File: tool.py\n<<<<<<< SEARCH\nx\n=======\nopen('a.py','w').write(s.replace('a','b'))\n>>>>>>> REPLACE\nP",
-    ] {
-        assert_eq!(check(cmd), None, "{cmd}");
-    }
 }
 
 #[test]

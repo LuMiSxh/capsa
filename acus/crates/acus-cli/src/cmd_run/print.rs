@@ -66,6 +66,13 @@ pub(crate) fn json(report: &RunReport) -> serde_json::Value {
     if let Some(s) = &report.repeat {
         doc["repeat"] = serde_json::json!({"count": s.count, "key": s.key});
     }
+    doc["summary"] = serde_json::json!(report.summary);
+    if let Some(profile) = &report.profile {
+        doc["profile"] = serde_json::json!(profile);
+    }
+    if report.explain && !report.stats.is_empty() {
+        doc["noise"] = serde_json::json!(report.stats);
+    }
     doc
 }
 
@@ -79,33 +86,26 @@ fn cut_line(line: &str, cut: Option<u64>) -> String {
     cut.map_or_else(|| line.to_owned(), |n| clip(line, 0, n as usize))
 }
 
-/// Prints the lines, or their head and tail with the gap noted. `--tail` already bounds the
-/// output, and a cut must not hide the failures it keeps.
+/// Prints the kept lines; `--max-output` already kept every failure block and the tail.
 fn print_lines(report: &RunReport, budget: &mut Budget) {
-    let half = report.max_output.max(2) / 2;
     let cut = |l: &String| cut_line(l, report.cut);
-    if report.omitted > 0 {
-        report.lines[..half]
-            .iter()
-            .map(cut)
-            .for_each(|l| budget.emit(&l));
-        budget.emit(&format!("… {} output lines omitted", report.omitted));
-        report.lines[report.lines.len() - half..]
-            .iter()
-            .map(cut)
-            .for_each(|l| budget.emit(&l));
-    } else {
-        report.lines.iter().map(cut).for_each(|l| budget.emit(&l));
-    }
+    report.lines.iter().map(cut).for_each(|l| budget.emit(&l));
 }
 
 /// Notes on what was dropped, and where the full output was saved.
 fn print_notes(out: &Out, report: &RunReport, budget: &mut Budget) {
     if report.dropped > 0 {
-        let tests = if report.passed > 0 {
-            format!("; {} tests passed", report.passed)
-        } else {
-            String::new()
+        let s = report.summary;
+        let tests = match (s.passed, s.skipped, s.failed) {
+            (0, 0, 0) => String::new(),
+            (1, 0, 0) => "; 1 test passed".to_owned(),
+            (p, 0, 0) => format!("; {p} tests passed"),
+            (0, k, 0) => format!("; {k} skipped"),
+            (p, k, 0) => format!("; {p} passed, {k} skipped"),
+            (0, 0, f) => format!("; {f} failed"),
+            (p, 0, f) => format!("; {p} passed, {f} failed"),
+            (0, k, f) => format!("; {k} skipped, {f} failed"),
+            (p, k, f) => format!("; {p} passed, {k} skipped, {f} failed"),
         };
         budget.emit(&paint(
             &format!(
@@ -115,6 +115,19 @@ fn print_notes(out: &Out, report: &RunReport, budget: &mut Budget) {
             Tone::Dim,
             out.color,
         ));
+    }
+    if report.explain {
+        if let Some(profile) = &report.profile {
+            budget.emit(&paint(
+                &format!("… detected: {profile}"),
+                Tone::Dim,
+                out.color,
+            ));
+        }
+        let kinds = report.stats.render();
+        if !kinds.is_empty() {
+            budget.emit(&paint(&format!("… by kind: {kinds}"), Tone::Dim, out.color));
+        }
     }
     if report.grep_dropped > 0 {
         let why = if report.nothing_matched && report.dropped > 0 {

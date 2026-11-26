@@ -1,0 +1,5 @@
+running 2 tests from ./a_test.ts
+test adds ... ok (1ms)
+test subtracts ... ok (1ms)
+
+ok | 2 passed | 0 failed (10ms)

@@ -262,7 +262,7 @@ fn new_conversions_never_pass_user_text_unquoted() {
 }
 
 #[test]
-fn grep_without_r_on_a_directory_is_not_rewritten() {
+fn a_directory_operand_keeps_the_rewrite_off() {
     // grep prints "Is a directory" and searches nothing for a directory operand without -r; acus
     // find recurses, so such a call is refused without a replacement.
     let dir = tempfile::tempdir().unwrap();
@@ -303,10 +303,8 @@ fn grep_without_r_on_a_directory_is_not_rewritten() {
     let fixed = Scope::fixed("/repo");
     assert!(rewrite("grep -n foo justfile", Some(&fixed)).is_some());
     assert!(rewrite("grep -n foo /tmp/x.rs", Some(&fixed)).is_some());
-}
 
-#[test]
-fn cat_of_several_files_is_rewritten_unless_one_is_a_directory() {
+    // A `cat` of several files is rewritten too, unless one is a directory.
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.md"), "# a\n").unwrap();
     std::fs::write(dir.path().join("b.md"), "# b\n").unwrap();

@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+────────────
+ Nextest run ID 1f79aa0d-4ec8-4a5c-aa83-5e8dc2f36573 with nextest profile: default
+    Starting 2 tests across 1 binary
+        PASS [   0.018s] foo::bin tests::a
+        FAIL [   0.019s] foo::bin tests::c
+
+--- STDOUT:              foo::bin tests::c ---
+starting
+--- STDERR:              foo::bin tests::c ---
+thread 'tests::c' panicked at src/lib.rs:2:5:
+boom
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+────────────
+     Summary [   0.020s] 2 tests run: 1 passed, 1 failed, 0 skipped
+        FAIL [   0.019s] foo::bin tests::c
+error: test run failed

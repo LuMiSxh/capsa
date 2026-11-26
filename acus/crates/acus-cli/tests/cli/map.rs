@@ -2,7 +2,7 @@
 use crate::common::*;
 
 #[test]
-fn map_takes_several_paths_and_ignores_a_repeated_root() {
+fn map_takes_paths_and_caps_the_output() {
     let (code, out, err) = acus(&["map", "src", "web"]);
     assert_eq!((code, err.as_str()), (0, ""));
     assert!(out.starts_with("== .  "), "{out}");
@@ -13,10 +13,7 @@ fn map_takes_several_paths_and_ignores_a_repeated_root() {
     let (_, once, _) = acus(&["map", "src"]);
     let (_, twice, _) = acus(&["map", "src", "src"]);
     assert_eq!(twice, once);
-}
 
-#[test]
-fn map_takes_head_and_cut() {
     let (code, out, _) = acus(&["map", "src", "--head", "1"]);
     assert_eq!(code, 0);
     assert_eq!(out.lines().count(), 2, "{out}");

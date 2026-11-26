@@ -60,7 +60,7 @@ impl Sandbox {
 const ENABLED: &str = "[script]\nmcp = [\"fake\"]\ntimeout = 3\n";
 
 #[test]
-fn imported_server_tools_return_their_results() {
+fn script_calls_mcp_tools() {
     let sandbox = Sandbox::new(ENABLED);
     let code = r#"
 import fake from "mcp:fake";
@@ -78,22 +78,14 @@ return {text, structured, raw};
         sandbox.script(code),
         (0, expected.to_owned(), String::new())
     );
-}
 
-#[test]
-fn tools_export_lists_the_server_tools() {
-    let sandbox = Sandbox::new(ENABLED);
     let code =
         "import {tools} from \"mcp:fake\"; return tools.map(t => t.name + \": \" + t.description)";
     let (code, out, err) = sandbox.script(code);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("echo: Echoes text"), "{out}");
     assert!(out.contains("hang: Never answers"), "{out}");
-}
 
-#[test]
-fn a_tool_error_throws_its_text() {
-    let sandbox = Sandbox::new(ENABLED);
     let caught = "import fake from \"mcp:fake\"\ntry { await fake.fail({}); } catch (e) { return e.message; }";
     assert_eq!(
         sandbox.script(caught),

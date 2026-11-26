@@ -1,0 +1,13 @@
+[1/2] Compiling Foo.swift
+[2/2] Emitting module FooTests
+Build complete! (0.10s)
+Test Suite 'All tests' started at 2026-11-26 10:00:00.000
+Test Suite 'FooTests' started at 2026-11-26 10:00:00.001
+Test Case '-[FooTests.FooTests testA]' started.
+Test Case '-[FooTests.FooTests testA]' passed (0.001 seconds).
+Test Case '-[FooTests.FooTests testB]' started.
+Test Case '-[FooTests.FooTests testB]' passed (0.001 seconds).
+Test Suite 'FooTests' passed at 2026-11-26 10:00:00.002
+     Executed 2 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'All tests' passed at 2026-11-26 10:00:00.003
+     Executed 2 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds

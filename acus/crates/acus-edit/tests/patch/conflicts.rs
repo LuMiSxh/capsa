@@ -77,7 +77,7 @@ fn line_targets_resolve_only_their_section_in_one_patch() {
 }
 
 #[test]
-fn delete_lines_below_a_resolved_section_counts_from_the_file_before_the_patch() {
+fn delete_lines_around_a_resolved_section_count_from_the_file_before_the_patch() {
     let d = dir(&[("a.txt", SECTION_THEN_LINES)]);
     run(
         d.path(),
@@ -86,10 +86,7 @@ fn delete_lines_below_a_resolved_section_counts_from_the_file_before_the_patch()
     )
     .unwrap();
     assert_eq!(read(d.path(), "a.txt"), "top\nours\nmiddle\nbottom\n");
-}
 
-#[test]
-fn delete_lines_above_a_resolved_section_counts_from_the_file_before_the_patch() {
     let d = dir(&[("a.txt", SECTION_THEN_LINES)]);
     run(
         d.path(),
@@ -151,13 +148,21 @@ fn update_file_after_a_resolve_sees_the_resolved_text() {
 }
 
 #[test]
-fn a_file_without_markers_fails_and_writes_nothing() {
+fn a_file_without_conflict_markers_fails_and_writes_nothing() {
     let d = dir(&[("a.txt", "keep\n")]);
     let e = run(d.path(), "*** Resolve Conflict: a.txt --ours\n")
         .unwrap_err()
         .shown();
     assert!(e.contains("a.txt: no conflict markers"), "{e}");
     assert_eq!(read(d.path(), "a.txt"), "keep\n");
+
+    let before = "<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n";
+    let d = dir(&[("a.md", before)]);
+    let e = run(d.path(), "*** Resolve Conflict: a.md --ours\n")
+        .unwrap_err()
+        .shown();
+    assert!(e.contains("a.md: no conflict markers"), "{e}");
+    assert_eq!(read(d.path(), "a.md"), before);
 }
 
 #[test]
@@ -210,18 +215,7 @@ fn a_real_conflict_still_skips_the_syntax_check() {
 }
 
 #[test]
-fn resolve_conflict_refuses_a_file_with_only_search_replace_blocks() {
-    let before = "<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n";
-    let d = dir(&[("a.md", before)]);
-    let e = run(d.path(), "*** Resolve Conflict: a.md --ours\n")
-        .unwrap_err()
-        .shown();
-    assert!(e.contains("a.md: no conflict markers"), "{e}");
-    assert_eq!(read(d.path(), "a.md"), before);
-}
-
-#[test]
-fn an_unterminated_section_fails_and_writes_nothing() {
+fn bad_resolve_requests_fail_and_write_nothing() {
     let before = "a\n<<<<<<< HEAD\nours\n=======\ntheirs\n";
     let d = dir(&[("a.txt", before)]);
     let e = run(d.path(), "*** Resolve Conflict: a.txt --ours\n")
@@ -229,10 +223,7 @@ fn an_unterminated_section_fails_and_writes_nothing() {
         .shown();
     assert!(e.contains("a.txt:2: unterminated conflict section"), "{e}");
     assert_eq!(read(d.path(), "a.txt"), before);
-}
 
-#[test]
-fn a_line_outside_every_section_fails() {
     let d = dir(&[("a.txt", TWO_SECTIONS)]);
     let e = run(d.path(), "*** Resolve Conflict: a.txt:9 --ours\n")
         .unwrap_err()
@@ -242,10 +233,7 @@ fn a_line_outside_every_section_fails() {
         "{e}"
     );
     assert_eq!(read(d.path(), "a.txt"), TWO_SECTIONS);
-}
 
-#[test]
-fn base_needs_the_diff3_section() {
     let before = "a\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n";
     let d = dir(&[("a.txt", before)]);
     let e = run(d.path(), "*** Resolve Conflict: a.txt --base\n")
@@ -286,4 +274,69 @@ fn resolves_conflicts_in_a_gated_language() {
     )]);
     run(d.path(), "*** Resolve Conflict: a.rs --ours\n").unwrap();
     assert_eq!(read(d.path(), "a.rs"), "fn f() -> u8 {\n    1\n}\n");
+}
+
+#[test]
+fn an_update_block_can_quote_a_whole_conflict_section() {
+    let d = dir(&[(
+        "a.txt",
+        "top\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nbottom\n",
+    )]);
+    run(
+        d.path(),
+        "*** Update File: a.txt\n<<<<<<< SEARCH\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n=======\nresolved\n>>>>>>> REPLACE\n",
+    )
+    .unwrap();
+    assert_eq!(read(d.path(), "a.txt"), "top\nresolved\nbottom\n");
+}
+
+#[test]
+fn a_replace_may_contain_a_separator_line() {
+    let d = dir(&[("a.txt", "title\n")]);
+    run(
+        d.path(),
+        "*** Update File: a.txt\n<<<<<<< SEARCH\ntitle\n=======\nTitle\n=======\n>>>>>>> REPLACE\n",
+    )
+    .unwrap();
+    assert_eq!(read(d.path(), "a.txt"), "Title\n=======\n");
+}
+
+#[test]
+fn a_patch_that_leaves_an_unmatched_closer_is_refused() {
+    let d = dir(&[("a.txt", "title\n")]);
+    let before = read(d.path(), "a.txt");
+    let e = run(
+        d.path(),
+        "*** Update File: a.txt\n<<<<<<< SEARCH\ntitle\n=======\ntitle\n>>>>>>> branch\n>>>>>>> REPLACE\n",
+    )
+    .unwrap_err()
+    .shown();
+    assert!(e.contains("unmatched conflict marker"), "{e}");
+    assert_eq!(read(d.path(), "a.txt"), before);
+}
+
+#[test]
+fn a_patch_that_adds_conflict_markers_is_refused() {
+    let d = dir(&[("a.txt", "title\n")]);
+    let before = read(d.path(), "a.txt");
+    let e = run(
+        d.path(),
+        concat!(
+            "*** Update File: a.txt\n",
+            "<<<<<<< SEARCH\n",
+            "title\n",
+            "=======\n",
+            "title\n",
+            "<<<<<<< HEAD\n",
+            "ours\n",
+            "=======\n",
+            "theirs\n",
+            ">>>>>>> branch\n",
+            ">>>>>>> REPLACE\n",
+        ),
+    )
+    .unwrap_err()
+    .shown();
+    assert!(e.contains("would add conflict markers"), "{e}");
+    assert_eq!(read(d.path(), "a.txt"), before);
 }

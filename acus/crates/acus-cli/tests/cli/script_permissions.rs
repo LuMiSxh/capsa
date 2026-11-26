@@ -80,12 +80,6 @@ fn a_denied_bash_rule_refuses_run_and_names_the_rule() {
         "{err}"
     );
     assert!(sandbox.repo().join("notes.txt").exists());
-}
-
-#[test]
-fn a_denied_rule_covers_each_part_of_a_compound_command() {
-    let sandbox = Sandbox::new();
-    sandbox.project(r#"{"permissions": {"deny": ["Bash(rm:*)"]}}"#);
     let (code, _, err) = sandbox.script("return await run('echo hi && rm notes.txt');");
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("`Bash(rm:*)`"), "{err}");
@@ -148,13 +142,10 @@ fn a_project_deny_beats_a_user_allow() {
     let (code, _, err) = sandbox.script("return await read('.env');");
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("`Read(.env)`"), "{err}");
-}
 
-#[test]
-fn a_user_deny_applies_in_every_project() {
-    let sandbox = Sandbox::new();
-    sandbox.user(r#"{"permissions": {"deny": ["Bash(echo:*)"]}}"#);
-    let (code, _, err) = sandbox.script("return await run('echo hi');");
+    let user = Sandbox::new();
+    user.user(r#"{"permissions": {"deny": ["Bash(echo:*)"]}}"#);
+    let (code, _, err) = user.script("return await run('echo hi');");
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("permissions.deny"), "{err}");
 }

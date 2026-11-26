@@ -24,7 +24,7 @@ fn printed_addrs(out: &str) -> Vec<String> {
 }
 
 #[test]
-fn callers_follow_sure_edges_and_indent_by_level() {
+fn follow_reports_callers_in_text_and_json() {
     let d = fixture(&[("lib.rs", LIB), ("main.rs", MAIN)]);
     let (code, out, err) = acus_in(d.path(), &["follow", "lib.rs#parse"], "");
     assert_eq!((code, err.as_str()), (0, ""));
@@ -32,11 +32,7 @@ fn callers_follow_sure_edges_and_indent_by_level() {
         out,
         "lib.rs#parse  fn 1-3  callers depth 2\n  lib.rs#run  6  let n = parse(src);\n    main.rs#main  2  let n = run(\"x\");\n"
     );
-}
 
-#[test]
-fn follow_takes_head_and_cut() {
-    let d = fixture(&[("lib.rs", LIB), ("main.rs", MAIN)]);
     let (code, out, _) = acus_in(d.path(), &["follow", "lib.rs#parse", "--head", "2"], "");
     assert_eq!(code, 0);
     assert_eq!(out.lines().count(), 3, "{out}");
@@ -46,11 +42,7 @@ fn follow_takes_head_and_cut() {
     );
     let (_, out, _) = acus_in(d.path(), &["follow", "lib.rs#parse", "--cut", "10"], "");
     assert!(out.lines().nth(1).unwrap().contains("… (+"), "{out}");
-}
 
-#[test]
-fn json_lists_edges_with_from_to_and_depth() {
-    let d = fixture(&[("lib.rs", LIB), ("main.rs", MAIN)]);
     let (code, out, _) = acus_in(d.path(), &["follow", "lib.rs#parse", "--json"], "");
     assert_eq!(code, 0);
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -67,17 +59,12 @@ fn json_lists_edges_with_from_to_and_depth() {
     assert_eq!(edges[1]["to"].as_str(), Some("lib.rs#run"));
     assert_eq!(edges[1]["depth"], 2);
     assert_eq!(v["truncated"], serde_json::json!([]));
-}
 
-#[test]
-fn method_calls_with_unknown_receiver_are_unsure_and_not_followed() {
-    let method = "pub struct Store;\nimpl Store {\n    pub fn save(&self) -> u8 { 1 }\n}\npub fn flush(s: &Store) -> u8 {\n    s.save()\n}\npub fn top(s: &Store) -> u8 {\n    flush(s)\n}\n";
-    let d = fixture(&[("method.rs", method)]);
-    let (code, out, _) = acus_in(d.path(), &["follow", "method.rs#Store::save"], "");
+    let (code, out, _) = acus_in(d.path(), &["follow", "lib.rs#parse", "-d", "1"], "");
     assert_eq!(code, 0);
     assert_eq!(
         out,
-        "method.rs#Store::save  fn 3-3  callers depth 2\n  method.rs#flush  6  ?  s.save()\n"
+        "lib.rs#parse  fn 1-3  callers depth 1\n  lib.rs#run  6  let n = parse(src);\n    … depth limit: acus follow lib.rs#run\n"
     );
 }
 
@@ -95,30 +82,32 @@ fn macro_argument_calls_are_unsure() {
 }
 
 #[test]
-fn a_macro_call_is_not_a_caller_of_a_fn_of_the_same_name() {
+fn macro_calls_do_not_count_as_calls_in_either_direction() {
     let lib = "pub fn format(x: u8) -> u8 {\n    x\n}\n";
     let main = "fn main() {\n    let s = format!(\"{}\", 1);\n    println!(\"{s}\");\n}\n";
     let d = fixture(&[("lib.rs", lib), ("main.rs", main)]);
     let (code, out, _) = acus_in(d.path(), &["follow", "lib.rs#format"], "");
     assert_eq!(code, 1);
     assert_eq!(out, "lib.rs#format  fn 1-3  callers depth 2\n");
-}
-
-#[test]
-fn down_macro_call_does_not_reach_a_fn_of_the_same_name() {
-    let lib = "pub fn format(x: u8) -> u8 {\n    x\n}\n";
-    let main = "fn main() {\n    let s = format!(\"{}\", 1);\n    println!(\"{s}\");\n}\n";
-    let d = fixture(&[("lib.rs", lib), ("main.rs", main)]);
     let (code, out, _) = acus_in(d.path(), &["follow", "main.rs#main", "--down"], "");
     assert_eq!(code, 1);
     assert_eq!(out, "main.rs#main  fn 1-4  callees depth 2\n");
 }
 
 #[test]
-fn down_counts_unresolved_method_calls_instead_of_listing_them() {
+fn unresolved_method_calls_are_unsure() {
+    let method = "pub struct Store;\nimpl Store {\n    pub fn save(&self) -> u8 { 1 }\n}\npub fn flush(s: &Store) -> u8 {\n    s.save()\n}\npub fn top(s: &Store) -> u8 {\n    flush(s)\n}\n";
+    let d = fixture(&[("method.rs", method)]);
+    let (code, out, _) = acus_in(d.path(), &["follow", "method.rs#Store::save"], "");
+    assert_eq!(code, 0);
+    assert_eq!(
+        out,
+        "method.rs#Store::save  fn 3-3  callers depth 2\n  method.rs#flush  6  ?  s.save()\n"
+    );
+
     let lib = "pub struct A;\nimpl A {\n    pub fn get(&self) -> u8 { 1 }\n}\npub struct B;\nimpl B {\n    pub fn get(&self) -> u8 { 2 }\n}\npub fn run(v: &Vec<u8>) -> u8 {\n    v.get(0)\n}\n";
-    let d = fixture(&[("lib.rs", lib)]);
-    let (code, out, _) = acus_in(d.path(), &["follow", "lib.rs#run", "--down"], "");
+    let down = fixture(&[("lib.rs", lib)]);
+    let (code, out, _) = acus_in(down.path(), &["follow", "lib.rs#run", "--down"], "");
     assert_eq!(code, 1);
     assert_eq!(
         out,
@@ -135,17 +124,6 @@ fn a_cycle_prints_seen_above_and_stops() {
     assert_eq!(
         out,
         "cycle.rs#a  fn 1-3  callers depth 3\n  cycle.rs#b  5  a(n)\n    cycle.rs#a  2  b(n)  (seen above)\n"
-    );
-}
-
-#[test]
-fn depth_limit_prints_the_next_command() {
-    let d = fixture(&[("lib.rs", LIB), ("main.rs", MAIN)]);
-    let (code, out, _) = acus_in(d.path(), &["follow", "lib.rs#parse", "-d", "1"], "");
-    assert_eq!(code, 0);
-    assert_eq!(
-        out,
-        "lib.rs#parse  fn 1-3  callers depth 1\n  lib.rs#run  6  let n = parse(src);\n    … depth limit: acus follow lib.rs#run\n"
     );
 }
 
@@ -185,20 +163,17 @@ fn unsure_callers_collapse_past_the_cap_and_all_lifts_it() {
 }
 
 #[test]
-fn python_init_is_called_by_the_class_name() {
+fn python_and_typescript_constructors_are_called_by_name() {
     let models = "class Foo:\n    def __init__(self, x):\n        self.x = x\n\n\ndef make():\n    return Foo(1)\n";
     let d = fixture(&[("models.py", models)]);
     let (code, out, _) = acus_in(d.path(), &["follow", "models.py#Foo.__init__"], "");
     assert_eq!(code, 0);
     assert!(out.contains("callers depth 2"), "{out}");
     assert!(out.contains("models.py#make  7  return Foo(1)"), "{out}");
-}
 
-#[test]
-fn typescript_constructor_is_called_by_new() {
     let models = "export class Foo {\n  constructor(x: number) {\n    this.x = x;\n  }\n}\n\nexport function make(): Foo {\n  return new Foo(1);\n}\n";
-    let d = fixture(&[("models.ts", models)]);
-    let (code, out, _) = acus_in(d.path(), &["follow", "models.ts#Foo.constructor"], "");
+    let ts = fixture(&[("models.ts", models)]);
+    let (code, out, _) = acus_in(ts.path(), &["follow", "models.ts#Foo.constructor"], "");
     assert_eq!(code, 0);
     assert!(
         out.contains("models.ts#make  8  return new Foo(1);"),
@@ -309,10 +284,8 @@ fn this_and_self_method_calls_are_sure_edges_both_ways() {
 }
 
 #[test]
-fn one_line_functions_are_followed_by_byte_position() {
-    // Both functions sit on line 1: each call is matched to its enclosing symbol by byte.
-    let rs = "fn a() { b(); } fn b() {}\n";
-    let d = fixture(&[("one.rs", rs)]);
+fn one_line_symbols_are_followed_by_byte_position() {
+    let d = fixture(&[("one.rs", "fn a() { b(); } fn b() {}\n")]);
     let (code, out, err) = acus_in(d.path(), &["follow", "one.rs#b"], "");
     assert_eq!((code, err.as_str()), (0, ""));
     assert_eq!(
@@ -325,38 +298,29 @@ fn one_line_functions_are_followed_by_byte_position() {
         out,
         "one.rs#a  fn 1-1  callees depth 2\n  one.rs#b  1  fn a() { b(); } fn b() {}\n"
     );
-}
 
-#[test]
-fn one_line_recursion_is_not_a_caller_but_other_callers_are_kept() {
-    // r calls itself, which is not a caller of r; s calls r on the same line and is one.
-    let rs = "fn r() { r(); } fn s() { r(); }\n";
-    let d = fixture(&[("rec.rs", rs)]);
-    let (code, out, _) = acus_in(d.path(), &["follow", "rec.rs#r"], "");
+    let rec = fixture(&[("rec.rs", "fn r() { r(); } fn s() { r(); }\n")]);
+    let (code, out, _) = acus_in(rec.path(), &["follow", "rec.rs#r"], "");
     assert_eq!(code, 0);
     assert_eq!(
         out,
         "rec.rs#r  fn 1-1  callers depth 2\n  rec.rs#s  1  fn r() { r(); } fn s() { r(); }\n"
     );
-    let (code, out, _) = acus_in(d.path(), &["follow", "rec.rs#s", "--down"], "");
+    let (code, out, _) = acus_in(rec.path(), &["follow", "rec.rs#s", "--down"], "");
     assert_eq!(code, 0);
     assert_eq!(
         out,
         "rec.rs#s  fn 1-1  callees depth 2\n  rec.rs#r  1  fn r() { r(); } fn s() { r(); }\n"
     );
-}
 
-#[test]
-fn minified_js_one_liner_lists_callers_and_callees() {
-    let js = "function a(){b()}function b(){}\n";
-    let d = fixture(&[("min.js", js)]);
-    let (code, out, _) = acus_in(d.path(), &["follow", "min.js#b"], "");
+    let js = fixture(&[("min.js", "function a(){b()}function b(){}\n")]);
+    let (code, out, _) = acus_in(js.path(), &["follow", "min.js#b"], "");
     assert_eq!(code, 0);
     assert!(
         out.contains("  min.js#a  1  function a(){b()}function b(){}"),
         "{out}"
     );
-    let (code, out, _) = acus_in(d.path(), &["follow", "min.js#a", "--down"], "");
+    let (code, out, _) = acus_in(js.path(), &["follow", "min.js#a", "--down"], "");
     assert_eq!(code, 0);
     assert!(
         out.contains("  min.js#b  1  function a(){b()}function b(){}"),

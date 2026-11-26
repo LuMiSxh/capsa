@@ -51,22 +51,23 @@ impl Sandbox {
 }
 
 #[test]
-fn write_creates_a_file_and_prints_the_written_lines() {
+fn write_creates_or_replaces_a_file() {
     let sandbox = Sandbox::new();
-    let (code, out, err) =
-        sandbox.script("return (await write('new.txt', 'alpha\\nbeta\\n')).changes;");
-    assert_eq!(code, 0, "{err}");
-    assert!(out.contains("A new.txt +2"), "{out}");
-    assert_eq!(sandbox.file("new.txt"), "alpha\nbeta\n");
-}
-
-#[test]
-fn write_replaces_a_file_that_exists() {
-    let sandbox = Sandbox::new();
-    let (code, out, err) = sandbox.script("return (await write('b.txt', 'only\\n')).changes;");
-    assert_eq!(code, 0, "{err}");
-    assert!(out.contains("M b.txt +1 -2"), "{out}");
-    assert_eq!(sandbox.file("b.txt"), "only\n");
+    for (name, text, summary, written) in [
+        (
+            "new.txt",
+            "alpha\\nbeta\\n",
+            "A new.txt +2",
+            "alpha\nbeta\n",
+        ),
+        ("b.txt", "only\\n", "M b.txt +1 -2", "only\n"),
+    ] {
+        let code = format!("return (await write('{name}', '{text}')).changes;");
+        let (code, out, err) = sandbox.script(&code);
+        assert_eq!(code, 0, "{name}: {err}");
+        assert!(out.contains(summary), "{name}: {out}");
+        assert_eq!(sandbox.file(name), written, "{name}");
+    }
 }
 
 #[test]
@@ -97,16 +98,13 @@ fn an_array_patch_applies_every_edit() {
     assert_eq!(status, 0, "{err}");
     assert_eq!(sandbox.file("a.txt"), "1\ntwo\ntwo\n");
     assert_eq!(sandbox.file("b.txt"), "L\nright\n");
-}
 
-#[test]
-fn an_array_patch_with_a_failing_edit_writes_nothing() {
-    let sandbox = Sandbox::new();
+    let failing = Sandbox::new();
     let code = "return await patch([{path: 'a.txt', old: 'one', new: '1'}, {path: 'b.txt', old: 'missing', new: 'x'}]);";
-    let (status, _, err) = sandbox.script(code);
+    let (status, _, err) = failing.script(code);
     assert_eq!(status, 2, "{err}");
-    assert_eq!(sandbox.file("a.txt"), "one\ntwo\ntwo\n");
-    assert_eq!(sandbox.file("b.txt"), "left\nright\n");
+    assert_eq!(failing.file("a.txt"), "one\ntwo\ntwo\n");
+    assert_eq!(failing.file("b.txt"), "left\nright\n");
 }
 
 #[test]
@@ -120,10 +118,13 @@ fn a_path_outside_the_repository_is_refused() {
             "return await write({:?}, 'x');",
             outside.display().to_string()
         ),
+        "return await patch(`*** Begin Patch\n*** Add File: ../outside.txt\n+x\n*** End Patch`);"
+            .to_owned(),
+        "return await write('missing/../../outside.txt', 'x');".to_owned(),
     ] {
         let (status, _, err) = sandbox.script(&code);
-        assert_eq!(status, 2, "{err}");
-        assert!(err.contains("outside the repository"), "{err}");
+        assert_eq!(status, 2, "{code}: {err}");
+        assert!(err.contains("outside the repository"), "{code}: {err}");
     }
     assert!(!outside.exists());
 }
@@ -168,7 +169,7 @@ return (await hits).length;";
 }
 
 #[test]
-fn an_edit_clears_the_results_remembered_before_it() {
+fn a_write_clears_the_results_remembered_before_it() {
     let sandbox = Sandbox::new();
     let code = "const before = (await find('one')).length;
 const again = (await find('one')).length;
@@ -182,6 +183,16 @@ return [before, again, after];";
         compact.contains("1,1,0") || compact.contains("[1,1,0]"),
         "{out}"
     );
+
+    let run = Sandbox::new();
+    let code = "const before = (await find('one')).length;
+await run('echo uno > a.txt');
+const after = (await find('one')).length;
+return [before, after];";
+    let (status, out, err) = run.script(code);
+    assert_eq!(status, 0, "{err}");
+    let compact: String = out.split_whitespace().collect();
+    assert!(compact.contains("1,0"), "{out}");
 }
 
 #[test]
@@ -213,27 +224,6 @@ fn edit_replaces_text_with_a_newline_as_a_plain_substring() {
     assert_eq!(sandbox.file("a.txt"), "uno two\ntwo\n");
 }
 
-#[test]
-fn a_string_patch_outside_the_repository_is_refused() {
-    let sandbox = Sandbox::new();
-    let outside = sandbox.dir.path().join("outside.txt");
-    let patch =
-        "return await patch(`*** Begin Patch\n*** Add File: ../outside.txt\n+x\n*** End Patch`);";
-    let (status, _, err) = sandbox.script(patch);
-    assert_eq!(status, 2, "{err}");
-    assert!(err.contains("outside the repository"), "{err}");
-    assert!(!outside.exists());
-}
-
-#[test]
-fn a_dotdot_after_a_missing_directory_does_not_escape() {
-    let sandbox = Sandbox::new();
-    let (status, _, err) = sandbox.script("return await write('missing/../../outside.txt', 'x');");
-    assert_eq!(status, 2, "{err}");
-    assert!(err.contains("outside the repository"), "{err}");
-    assert!(!sandbox.dir.path().join("outside.txt").exists());
-}
-
 #[cfg(unix)]
 #[test]
 fn a_dotdot_after_a_symlink_leaves_through_the_link_and_is_refused() {
@@ -253,19 +243,6 @@ fn a_dotdot_after_a_symlink_leaves_through_the_link_and_is_refused() {
         assert!(err.contains("outside the repository"), "{code}: {err}");
     }
     assert!(!sandbox.dir.path().join("far/x.txt").exists());
-}
-
-#[test]
-fn a_run_clears_the_results_remembered_before_it() {
-    let sandbox = Sandbox::new();
-    let code = "const before = (await find('one')).length;
-await run('echo uno > a.txt');
-const after = (await find('one')).length;
-return [before, after];";
-    let (status, out, err) = sandbox.script(code);
-    assert_eq!(status, 0, "{err}");
-    let compact: String = out.split_whitespace().collect();
-    assert!(compact.contains("1,0"), "{out}");
 }
 
 #[test]

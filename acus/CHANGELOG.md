@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-26
+
+### Added
+
+- `acus run` detects the test runner from its output: cargo test, cargo nextest, Swift XCTest and
+  swift-testing, pytest, go test, vitest and jest, Bun, Deno, RSpec, PHPUnit, CTest and dotnet
+  test. It drops their passing, skipped and progress lines, and the footer carries the counts
+  (`N passed, M skipped, K failed`). A failing run keeps the failure lines, their captured
+  output, the failing summary and the exit error. SwiftPM's `Building for debugging...` and
+  `Build complete!` and swift-testing's library banner go too, and nested XCTest `Executed`
+  summaries fold to the last one.
+- `acus run --explain` names the detected runner and how many lines each noise kind dropped.
+- `acus run` with no command prefers `cargo nextest run` on a Cargo project when nextest is
+  installed, and falls back to `cargo test -q`.
+- `acus run` folds a run of four or more similar status lines from a tool it does not know,
+  keeping the first and last line and counting the rest, as long as the run carries no error,
+  warning or failure.
+
+### Changed
+
+- `acus run --max-output N` keeps every failure block and the last N lines, instead of the first
+  and last halves, so a failure in the middle survives the budget.
+
+### Fixed
+
+- `acus patch` reads a SEARCH block that quotes a whole conflict section correctly: the `=======`
+  inside the quoted section is text, not the block's separator. It also refuses to write an
+  unmatched conflict marker, or to add conflict markers to a file that had none, unless
+  `--allow-broken`.
+
 ## [0.25.0] - 2026-11-23
 
 ### Added
@@ -23,21 +53,21 @@
 - `acus script` and `acus batch` follow Claude Code's permission mode. Hooks (`UserPromptSubmit`,
   `PostToolUse` for `ExitPlanMode` (when plan mode ends), and `PreToolUse` when it carries `permission_mode`) record it per session in
   `<state dir>/permission-mode/<session id>.json`; `acus self setup` registers them and `self
-  doctor` checks them. In `plan` mode a script refuses `run()` and edits; in `dontAsk` mode it
+doctor` checks them. In `plan` mode a script refuses `run()` and edits; in `dontAsk` mode it
   refuses `run()`, edits, `fetch` and MCP calls that no allow rule covers. `[script] strict = true`
   applies the same to `default`, `auto` and `acceptEdits`. `bypassPermissions` and a mode not
   known behave as before. An edit of `.git/` or a Claude settings file needs an allow rule in
   every other mode, and a `Bash(...)` rule sees the `bash -c` body behind options such as `-o
-  pipefail`, `-ec` and `--`.
+pipefail`, `-ec` and `--`.
 - Script calls obey Claude Code's `Bash(...)`, `Read(...)`, `Edit(...)`, `Write(...)`,
   `WebFetch(...)` and `mcp__` deny and ask rules, and refuse the matching call with a hint. A batch
   applies the `Bash(...)` rules to its `run` lines.
 - Script functions `write(path, text)`, `edit(path, old, new, {all})` and `patch([{path, old, new,
-  all}])` change files under the Edit rules; the array form applies all or nothing.
+all}])` change files under the Edit rules; the array form applies all or nothing.
 - Read-only script calls (`find`, `show`, `outline`, `files`, `follow`, `diff`, `log`, `blame`,
   `read`, `stat`, `exists`) are remembered within one run; a write clears them.
 - Script function `fetch(url, {grep, head})` reads an http or https page as markdown. `[script]
-  fetch_deny` lists hosts it refuses, and `[commands] disabled = ["fetch"]` turns it off.
+fetch_deny` lists hosts it refuses, and `[commands] disabled = ["fetch"]` turns it off.
 - Script function `read(path, {offset, limit, numbered})` reads files under the repository and
   `permissions.additionalDirectories`; an image or binary file returns its metadata.
 - Script functions `stat`, `exists`, `env` (names with `KEY`, `TOKEN`, `SECRET`, `PASS`, `AUTH` or
@@ -124,7 +154,7 @@
 
 - `acus self doctor` gets an `update` line: ok with `<version> is the latest`, a warning with
   `acus self update` as its fix when a newer release exists, or ok with `could not check for
-  updates` when GitHub does not answer within 3 seconds. The newest release is saved in
+updates` when GitHub does not answer within 3 seconds. The newest release is saved in
   `latest.json` in acus's state directory and reused for a day; `acus self update` saves it too.
   `CAPSA_UPDATE_CHECK=off` skips the lookup and reports the line as unchecked. Only `self doctor`
   looks, so no hook, guard or proxy start reaches the network. The check and the release lookup
@@ -141,7 +171,7 @@
   lost write only reads as unknown. With the fsyncs of `write_atomic` a block decision took 10.80 /
   12.07 ms. The bulletin lock costs nothing measurable (2.35 / 2.92 ms p50 / p95 without it).
 - `acus ctx` leads its output with `3rd identical failure of this command in this session, same
-  key line: …` when the same command fails in the same directory with the same error lines three
+key line: …` when the same command fails in the same directory with the same error lines three
   times in a row. A session is identified by `CLAUDE_CODE_SESSION_ID`, which Claude Code sets for
   the commands it runs; without it, runs share one state file. A run more than 30 minutes after
   the previous one starts a new count, and a success clears it. The state is
@@ -152,7 +182,7 @@
   appending, such as one created by `sudo`, fails with a hint, instead of every decision being
   dropped unseen.
 - `acus self doctor` gets an `interop` group, after `guard`, with one line for `census`: `not
-  installed, off`, or census's bulletin age and the features that use it, adaptive guard hints
+installed, off`, or census's bulletin age and the features that use it, adaptive guard hints
   and guard blocks in the census status line. The lines are informational and never fail the
   check. `acus self uninstall` removes acus's bulletins too, `acus.json` and `acus-release.json`,
   with the binary.
@@ -176,7 +206,7 @@
   unreadable bulletin keeps `hint_every`. The census bulletin is read only when a hint is due
   within the bounds, so most calls never open it. The hint counts in `guard-hints/SESSION` gain a
   third field, the call that last showed; older files still read. Benchmark: `hyperfine -N -w 5
-  -r 50 acus hook` (release, `hint_every` = 10, temp state dir) for `git status` (hint) and `ls`
+-r 50 acus hook` (release, `hint_every` = 10, temp state dir) for `git status` (hint) and `ls`
   (pass), p50/p95: hint 2.29/2.54 ms before, 2.27/2.95 ms after; pass 1.90/2.02 ms before,
   1.97/2.10 ms after. A second before run read 2.30/2.39 and 2.13/2.25 ms, so the difference is
   inside the run-to-run noise.
@@ -239,10 +269,10 @@
   `echo` with `>` or `>>`, heredoc or not, and `tee`) under the new rule `file-write`, and names
   `acus patch` (`*** Add File:` / `*** Update File:`) or the Write tool instead. Targets outside
   the repository or under a `$VAR`, data files, Markdown, `/dev/null`, fd redirects and `cat FILE
-  > OUT` copies pass; a write in a loop or group is a hint and `command ` escapes. A python or
-  node edit script (rule `edit-script`) is now refused instead of hinted when every code file it
-  names is a source file in the repository. A segment without `>` or `tee` returns after one
-  substring check; there is no guard benchmark, so no timing is claimed.
+    > OUT`copies pass; a write in a loop or group is a hint and`command `escapes. A python or
+node edit script (rule`edit-script`) is now refused instead of hinted when every code file it
+names is a source file in the repository. A segment without `>`or`tee` returns after one
+    > substring check; there is no guard benchmark, so no timing is claimed.
 - `acus patch --fuzzy` adds a final, opt-in matching pass that ignores whitespace-only
   differences: tabs vs spaces, runs of horizontal whitespace and blank lines. It must match
   once, REPLACE is written as given, and the output notes each block as
@@ -252,7 +282,7 @@
   subagent, which does not see `SessionStart` output. `acus self setup` does not register that
   hook entry.
 - `skill/CORE.md` must stay under 300 words (was 250), and the skill says not to re-read `acus
-  patch` output and to send the whole change set in one patch.
+patch` output and to send the whole change set in one patch.
 
 ### Changed
 

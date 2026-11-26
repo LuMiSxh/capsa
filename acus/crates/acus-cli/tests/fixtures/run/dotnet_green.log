@@ -1,0 +1,11 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  app -> /x/bin/Debug/net8.0/app.dll
+Test run for /x/bin/Debug/net8.0/app.Tests.dll (.NETCoreApp,Version=v8.0)
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+  Passed Test1 [12 ms]
+  Passed Test2 [10 ms]
+  Skipped Test3 [0 ms]
+Passed!  - Failed:     0, Passed:     2, Skipped:     1, Total:     3, Duration: 25 ms - app.Tests.dll
+Test Run Successful.

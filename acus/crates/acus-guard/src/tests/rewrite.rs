@@ -337,10 +337,8 @@ fn rewrites_build_pipes_into_deferred_acus_calls() {
     assert!(r.deferred);
     // A filter run has no flag for stays refused.
     assert_eq!(rw("cargo test | tail -n +5", None), None);
-}
 
-#[test]
-fn build_pipes_chain_their_filters_into_one_ctx_call() {
+    // Several filters chain into one ctx call.
     for (cmd, want) in [
         (
             "swift build --build-tests 2>&1 | grep -E 'error|warning' | grep -v '^\\[' | head -30",
@@ -485,7 +483,11 @@ fn names_the_ctx_flag_that_replaces_a_build_filter() {
 }
 
 #[test]
-fn refuses_acus_ctx_pipes_that_cannot_fold() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one test for the fold and the refusals of a ctx pipe"
+)]
+fn acus_ctx_pipes_fold_or_are_refused() {
     // A pipe inside the quoted command: the pipe goes and its filter becomes the flag.
     let (rule, r) = deny(check(
         "acus run 'swift build --quiet | tail -40' | head -60",
@@ -553,10 +555,7 @@ fn refuses_acus_ctx_pipes_that_cannot_fold() {
         check("command acus run 'cargo test' | tail"),
         Some(Verdict::Escape(Rule::CtxPipe))
     );
-}
 
-#[test]
-fn folds_acus_ctx_pipes_into_its_flags() {
     let cases = [
         (
             "acus run 'cargo test -q' 2>&1 | tail -5",

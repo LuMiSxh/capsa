@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Checks a patch's syntax before anything is written, then writes every changed file.
 
-use super::conflict::has_markers;
 use super::files::{File, Files};
 use crate::error::{EditError, Result};
+use crate::parse::markers::{first_marker, has_markers, unbalanced};
 use acus_syntax::{Lang, is_jsonc, syntax_errors};
 use std::collections::BTreeMap;
 use std::fs;
@@ -12,7 +12,8 @@ use std::path::Path;
 
 /// Files the patch writes whose syntax gets worse: more error nodes than they had before. A file
 /// that held conflict markers is checked only on the result; one that still holds them is not
-/// checked at all. A JSON file that already uses comments or trailing commas is checked as JSONC.
+/// checked at all. A patch may not leave an unmatched marker or add conflict markers where there
+/// were none. A JSON file that already uses comments or trailing commas is checked as JSONC.
 /// Nothing is written yet, so an error here fails the whole patch unless `allow_broken`.
 pub(super) fn check_syntax(
     files: &Files,
@@ -21,7 +22,7 @@ pub(super) fn check_syntax(
     let mut broken = Vec::new();
     let mut unchecked = Vec::new();
     for (path, f) in files.map.iter().filter(|(_, f)| f.dirty) {
-        let (Some(lines), Some(lang)) = (&f.lines, Lang::from_path(Path::new(path))) else {
+        let Some(lines) = &f.lines else {
             continue;
         };
         // The text as `commit` writes it, so the trailing newline counts as it does on disk.
@@ -29,20 +30,44 @@ pub(super) fn check_syntax(
         if f.trailing_newline && !lines.is_empty() {
             text.push('\n');
         }
-        let had_markers = f.before.as_deref().is_some_and(has_markers);
+        let before = f.before.as_deref();
+        let had_markers = before.is_some_and(has_markers);
+        let was_unbalanced = before.is_some_and(|t| unbalanced(t).is_some());
+        if let Some(line) = unbalanced(&text) {
+            if !was_unbalanced && !allow_broken {
+                return Err(EditError::UnmatchedConflict {
+                    path: path.into(),
+                    line,
+                });
+            }
+            unchecked.push(path.clone());
+            continue;
+        }
+        if !had_markers && has_markers(&text) {
+            if !allow_broken {
+                return Err(EditError::IntroducedConflict {
+                    path: path.into(),
+                    line: first_marker(&text).unwrap_or(1),
+                });
+            }
+            broken.push(path.clone());
+            continue;
+        }
         if had_markers && has_markers(&text) {
             unchecked.push(path.clone());
             continue;
         }
-        let jsonc = lang == Lang::Json && f.before.as_deref().is_some_and(is_jsonc);
+        let Some(lang) = Lang::from_path(Path::new(path)) else {
+            continue;
+        };
+        let jsonc = lang == Lang::Json && before.is_some_and(is_jsonc);
         let Some(new) = syntax_errors(lang, &text, jsonc).filter(|e| !e.is_empty()) else {
             continue;
         };
         let old = if had_markers {
             0
         } else {
-            f.before
-                .as_deref()
+            before
                 .and_then(|t| syntax_errors(lang, t, jsonc))
                 .map_or(0, |e| e.len())
         };

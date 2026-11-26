@@ -76,7 +76,7 @@ fn an_uncaught_host_error_names_the_program_line_and_the_hint() {
 }
 
 #[test]
-fn prints_before_an_uncaught_throw_come_back_with_the_error() {
+fn an_uncaught_throw_comes_back_with_the_prints_and_awaited_calls() {
     let err = run(
         "print('before');\nthrow new Error('boom');",
         Fake,
@@ -87,6 +87,13 @@ fn prints_before_an_uncaught_throw_come_back_with_the_error() {
         panic!("expected an uncaught error");
     };
     assert_eq!(partial.prints, [json!("before")]);
+
+    let err = run("rows(1);\nthrow new Error('boom');", Fake, &limits()).unwrap_err();
+    let ScriptError::Uncaught { partial, .. } = err else {
+        panic!("expected an uncaught error");
+    };
+    assert_eq!(partial.completed.len(), 1);
+    assert_eq!(partial.completed[0]["kind"], "hits");
 }
 
 #[test]
@@ -100,16 +107,6 @@ fn prints_before_the_deadline_come_back_with_the_timeout() {
         panic!("expected a timeout");
     };
     assert_eq!(partial.prints, [json!("before")]);
-}
-
-#[test]
-fn a_call_nobody_awaited_comes_back_when_the_program_throws() {
-    let err = run("rows(1);\nthrow new Error('boom');", Fake, &limits()).unwrap_err();
-    let ScriptError::Uncaught { partial, .. } = err else {
-        panic!("expected an uncaught error");
-    };
-    assert_eq!(partial.completed.len(), 1);
-    assert_eq!(partial.completed[0]["kind"], "hits");
 }
 
 #[test]
@@ -433,7 +430,7 @@ impl Host for Flaky {
 }
 
 #[test]
-fn retry_succeeds_on_the_second_try() {
+fn retry_succeeds_until_times_then_throws_the_last_error() {
     let calls = Arc::new(AtomicUsize::new(0));
     let host = Flaky {
         calls: Arc::clone(&calls),
@@ -447,10 +444,7 @@ fn retry_succeeds_on_the_second_try() {
     .unwrap();
     assert_eq!(out.value, Some(json!("done")));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
-}
 
-#[test]
-fn retry_stops_after_times_attempts_and_throws_the_last_error() {
     let calls = Arc::new(AtomicUsize::new(0));
     let host = Flaky {
         calls: Arc::clone(&calls),

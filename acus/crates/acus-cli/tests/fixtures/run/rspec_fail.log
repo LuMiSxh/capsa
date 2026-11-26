@@ -1,0 +1,12 @@
+.F
+
+Failures:
+
+  1) Math divides by zero
+     Failure/Error: expect(1 / 0).to eq(0)
+
+       expected: 0
+            got: Infinity
+
+Finished in 0.00234 seconds (files took 0.1 seconds to load)
+2 examples, 1 failure

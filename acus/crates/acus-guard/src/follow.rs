@@ -51,27 +51,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn no_rate_keeps_the_base_interval() {
-        assert_eq!(interval(10, 5, 40, None), 10);
-    }
-
-    #[test]
-    fn rate_one_gives_the_maximum_and_rate_zero_the_minimum() {
-        assert_eq!(interval(10, 5, 40, Some(1.0)), 40);
-        assert_eq!(interval(10, 5, 40, Some(0.0)), 5);
-    }
-
-    #[test]
-    fn rate_between_scales_through_the_base() {
-        assert_eq!(interval(10, 5, 40, Some(0.5)), 10);
-        assert_eq!(interval(10, 5, 40, Some(0.75)), 25);
-        assert_eq!(interval(10, 5, 40, Some(0.25)), 8);
-    }
-
-    #[test]
-    fn bounds_around_the_base_are_enforced() {
-        assert_eq!(interval(10, 0, 40, Some(0.0)), 1);
-        assert_eq!(interval(10, 20, 5, Some(0.0)), 10);
-        assert_eq!(interval(10, 20, 5, Some(1.0)), 10);
+    fn interval_follows_the_rate_between_the_bounds() {
+        for (base, lo, hi, rate, want) in [
+            (10, 5, 40, None, 10),
+            (10, 5, 40, Some(1.0), 40),
+            (10, 5, 40, Some(0.0), 5),
+            (10, 5, 40, Some(0.5), 10),
+            (10, 5, 40, Some(0.75), 25),
+            (10, 5, 40, Some(0.25), 8),
+            (10, 0, 40, Some(0.0), 1),
+            (10, 20, 5, Some(0.0), 10),
+            (10, 20, 5, Some(1.0), 10),
+        ] {
+            assert_eq!(interval(base, lo, hi, rate), want, "{rate:?}");
+        }
     }
 }
