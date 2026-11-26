@@ -129,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_both_unified_windows_as_percentages() {
+    fn extract_reads_the_known_windows_and_ignores_the_rest() {
         let msg: Value = serde_json::from_str(SAMPLE).unwrap();
         let snapshots = extract(&msg, 100);
         assert_eq!(snapshots.len(), 2);
@@ -144,10 +144,8 @@ mod tests {
                 .iter()
                 .all(|s| s.t == 100 && s.source == Source::Pons)
         );
-    }
 
-    #[test]
-    fn falls_back_to_the_top_level_window_without_unified_windows() {
+        // The top-level window is the fallback when there are no unified windows.
         let msg = rate_limit(json!({"rateLimitType": "seven_day", "utilization": 0.3,
             "resetsAt": 1794106800}));
         let snapshots = extract(&msg, 7);
@@ -155,20 +153,16 @@ mod tests {
         assert_eq!(snapshots[0].window, Window::SevenDay);
         assert!(near(snapshots[0].used_percentage, 30.0));
         assert_eq!(snapshots[0].resets_at, 1_794_106_800);
-    }
 
-    #[test]
-    fn other_window_types_are_ignored() {
+        // Other window types carry nothing for pons.
         let opus = rate_limit(json!({"unifiedWindows": {"seven_day_opus":
             {"utilization": 0.9, "resetsAt": 1}}}));
         assert!(extract(&opus, 0).is_empty());
         let overage = rate_limit(json!({"rateLimitType": "overage", "utilization": 0.9,
             "resetsAt": 1}));
         assert!(extract(&overage, 0).is_empty());
-    }
 
-    #[test]
-    fn malformed_rate_limit_meta_is_ignored() {
+        // Malformed fields are ignored, not guessed at.
         let bad = [
             json!("five_hour"),
             json!({"unifiedWindows": "soon"}),
@@ -181,20 +175,16 @@ mod tests {
             let msg = rate_limit(info);
             assert!(extract(&msg, 0).is_empty(), "{msg}");
         }
-    }
 
-    #[test]
-    fn a_malformed_window_does_not_hide_the_other_one() {
+        // One bad window does not hide the other one.
         let msg = rate_limit(json!({"unifiedWindows": {
             "five_hour": {"utilization": "x"},
             "seven_day": {"utilization": 0.05, "resetsAt": 1794106800}}}));
         let snapshots = extract(&msg, 0);
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].window, Window::SevenDay);
-    }
 
-    #[test]
-    fn other_updates_and_lines_without_limits_are_ignored() {
+        // Other updates and lines without limits are ignored.
         let chunk = json!({"params": {"update": {"sessionUpdate": "agent_message_chunk",
             "_meta": {"_claude/rateLimit": {"rateLimitType": "five_hour",
                 "utilization": 0.4, "resetsAt": 1}}}}});

@@ -75,15 +75,12 @@ async fn a_rate_limit_line_is_forwarded_unchanged_and_each_window_is_recorded_on
 }
 
 #[tokio::test]
-async fn no_census_flag_forwards_the_line_and_writes_nothing() {
+async fn no_census_by_flag_or_env_forwards_the_line_and_writes_nothing() {
     let state = temp_path("census-off");
     let _ = std::fs::remove_dir_all(&state);
     let mut h = Harness::spawn(census_command(&state, &["--no-census"]));
     assert_forwarded_without_census(&mut h, &state).await;
-}
 
-#[tokio::test]
-async fn no_census_env_forwards_the_line_and_writes_nothing() {
     let state = temp_path("census-env-off");
     let _ = std::fs::remove_dir_all(&state);
     let mut command = census_command(&state, &[]);

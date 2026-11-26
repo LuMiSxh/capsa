@@ -105,7 +105,7 @@ fn falls_back_npx_then_pnpm_then_pnpx_then_bunx() {
 }
 
 #[test]
-fn finds_tools_in_user_dirs_missing_from_path() {
+fn tools_in_user_dirs_are_found_when_missing_from_path() {
     let fs = FakeFs::with(&["/opt/homebrew/bin/npx"]);
     let env = unix(Platform::Macos, &["/usr/bin"]);
     assert_eq!(picked(&env, &fs).unwrap().0, "/opt/homebrew/bin/npx");
@@ -128,6 +128,19 @@ fn finds_tools_in_user_dirs_missing_from_path() {
         let fs = FakeFs::with(&[&format!("{dir}/bunx")]);
         assert_eq!(picked(&env, &fs).unwrap().0, format!("{dir}/bunx"));
     }
+
+    let env = windows(&["C:/other"]);
+    for dir in [
+        "C:/Users/u/AppData/Roaming/npm",
+        "C:/Users/u/AppData/Local/pnpm",
+        "C:/Users/u/.bun/bin",
+    ] {
+        let fs = FakeFs::with(&[&format!("{dir}/bunx.exe")]);
+        assert_eq!(picked(&env, &fs).unwrap().0, format!("{dir}/bunx.exe"));
+    }
+    // Unix-only directories are not searched there.
+    let fs = FakeFs::with(&["/usr/local/bin/bunx.exe"]);
+    assert!(picked(&env, &fs).is_none());
 }
 
 #[test]
@@ -158,22 +171,6 @@ fn windows_resolves_pathext_shims_and_ignores_extensionless_scripts() {
     // exe beats cmd by PATHEXT order.
     let fs = FakeFs::with(&["C:/node/bunx.cmd", "C:/node/bunx.exe"]);
     assert_eq!(picked(&env, &fs).unwrap().0, "C:/node/bunx.exe");
-}
-
-#[test]
-fn windows_user_dirs() {
-    let env = windows(&["C:/other"]);
-    for dir in [
-        "C:/Users/u/AppData/Roaming/npm",
-        "C:/Users/u/AppData/Local/pnpm",
-        "C:/Users/u/.bun/bin",
-    ] {
-        let fs = FakeFs::with(&[&format!("{dir}/bunx.exe")]);
-        assert_eq!(picked(&env, &fs).unwrap().0, format!("{dir}/bunx.exe"));
-    }
-    // Unix-only directories are not searched there.
-    let fs = FakeFs::with(&["/usr/local/bin/bunx.exe"]);
-    assert!(picked(&env, &fs).is_none());
 }
 
 #[test]

@@ -213,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn appends_direction_and_text_as_json_lines() {
+    fn a_wire_line_carries_direction_and_text_after_the_envelope() {
         let path = temp_log("log-test");
         let _ = std::fs::remove_file(&path);
         let logger = Logger::open(Some(&path), LogLevel::All, 0).unwrap();
@@ -221,23 +221,15 @@ mod tests {
         logger.log(Dir::PonsToClient, b"{\"b\":2}");
         logger.flush();
         let lines = parsed(&path);
+        let text = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0]["dir"], "client->agent");
         assert_eq!(lines[0]["text"], "{\"a\":1}");
         assert_eq!(lines[1]["dir"], "pons->client");
         assert_eq!(lines[1]["text"], "{\"b\":2}");
-    }
 
-    #[test]
-    fn a_wire_line_has_the_envelope_then_the_pons_fields() {
-        let path = temp_log("shape-test");
-        let _ = std::fs::remove_file(&path);
-        let logger = Logger::open(Some(&path), LogLevel::All, 0).unwrap();
-        logger.log(Dir::ClientToAgent, b"{}");
-        logger.flush();
-        let text = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(&path);
+        let first = text.lines().next().unwrap();
         let keys = [
             "\"ts\":",
             "\"level\":",
@@ -249,12 +241,13 @@ mod tests {
         let at: Vec<usize> = keys
             .into_iter()
             .map(|key| {
-                text.find(key)
-                    .unwrap_or_else(|| panic!("no {key} in {text}"))
+                first
+                    .find(key)
+                    .unwrap_or_else(|| panic!("no {key} in {first}"))
             })
             .collect();
-        assert!(at.windows(2).all(|w| w[0] < w[1]), "{text}");
-        let line: Value = serde_json::from_str(text.trim_end()).unwrap();
+        assert!(at.windows(2).all(|w| w[0] < w[1]), "{first}");
+        let line: Value = serde_json::from_str(first).unwrap();
         assert!(line["ts"].is_u64());
         assert!(line["ms"].as_u64().is_some_and(|ms| ms < 1000));
         assert_eq!(line["level"], "info");

@@ -337,74 +337,52 @@ mod tests {
         }
     }
 
-    #[test]
-    fn parses_name_command_and_comma_separated_args() {
-        assert_eq!(
-            parse(&["shield=/Users/me/.cargo/bin/shield,mcp,--verbose"]).unwrap(),
-            vec![server(
-                "shield",
-                "/Users/me/.cargo/bin/shield",
-                &["mcp", "--verbose"]
-            )]
-        );
+    enum Expected {
+        Servers(Vec<McpServer>),
+        BadValue,
     }
 
     #[test]
-    fn a_command_without_args_has_no_args() {
-        assert_eq!(
-            parse(&["shield=shield"]).unwrap(),
-            vec![server("shield", "shield", &[])]
-        );
-    }
-
-    #[test]
-    fn only_the_first_equals_sign_splits_the_name() {
-        assert_eq!(
-            parse(&["shield=/bin/shield,--opt=1"]).unwrap(),
-            vec![server("shield", "/bin/shield", &["--opt=1"])]
-        );
-    }
-
-    #[test]
-    fn the_flag_repeats_and_keeps_its_order() {
-        assert_eq!(
-            parse(&["a=one", "b=two,x"]).unwrap(),
-            vec![server("a", "one", &[]), server("b", "two", &["x"])]
-        );
-    }
-
-    #[test]
-    fn no_flag_means_no_servers() {
-        assert!(parse(&[]).unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_value_without_equals_is_a_usage_error() {
-        assert_eq!(
-            parse(&["shield"]).unwrap_err().kind(),
-            ErrorKind::ValueValidation
-        );
-    }
-
-    #[test]
-    fn an_empty_name_or_command_is_a_usage_error() {
-        for value in ["=/bin/shield", "shield=", "shield=,mcp"] {
-            assert_eq!(
-                parse(&[value]).unwrap_err().kind(),
-                ErrorKind::ValueValidation,
-                "{value}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_name_with_other_characters_is_a_usage_error() {
-        for value in ["ve lum=/bin/shield", "shield.x=/bin/shield", "shield/x=cmd"] {
-            assert_eq!(
-                parse(&[value]).unwrap_err().kind(),
-                ErrorKind::ValueValidation,
-                "{value}"
-            );
+    fn mcp_server_flags_parse_servers_and_reject_bad_values() {
+        let cases = [
+            (
+                vec!["shield=/Users/me/.cargo/bin/shield,mcp,--verbose"],
+                Expected::Servers(vec![server(
+                    "shield",
+                    "/Users/me/.cargo/bin/shield",
+                    &["mcp", "--verbose"],
+                )]),
+            ),
+            (
+                vec!["shield=shield"],
+                Expected::Servers(vec![server("shield", "shield", &[])]),
+            ),
+            (
+                vec!["shield=/bin/shield,--opt=1"],
+                Expected::Servers(vec![server("shield", "/bin/shield", &["--opt=1"])]),
+            ),
+            (
+                vec!["a=one", "b=two,x"],
+                Expected::Servers(vec![server("a", "one", &[]), server("b", "two", &["x"])]),
+            ),
+            (vec![], Expected::Servers(Vec::new())),
+            (vec!["shield"], Expected::BadValue),
+            (vec!["=/bin/shield"], Expected::BadValue),
+            (vec!["shield="], Expected::BadValue),
+            (vec!["shield=,mcp"], Expected::BadValue),
+            (vec!["ve lum=/bin/shield"], Expected::BadValue),
+            (vec!["shield.x=/bin/shield"], Expected::BadValue),
+            (vec!["shield/x=cmd"], Expected::BadValue),
+        ];
+        for (values, want) in cases {
+            match want {
+                Expected::Servers(want) => assert_eq!(parse(&values).unwrap(), want, "{values:?}"),
+                Expected::BadValue => assert_eq!(
+                    parse(&values).unwrap_err().kind(),
+                    ErrorKind::ValueValidation,
+                    "{values:?}"
+                ),
+            }
         }
     }
 

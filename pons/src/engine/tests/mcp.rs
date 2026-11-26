@@ -26,68 +26,46 @@ fn request(method: &str, params: Value) -> Vec<u8> {
 }
 
 #[test]
-fn session_new_gets_the_server_in_a_new_mcp_servers_list() {
-    let t0 = Instant::now();
-    let raw = request("session/new", json!({"cwd": "/work"}));
-    let out = with_servers(vec![shield()]).on_client(&raw, t0);
-    assert_eq!(
-        to_agent(&out)["params"],
-        json!({"cwd": "/work", "mcpServers": [shield_entry()]})
-    );
-    assert_eq!(notes(&out).len(), 1);
-    assert!(notes(&out)[0].contains("added MCP server shield"));
-}
-
-#[test]
-fn the_server_is_appended_to_the_servers_the_client_sends() {
-    let t0 = Instant::now();
-    let raw = request(
-        "session/new",
-        json!({"cwd": "/work", "mcpServers": [{"name": "other", "command": "o", "args": [], "env": []}]}),
-    );
-    let out = with_servers(vec![shield()]).on_client(&raw, t0);
-    assert_eq!(
-        to_agent(&out)["params"]["mcpServers"],
-        json!([{"name": "other", "command": "o", "args": [], "env": []}, shield_entry()])
-    );
-}
-
-#[test]
-fn a_name_the_client_already_sends_keeps_the_clients_entry() {
-    let t0 = Instant::now();
-    let raw = request(
-        "session/new",
-        json!({"mcpServers": [{"name": "shield", "command": "client-shield", "args": [], "env": []}]}),
-    );
-    let out = with_servers(vec![shield()]).on_client(&raw, t0);
-    assert_eq!(
-        to_agent(&out)["params"]["mcpServers"],
-        json!([{"name": "shield", "command": "client-shield", "args": [], "env": []}])
-    );
-    assert_eq!(notes(&out).len(), 1);
-    assert!(notes(&out)[0].contains("kept its entry"));
-}
-
-#[test]
-fn each_server_added_or_skipped_gets_its_own_note() {
-    let t0 = Instant::now();
+fn session_new_gets_each_configured_server_added_or_kept() {
     let lint = McpServer {
         name: "lint".to_owned(),
         command: "lint-mcp".to_owned(),
         args: Vec::new(),
     };
-    let raw = request(
-        "session/new",
-        json!({"mcpServers": [{"name": "lint", "command": "client", "args": [], "env": []}]}),
-    );
-    let out = with_servers(vec![shield(), lint]).on_client(&raw, t0);
-    assert_eq!(notes(&out).len(), 2);
-    assert!(notes(&out)[0].contains("added MCP server shield"));
-    assert!(notes(&out)[1].contains("kept its entry"));
-    assert_eq!(
-        to_agent(&out)["params"]["mcpServers"],
-        json!([{"name": "lint", "command": "client", "args": [], "env": []}, shield_entry()])
-    );
+    let cases = [
+        (
+            json!({"cwd": "/work"}),
+            vec![shield()],
+            json!({"cwd": "/work", "mcpServers": [shield_entry()]}),
+            vec!["added MCP server shield"],
+        ),
+        (
+            json!({"cwd": "/work", "mcpServers": [{"name": "other", "command": "o", "args": [], "env": []}]}),
+            vec![shield()],
+            json!({"cwd": "/work", "mcpServers": [{"name": "other", "command": "o", "args": [], "env": []}, shield_entry()]}),
+            vec!["added MCP server shield"],
+        ),
+        (
+            json!({"mcpServers": [{"name": "shield", "command": "client-shield", "args": [], "env": []}]}),
+            vec![shield()],
+            json!({"mcpServers": [{"name": "shield", "command": "client-shield", "args": [], "env": []}]}),
+            vec!["kept its entry"],
+        ),
+        (
+            json!({"mcpServers": [{"name": "lint", "command": "client", "args": [], "env": []}]}),
+            vec![shield(), lint],
+            json!({"mcpServers": [{"name": "lint", "command": "client", "args": [], "env": []}, shield_entry()]}),
+            vec!["added MCP server shield", "kept its entry"],
+        ),
+    ];
+    for (params, servers, want, want_notes) in cases {
+        let out = with_servers(servers).on_client(&request("session/new", params), Instant::now());
+        assert_eq!(to_agent(&out)["params"], want);
+        assert_eq!(notes(&out).len(), want_notes.len());
+        for (note, want) in notes(&out).iter().zip(want_notes) {
+            assert!(note.contains(want), "{note}");
+        }
+    }
 }
 
 #[test]

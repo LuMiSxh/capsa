@@ -148,18 +148,14 @@ mod tests {
     }
 
     #[test]
-    fn defers_with_prompt_and_subagent_whatever_the_main_agent_does() {
+    fn should_defer_cancel_needs_a_prompt_and_a_subagent() {
         let t0 = Instant::now();
         // Just active, long quiet: the same answer.
         assert!(busy(t0).should_defer_cancel());
         let mut s = busy(t0);
         s.last_main = None;
         assert!(s.should_defer_cancel());
-    }
-
-    #[test]
-    fn forwards_without_subagent_or_prompt() {
-        let t0 = Instant::now();
+        // Without a subagent or a prompt, the cancel goes through.
         let mut s = busy(t0);
         s.in_flight.clear();
         assert!(!s.should_defer_cancel());
@@ -262,16 +258,11 @@ mod tests {
     }
 
     #[test]
-    fn end_turn_clears_subagents() {
+    fn end_turn_keeps_only_the_subagents_it_is_given() {
         let t0 = Instant::now();
         let mut s = busy(t0);
         s.end_turn(&[]);
         assert!(!s.should_defer_cancel());
-    }
-
-    #[test]
-    fn end_turn_keeps_background_subagents() {
-        let t0 = Instant::now();
         let mut s = busy(t0);
         s.end_turn(&["P".to_owned()]);
         assert!(s.should_defer_cancel());

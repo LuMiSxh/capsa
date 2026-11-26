@@ -170,37 +170,6 @@ fn roster_empties_when_every_finished_subagent_is_forgotten() {
 }
 
 #[test]
-fn notice_is_sent_when_the_client_advertised_support() {
-    let t0 = Instant::now();
-    let mut e = engine();
-    e.on_client(&initialize(true), t0);
-    let out = notify_a(&mut e, t0);
-    let notices = notices_in(&out);
-    assert_eq!(notices.len(), 1);
-    assert_eq!(
-        notices[0],
-        json!({"jsonrpc": "2.0", "method": "session/update", "params": {
-            "sessionId": "s",
-            "update": {"sessionUpdate": "notice", "severity": "info",
-                "title": "Agent finished", "description": "1 tool call, 10s"}}})
-    );
-    // Not subject to the entry gap: the notice precedes the entry.
-    let kinds: Vec<_> = client_lines(&out)
-        .iter()
-        .map(|m| m["params"]["update"]["sessionUpdate"].clone())
-        .collect();
-    assert_eq!(kinds[..3], ["tool_call_update", "notice", "tool_call"]);
-}
-
-#[test]
-fn notice_is_not_sent_without_advertised_support() {
-    let t0 = Instant::now();
-    let mut e = engine();
-    e.on_client(&initialize(false), t0);
-    assert!(notices_in(&notify_a(&mut e, t0)).is_empty());
-}
-
-#[test]
 fn only_a_notices_capability_that_is_not_null_or_false_counts_as_advertised() {
     let cases = [
         (Some(json!(false)), false),
@@ -213,11 +182,29 @@ fn only_a_notices_capability_that_is_not_null_or_false_counts_as_advertised() {
         let t0 = Instant::now();
         let mut e = engine();
         e.on_client(&initialize_notices(advertised.clone()), t0);
+        let out = notify_a(&mut e, t0);
         assert_eq!(
-            !notices_in(&notify_a(&mut e, t0)).is_empty(),
+            !notices_in(&out).is_empty(),
             sent,
             "session.notices = {advertised:?}"
         );
+        if sent {
+            let notices = notices_in(&out);
+            assert_eq!(notices.len(), 1);
+            assert_eq!(
+                notices[0],
+                json!({"jsonrpc": "2.0", "method": "session/update", "params": {
+                    "sessionId": "s",
+                    "update": {"sessionUpdate": "notice", "severity": "info",
+                        "title": "Agent finished", "description": "1 tool call, 10s"}}})
+            );
+            // Not subject to the entry gap: the notice precedes the entry.
+            let kinds: Vec<_> = client_lines(&out)
+                .iter()
+                .map(|m| m["params"]["update"]["sessionUpdate"].clone())
+                .collect();
+            assert_eq!(kinds[..3], ["tool_call_update", "notice", "tool_call"]);
+        }
     }
 }
 

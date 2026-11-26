@@ -178,12 +178,7 @@ async fn signal_pons_and_read_the_log(sig: libc::c_int, name: &str) {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn sigterm_is_forwarded_and_the_log_says_why_pons_exited() {
+async fn signals_are_forwarded_and_the_log_says_why_pons_exited() {
     signal_pons_and_read_the_log(libc::SIGTERM, "SIGTERM").await;
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn sighup_is_forwarded_and_the_log_says_why_pons_exited() {
     signal_pons_and_read_the_log(libc::SIGHUP, "SIGHUP").await;
 }

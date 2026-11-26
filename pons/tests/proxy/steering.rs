@@ -27,13 +27,9 @@ fn is_m1_running(m: &Value) -> bool {
 }
 
 #[tokio::test]
-async fn steering_waits_for_the_streaming_tool_call() {
+async fn the_hold_decides_whether_the_streaming_tool_call_finishes_first() {
     let seen = steer_while_tool_streams("1500").await;
     assert!(seen.iter().any(is_m1_running), "{seen:?}");
-}
-
-#[tokio::test]
-async fn steering_does_not_wait_without_a_hold() {
     let seen = steer_while_tool_streams("0").await;
     assert!(!seen.iter().any(is_m1_running), "{seen:?}");
 }

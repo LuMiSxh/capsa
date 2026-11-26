@@ -115,7 +115,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn switches_a_session_after_max_consecutive_failures() {
+    fn a_session_switches_to_passthrough_after_its_max_consecutive_failures() {
         let mut g = FailSafe::new(3);
         assert!(!g.failure(Some("s1")).switched);
         assert!(!g.failure(Some("s1")).switched);
@@ -124,27 +124,21 @@ mod tests {
         assert!(g.is_passthrough(Some("s1")));
         assert!(!g.is_passthrough(Some("s2")));
         assert!(!g.is_passthrough(None));
-    }
 
-    #[test]
-    fn a_success_resets_the_count() {
+        // A success in between resets the count.
         let mut g = FailSafe::new(2);
         g.failure(Some("s1"));
         g.success(Some("s1"));
         assert!(!g.failure(Some("s1")).switched);
         assert!(!g.is_passthrough(Some("s1")));
-    }
 
-    #[test]
-    fn sessionless_failures_switch_everything() {
+        // A failure without a session switches everything.
         let mut g = FailSafe::new(2);
         g.failure(None);
         assert!(g.failure(None).switched);
         assert!(g.is_passthrough(Some("any")));
-    }
 
-    #[test]
-    fn zero_never_switches() {
+        // Zero means never.
         let mut g = FailSafe::new(0);
         for _ in 0..50 {
             assert!(!g.failure(Some("s1")).switched);

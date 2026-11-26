@@ -254,7 +254,7 @@ mod tests {
         <note>n</note><result>The result</result><usage>1</usage></task-notification>";
 
     #[test]
-    fn a_whole_notification_in_one_chunk_is_dropped() {
+    fn a_notification_is_dropped_whole_or_split() {
         let mut f = TaskNotifications::default();
         let v = feed(&mut f, NOTE, Instant::now());
         assert_eq!(
@@ -265,10 +265,7 @@ mod tests {
             }
         );
         assert!(f.is_empty());
-    }
 
-    #[test]
-    fn a_split_notification_is_held_until_it_closes() {
         let mut f = TaskNotifications::default();
         let t = Instant::now();
         let (a, b) = NOTE.split_at(10);
@@ -343,6 +340,15 @@ mod tests {
             feed(&mut f, "[Request interrupted by user] x", t),
             Verdict::Pass
         );
+
+        let mut f = TaskNotifications::default();
+        let t = Instant::now();
+        assert_eq!(feed(&mut f, "<task", t), Verdict::Hold);
+        assert_eq!(
+            feed(&mut f, "s are fun", t),
+            Verdict::Release(vec![b"<task".to_vec(), b"s are fun".to_vec()])
+        );
+        assert!(f.is_empty());
     }
 
     #[test]
@@ -361,18 +367,6 @@ mod tests {
             markers: true,
         };
         assert_eq!(feed_with(&mut f, NOTE, only_markers), Verdict::Pass);
-        assert!(f.is_empty());
-    }
-
-    #[test]
-    fn a_prefix_that_turns_out_different_is_released_unchanged() {
-        let mut f = TaskNotifications::default();
-        let t = Instant::now();
-        assert_eq!(feed(&mut f, "<task", t), Verdict::Hold);
-        assert_eq!(
-            feed(&mut f, "s are fun", t),
-            Verdict::Release(vec![b"<task".to_vec(), b"s are fun".to_vec()])
-        );
         assert!(f.is_empty());
     }
 

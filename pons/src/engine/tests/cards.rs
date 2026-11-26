@@ -242,11 +242,11 @@ fn no_idle_finish_while_a_child_tool_is_open() {
     assert!(e.folds.running_background("s").contains(&"A".to_owned()));
 }
 
-/// Replays the false finishes from the real log (card
-/// toolu_01McEgUjs87WRP1WBnAbtimq): the last child event is a tool
-/// completion, then thinking or generating without a sign of life.
+/// Replays the false finishes from the real log (card toolu_01McEgUjs87WRP1WBnAbtimq): the
+/// last child event is a tool completion, then thinking or generating without a sign of life. The
+/// other log (toolu_01UC57bMXEuU5ebLSC9tLFd6) thinks for 86 s after a tool result.
 #[test]
-fn no_idle_finish_after_a_tool_result() {
+fn a_tool_result_then_silence_is_not_finished() {
     let t0 = Instant::now();
     let mut e = engine();
     e.on_client(&prompt(1), t0);
@@ -254,7 +254,7 @@ fn no_idle_finish_after_a_tool_result() {
     e.on_agent(&real_launch_result("A"), t0);
     e.on_agent(&kid("A", "a1", "Read a"), t0 + secs(5));
     e.on_agent(&kid_end("A", "a1"), t0 + secs(6));
-    for at in [30, 31, 50, 64] {
+    for at in [30, 31, 50, 64, 92] {
         let out = e.tick(t0 + secs(at));
         assert!(entries(&out).is_empty(), "at {at}");
         assert!(
@@ -264,30 +264,6 @@ fn no_idle_finish_after_a_tool_result() {
             "at {at}"
         );
     }
-    assert!(!e.folds.is_finished("A"));
-}
-
-/// Replays the false finish from the real log (card
-/// toolu_01UC57bMXEuU5ebLSC9tLFd6): the last child event is a tool result,
-/// then the subagent thinks for 86 s without a sign of life. The card must
-/// stay in progress until its completion notification, not show as done and
-/// reopen as "resumed" when the thinking text finally arrives.
-#[test]
-fn a_tool_result_then_a_long_silence_is_not_finished() {
-    let t0 = Instant::now();
-    let mut e = engine();
-    e.on_client(&prompt(1), t0);
-    e.on_agent(&real_parent("A"), t0);
-    e.on_agent(&real_launch_result("A"), t0);
-    e.on_agent(&kid("A", "a1", "Read a"), t0 + secs(5));
-    e.on_agent(&kid_end("A", "a1"), t0 + secs(6));
-    let out = e.tick(t0 + secs(92));
-    assert!(
-        updates_for(&out, "A")
-            .iter()
-            .all(|m| m["params"]["update"]["status"] == "in_progress")
-    );
-    assert!(entries(&out).is_empty(), "no finished entry");
     assert!(!e.folds.is_finished("A"));
     // The subagent wakes up: nothing was announced, so nothing says "resumed".
     let out = e.on_agent(&child_text("A", "Still working."), t0 + secs(95));
@@ -331,26 +307,28 @@ fn without_subagent_text_only_the_long_cap_finishes() {
 }
 
 #[test]
-fn a_monitor_as_the_last_call_keeps_the_card_open_until_its_timeout() {
-    let t0 = Instant::now();
-    let mut e = engine();
-    e.on_client(&prompt(1), t0);
-    e.on_agent(&real_parent("A"), t0);
-    e.on_agent(&real_launch_result("A"), t0);
-    e.on_agent(
-        &monitor("A", "m1", json!({"timeout_ms": 300_000})),
-        t0 + secs(2),
-    );
-    e.on_agent(&kid_end("A", "m1"), t0 + secs(3));
-    // Text after the monitor ended: only the monitor's deadline may finish it.
-    e.on_agent(&child_text("A", "Watching the log."), t0 + secs(4));
-    for at in [60, 100, 331] {
-        let out = e.tick(t0 + secs(at));
-        assert!(!updates_for(&out, "A").iter().any(is_card_done), "at {at}");
+fn a_monitor_keeps_the_card_open_until_its_deadline_and_grace() {
+    for (input, before, finish) in [
+        (json!({"timeout_ms": 300_000}), vec![60, 100, 331], 332),
+        (json!({}), vec![1_831], 1_832),
+    ] {
+        let t0 = Instant::now();
+        let mut e = engine();
+        e.on_client(&prompt(1), t0);
+        e.on_agent(&real_parent("A"), t0);
+        e.on_agent(&real_launch_result("A"), t0);
+        e.on_agent(&monitor("A", "m1", input), t0 + secs(2));
+        e.on_agent(&kid_end("A", "m1"), t0 + secs(3));
+        // Text after the monitor ended: only the monitor's deadline may finish it.
+        e.on_agent(&child_text("A", "Watching the log."), t0 + secs(4));
+        for at in before {
+            let out = e.tick(t0 + secs(at));
+            assert!(!updates_for(&out, "A").iter().any(is_card_done), "at {at}");
+        }
+        assert!(e.folds.running_background("s").contains(&"A".to_owned()));
+        let out = e.tick(t0 + secs(finish));
+        assert!(updates_for(&out, "A").iter().any(is_card_done));
     }
-    assert!(e.folds.running_background("s").contains(&"A".to_owned()));
-    let out = e.tick(t0 + secs(332));
-    assert!(updates_for(&out, "A").iter().any(is_card_done));
 }
 
 #[test]
@@ -376,28 +354,6 @@ fn a_monitor_keeps_a_silent_subagent_open_past_the_quiet_cap() {
         out.iter().any(
             |x| matches!(x, Action::Note(n) if n.contains("finished (quiet-cap, provisional)"))
         )
-    );
-}
-
-#[test]
-fn a_monitor_without_a_timeout_keeps_the_card_open_for_thirty_minutes() {
-    let t0 = Instant::now();
-    let mut e = engine();
-    e.on_client(&prompt(1), t0);
-    e.on_agent(&real_parent("A"), t0);
-    e.on_agent(&real_launch_result("A"), t0);
-    e.on_agent(&monitor("A", "m1", json!({})), t0 + secs(2));
-    e.on_agent(&kid_end("A", "m1"), t0 + secs(3));
-    e.on_agent(&child_text("A", "Watching."), t0 + secs(4));
-    assert!(
-        !updates_for(&e.tick(t0 + secs(1_831)), "A")
-            .iter()
-            .any(is_card_done)
-    );
-    assert!(
-        updates_for(&e.tick(t0 + secs(1_832)), "A")
-            .iter()
-            .any(is_card_done)
     );
 }
 

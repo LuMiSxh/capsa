@@ -272,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn a_present_adapter_is_reported_and_nothing_runs() {
+    fn run_in_reports_a_present_adapter_or_the_install_it_would_run() {
         let fs = Files::with(&["/bin/claude-agent-acp"]);
         let step = run_in(&env(), &fs, &nothing, None, false).unwrap();
         assert_eq!(
@@ -283,10 +283,7 @@ mod tests {
                 command: None,
             }
         );
-    }
 
-    #[test]
-    fn a_dry_run_names_the_first_manager_found() {
         let fs = Files::with(&["/bin/bun", "/bin/npm"]);
         let step = run_in(&env(), &fs, &nothing, None, true).unwrap();
         assert_eq!(
@@ -297,10 +294,7 @@ mod tests {
                 command: ["bun", "add", "-g", PACKAGE].map(str::to_owned).to_vec(),
             }
         );
-    }
 
-    #[test]
-    fn the_named_manager_wins_when_it_is_on_the_path() {
         let fs = Files::with(&["/bin/pnpm", "/bin/npm"]);
         let step = run_in(&env(), &fs, &nothing, Some(Manager::Npm), true).unwrap();
         assert_eq!(
@@ -313,10 +307,8 @@ mod tests {
                     .to_vec(),
             }
         );
-    }
 
-    #[test]
-    fn no_manager_fails_with_a_hint_and_installs_nothing() {
+        // No manager on PATH: fail with a hint and install nothing.
         let err = run_in(&env(), &Files::default(), &nothing, None, true).unwrap_err();
         assert!(find_hint(&err).is_some_and(|hint| hint.contains("Node.js")));
     }

@@ -24,7 +24,7 @@ fn jsonc_comments_and_trailing_commas_are_stripped_outside_strings() {
 }
 
 #[test]
-fn detects_servers_that_run_pons() {
+fn settings_text_yields_the_pons_servers_or_an_unparsed_marker() {
     let text = r#"{
             "agent_servers": {
                 // mine
@@ -40,10 +40,6 @@ fn detects_servers_that_run_pons() {
     let names: Vec<_> = found.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, vec!["claude-pons", "win", "wrapped"]);
     assert_eq!(found[0].command, "/Users/me/.cargo/bin/pons");
-}
-
-#[test]
-fn no_agent_servers_or_garbage_never_fails() {
     assert_eq!(find_pons_servers("{}"), Settings::Servers(Vec::new()));
     assert_eq!(
         find_pons_servers("{ broken pons\n more"),
@@ -147,16 +143,23 @@ fn summarizes_the_log() {
     assert_eq!(s.last_notes.len(), 5);
     assert!(s.last_notes[0].contains("subagent B launched"));
     assert!(s.last_notes[4].starts_with("exiting: error"));
-}
 
-#[test]
-fn meta_level_logs_count_cancels_too() {
+    // A meta-level wire line still counts as a cancel.
     let s = summarize_log(&wire_line("client->agent", "method=session/cancel"));
     assert_eq!(s.cancels_seen, 1);
-}
 
-#[test]
-fn an_old_text_log_is_flagged_and_not_summarized() {
+    // Exits and provisional finishes are counted too.
+    let s = summarize_log(
+        &[
+            wire_line("pons", "background subagent A finished (idle, provisional)"),
+            wire_line("pons", "background subagent A finished (prompt response)"),
+            wire_line("pons", "exiting: client closed stdin"),
+        ]
+        .join("\n"),
+    );
+    assert_eq!((s.subagents_finished, s.subagents_provisional), (2, 1));
+    assert_eq!(s.last_exit.as_deref(), Some("exiting: client closed stdin"));
+
     let s = summarize_log("1.000 pons fail-safe: rules failed\n");
     assert!(s.legacy_text);
     assert_eq!(s.lines, 0);
@@ -193,7 +196,7 @@ fn detect_report(files: &[&str], path: &[&str]) -> Report {
 }
 
 #[test]
-fn a_missing_adapter_fails_with_the_install_hint_of_the_manager_on_path() {
+fn the_adapter_check_reports_missing_and_ready_launchers() {
     let check = |files: &[&str]| detect_report(files, &["/bin"]).adapter;
     let none = check(&[]);
     assert_eq!(none.status, "fail");
@@ -224,6 +227,22 @@ fn a_missing_adapter_fails_with_the_install_hint_of_the_manager_on_path() {
         format!("pnpm add -g {PACKAGE}")
     );
     assert_eq!(check(&["/bin/pnpm"]).status, "ok");
+
+    // Ready through the binary itself, or through a runner.
+    let binary = detect_report(&["/bin/claude-agent-acp"], &["/bin"]).adapter;
+    assert_eq!(binary.status, "ok");
+    let adapter = Path::new("/bin").join("claude-agent-acp");
+    assert!(
+        binary
+            .detail
+            .contains(&format!("{} (version unknown)", adapter.display())),
+        "{}",
+        binary.detail
+    );
+    assert_eq!(binary.hint, None);
+    let fetched = detect_report(&["/bin/npx"], &["/bin"]).adapter;
+    assert_eq!(fetched.status, "ok");
+    assert!(fetched.detail.contains("through npx"), "{}", fetched.detail);
 }
 
 /// Answers the same global bin directory for every manager.
@@ -251,24 +270,6 @@ fn the_install_hint_names_the_global_bin_dir_only_when_it_is_off_the_path() {
         install_hint(&on, &fs, &sys),
         format!("pnpm add -g {PACKAGE}")
     );
-}
-
-#[test]
-fn the_adapter_is_ok_through_any_launcher_and_shows_its_version_when_known() {
-    let binary = detect_report(&["/bin/claude-agent-acp"], &["/bin"]).adapter;
-    assert_eq!(binary.status, "ok");
-    let adapter = Path::new("/bin").join("claude-agent-acp");
-    assert!(
-        binary
-            .detail
-            .contains(&format!("{} (version unknown)", adapter.display())),
-        "{}",
-        binary.detail
-    );
-    assert_eq!(binary.hint, None);
-    let fetched = detect_report(&["/bin/npx"], &["/bin"]).adapter;
-    assert_eq!(fetched.status, "ok");
-    assert!(fetched.detail.contains("through npx"), "{}", fetched.detail);
 }
 
 #[test]
@@ -570,21 +571,25 @@ fn a_newer_pons_release_warns_with_the_self_update_command() {
 }
 
 #[test]
-fn a_prerelease_is_older_than_its_release_and_versions_compare_by_semver_core() {
-    assert_eq!(latest_status("1.0.0-beta", "1.0.0"), Status::Warn);
-    assert_eq!(latest_status("1.0.0-beta.1", "1.0.0"), Status::Warn);
-    assert_eq!(latest_status("1.0.0", "1.0.0-beta.1"), Status::Ok);
-    assert_eq!(latest_status("1.0.0-beta.1", "1.0.0-beta.2"), Status::Ok);
-    assert_eq!(latest_status("2.1", "2.1.0"), Status::Ok);
-    assert_eq!(latest_status("2.1.0", "2.1"), Status::Ok);
-    assert_eq!(latest_status("0.85.1+build.7", "0.85.1"), Status::Ok);
-    assert_eq!(latest_status("0.85.1", "0.106.0"), Status::Warn);
-}
-
-#[test]
-fn an_unparseable_version_never_warns() {
-    assert_eq!(latest_status("garbage", "0.85.1"), Status::Ok);
-    assert_eq!(latest_status("0.85.1", "garbage"), Status::Ok);
+fn versions_compare_by_semver_core_and_never_warn_when_unparseable() {
+    for (installed, latest, want) in [
+        ("1.0.0-beta", "1.0.0", Status::Warn),
+        ("1.0.0-beta.1", "1.0.0", Status::Warn),
+        ("1.0.0", "1.0.0-beta.1", Status::Ok),
+        ("1.0.0-beta.1", "1.0.0-beta.2", Status::Ok),
+        ("2.1", "2.1.0", Status::Ok),
+        ("2.1.0", "2.1", Status::Ok),
+        ("0.85.1+build.7", "0.85.1", Status::Ok),
+        ("0.85.1", "0.106.0", Status::Warn),
+        ("garbage", "0.85.1", Status::Ok),
+        ("0.85.1", "garbage", Status::Ok),
+    ] {
+        assert_eq!(
+            latest_status(installed, latest),
+            want,
+            "{installed} {latest}"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -695,20 +700,6 @@ fn more_notes_than_shown_get_a_footer_naming_all() {
     let plain = text(&view, false);
     assert!(plain.contains("note 0"), "{plain}");
     assert!(!plain.contains("more; run"), "{plain}");
-}
-
-#[test]
-fn exits_and_provisional_finishes_are_summarized() {
-    let s = summarize_log(
-        &[
-            wire_line("pons", "background subagent A finished (idle, provisional)"),
-            wire_line("pons", "background subagent A finished (prompt response)"),
-            wire_line("pons", "exiting: client closed stdin"),
-        ]
-        .join("\n"),
-    );
-    assert_eq!((s.subagents_finished, s.subagents_provisional), (2, 1));
-    assert_eq!(s.last_exit.as_deref(), Some("exiting: client closed stdin"));
 }
 
 /// The agent view of `view`, or the human view with `colour`.

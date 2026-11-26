@@ -189,8 +189,9 @@ fn a_handoff_response_does_not_finish_the_cards() {
 }
 
 #[test]
-fn a_marker_with_no_qualifying_candidate_finishes_nothing() {
+fn a_marker_prefers_the_card_that_ended_with_text_and_finishes_nothing_otherwise() {
     let t0 = Instant::now();
+    // Both cards left a tool result open: no candidate qualifies.
     let mut e = two_background(t0);
     e.on_agent(&kid("A", "a1", "Write big.rs"), t0 + secs(2));
     e.on_agent(&kid("B", "b1", "Bash: sleep"), t0 + secs(3));
@@ -202,6 +203,18 @@ fn a_marker_with_no_qualifying_candidate_finishes_nothing() {
             .any(|a| matches!(a, Action::Note(n) if n.contains("finished nothing")))
     );
     assert_eq!(e.folds.running_background("s").len(), 2);
+
+    // B is quieter, but its last act was a tool result: A wrote its report.
+    let mut e = two_background(t0);
+    e.on_agent(&kid_ended("B", "b1", "Read b"), t0 + secs(2));
+    e.on_agent(&kid_ended("A", "a1", "Read a"), t0 + secs(5));
+    e.on_agent(&child_text("A", "Report."), t0 + secs(6));
+    let out = e.on_agent(&task_notification(), t0 + secs(7));
+    assert_eq!(
+        updates_for(&out, "A")[0]["params"]["update"]["status"],
+        "completed"
+    );
+    assert!(updates_for(&out, "B").is_empty());
 }
 
 /// Builds the tick the adapter sends for a running subagent's own card with
@@ -217,7 +230,7 @@ fn self_tick(id: &str) -> Vec<u8> {
 }
 
 #[test]
-fn a_self_parented_tick_does_not_keep_the_card_from_finishing() {
+fn a_self_parented_tick_is_neither_activity_nor_a_tool_line() {
     let t0 = Instant::now();
     let mut e = two_background(t0);
     e.on_agent(&kid_ended("A", "a1", "Read a"), t0 + secs(2));
@@ -231,15 +244,11 @@ fn a_self_parented_tick_does_not_keep_the_card_from_finishing() {
     assert_eq!(entries(&out).len(), 1, "A is announced");
     assert!(updates_for(&out, "B").is_empty(), "B keeps running");
     assert_eq!(e.folds.running_background("s"), vec!["B".to_owned()]);
-}
 
-#[test]
-fn a_self_parented_tick_is_not_a_tool_line_or_activity() {
-    let t0 = Instant::now();
+    // A tick after the report must not be "activity since" the notification.
     let mut e = two_background(t0);
     e.on_agent(&kid_ended("A", "a1", "Read a"), t0 + secs(2));
     e.on_agent(&child_text("A", "Report."), t0 + secs(3));
-    // A tick after the report must not be "activity since" the notification.
     let out = e.on_agent(&self_tick("A"), t0 + secs(4));
     assert!(updates_for(&out, "A").is_empty());
     let out = e.on_agent(&task_notification(), t0 + secs(5));
@@ -249,22 +258,6 @@ fn a_self_parented_tick_is_not_a_tool_line_or_activity() {
         card_text(a.last().unwrap()),
         "done: Read a\nagent: Report.\ndone - 1 tool call"
     );
-}
-
-#[test]
-fn a_marker_prefers_the_card_that_ended_with_text() {
-    let t0 = Instant::now();
-    let mut e = two_background(t0);
-    // B is quieter, but its last act was a tool result: A wrote its report.
-    e.on_agent(&kid_ended("B", "b1", "Read b"), t0 + secs(2));
-    e.on_agent(&kid_ended("A", "a1", "Read a"), t0 + secs(5));
-    e.on_agent(&child_text("A", "Report."), t0 + secs(6));
-    let out = e.on_agent(&task_notification(), t0 + secs(7));
-    assert_eq!(
-        updates_for(&out, "A")[0]["params"]["update"]["status"],
-        "completed"
-    );
-    assert!(updates_for(&out, "B").is_empty());
 }
 
 #[test]

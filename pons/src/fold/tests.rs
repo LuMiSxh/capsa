@@ -53,7 +53,7 @@ fn watched(t0: Instant) -> Folds {
 }
 
 #[test]
-fn renders_tool_lines_status_and_text_tail() {
+fn render_shows_tool_lines_and_caps_them() {
     let mut e = FoldEntry::new("s", "P");
     e.apply_child(&tool_call("c1", "Read src/a.rs"));
     e.apply_child(&tool_done("c1"));
@@ -64,10 +64,7 @@ fn renders_tool_lines_status_and_text_tail() {
         e.render(),
         "done: Read src/a.rs\nrunning: Bash: cargo test\nagent: looking good"
     );
-}
 
-#[test]
-fn caps_lines_and_truncates_text() {
     let mut e = FoldEntry::new("s", "P");
     for i in 0..50 {
         e.apply_child(&tool_call(&format!("c{i}"), &format!("Tool {i}")));
@@ -365,18 +362,26 @@ fn silence_finishes_provisionally_after_final_text_with_nothing_open() {
 }
 
 #[test]
-fn a_monitor_holds_the_card_until_its_timeout_and_grace() {
-    let t0 = Instant::now();
-    let mut folds = watched(t0);
-    let monitor = monitor_call("m1", &json!({"timeout_ms": 300_000}));
-    folds.child_update("s", "P", &monitor, t0 + secs(1));
-    folds.child_update("s", "P", &tool_done("m1"), t0 + secs(2));
-    folds.child_update("s", "P", &text_chunk("Watching."), t0 + secs(3));
-    assert!(
-        folds.poll(t0 + secs(330)).is_empty(),
-        "monitor runs until 331s"
-    );
-    assert_eq!(reasons(&folds.poll(t0 + secs(331))), vec![("idle", false)]);
+fn a_monitor_holds_the_card_until_its_deadline_and_grace() {
+    for (input, before, finish) in [
+        (json!({"timeout_ms": 300_000}), 330, 331),
+        (json!({"description": "watch the log"}), 1_830, 1_831),
+    ] {
+        let t0 = Instant::now();
+        let mut folds = watched(t0);
+        let monitor = monitor_call("m1", &input);
+        folds.child_update("s", "P", &monitor, t0 + secs(1));
+        folds.child_update("s", "P", &tool_done("m1"), t0 + secs(2));
+        folds.child_update("s", "P", &text_chunk("Watching."), t0 + secs(3));
+        assert!(
+            folds.poll(t0 + secs(before)).is_empty(),
+            "monitor runs until {finish}s"
+        );
+        assert_eq!(
+            reasons(&folds.poll(t0 + secs(finish))),
+            vec![("idle", false)]
+        );
+    }
 }
 
 #[test]
@@ -394,24 +399,6 @@ fn a_monitor_holds_a_silent_card_past_the_quiet_cap() {
     assert_eq!(
         reasons(&folds.poll(t0 + secs(1_031))),
         vec![("quiet-cap", false)]
-    );
-}
-
-#[test]
-fn a_monitor_without_a_timeout_holds_the_card_for_thirty_minutes() {
-    let t0 = Instant::now();
-    let mut folds = watched(t0);
-    let monitor = monitor_call("m1", &json!({"description": "watch the log"}));
-    folds.child_update("s", "P", &monitor, t0 + secs(1));
-    folds.child_update("s", "P", &tool_done("m1"), t0 + secs(2));
-    folds.child_update("s", "P", &text_chunk("Watching."), t0 + secs(3));
-    assert!(
-        folds.poll(t0 + secs(1_830)).is_empty(),
-        "monitor runs until 1831s"
-    );
-    assert_eq!(
-        reasons(&folds.poll(t0 + secs(1_831))),
-        vec![("idle", false)]
     );
 }
 
@@ -667,15 +654,12 @@ fn finishing_a_removed_entry_is_a_noted_no_op() {
 }
 
 #[test]
-fn a_later_fuller_input_replaces_the_stored_one() {
+fn note_input_keeps_the_fullest_input() {
     let mut e = FoldEntry::new("s", "P");
     e.note_input(&json!({"rawInput": {"subagent_type": "wor"}}));
     e.note_input(&json!({"rawInput": {"subagent_type": "worker", "description": "Fix it"}}));
     assert_eq!(e.roster_name(), "worker - Fix it");
-}
 
-#[test]
-fn an_empty_or_missing_input_keeps_the_stored_one() {
     let mut e = FoldEntry::new("s", "P");
     e.note_input(&json!({"rawInput": {"subagent_type": "worker", "description": "Fix it"}}));
     e.note_input(&json!({"rawInput": {}}));

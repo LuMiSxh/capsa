@@ -72,7 +72,7 @@ fn plan_statuses(actions: &[Action]) -> Vec<String> {
 }
 
 #[test]
-fn a_steered_message_asserts_both_running_cards_after_the_cancelled_response() {
+fn a_steered_or_queued_message_asserts_the_running_cards() {
     let t0 = Instant::now();
     let mut e = two_background(t0, true);
     let out = e.on_client(&cancel(), t0 + secs(10));
@@ -114,11 +114,8 @@ fn a_steered_message_asserts_both_running_cards_after_the_cancelled_response() {
         vec!["tool_call_update", "tool_call_update", "plan"]
     );
     assert_eq!(plan_statuses(&out), vec!["in_progress", "in_progress"]);
-}
 
-#[test]
-fn a_queued_message_asserts_the_running_cards_too() {
-    let t0 = Instant::now();
+    // Queued instead: the prompt reaches the agent and the cards are asserted too.
     let mut e = two_background(t0, false);
     e.on_client(&cancel(), t0 + secs(10));
     let p2 = text_prompt(2, "hello");

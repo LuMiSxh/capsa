@@ -89,7 +89,7 @@ fn zero_stop_window_keeps_holding_a_second_cancel() {
 }
 
 #[test]
-fn without_subagents_the_cancel_is_forwarded_at_once() {
+fn a_cancel_is_forwarded_at_once_without_subagents_or_in_cancel_mode() {
     let t0 = Instant::now();
     let mut e = engine();
     e.on_client(&prompt(1), t0);
@@ -100,10 +100,7 @@ fn without_subagents_the_cancel_is_forwarded_at_once() {
         vec![Action::ToAgent(c.clone())]
     );
     assert!(e.tick(t0 + secs(5)).is_empty());
-}
 
-#[test]
-fn cancel_mode_forwards_the_cancel_like_before() {
     let t0 = Instant::now();
     let mut e = five_background(
         t0,

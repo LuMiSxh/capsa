@@ -21,17 +21,14 @@ async fn read_all(input: &'static [u8], max: usize) -> Vec<Event> {
 }
 
 #[tokio::test]
-async fn a_line_over_the_cap_is_handed_over_whole_and_marked() {
+async fn the_cap_splits_oversized_lines_from_lines_that_fit() {
     let events = read_all(b"short\n0123456789abcdef\nlast\n", 10).await;
     assert_eq!(events.len(), 4);
     assert!(matches!(&events[0], Event::Agent(l) if l == b"short"));
     assert!(matches!(&events[1], Event::AgentOversized(l) if l == b"0123456789abcdef"));
     assert!(matches!(&events[2], Event::Agent(l) if l == b"last"));
-    assert!(matches!(events[3], Event::AgentClosed));
-}
+    assert!(matches!(&events[3], Event::AgentClosed));
 
-#[tokio::test]
-async fn a_line_at_the_cap_is_not_oversized() {
     let events = read_all(b"0123456789\n", 10).await;
     assert!(matches!(&events[0], Event::Agent(l) if l == b"0123456789"));
 }

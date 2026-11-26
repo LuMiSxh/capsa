@@ -89,86 +89,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn label_is_type_and_description() {
-        let input = json!({"subagent_type": "worker", "description": "Fix ledger torn tail",
-            "prompt": "Fix it"});
-        assert_eq!(
-            subagent_label(&input, "Agent"),
-            "worker - Fix ledger torn tail"
-        );
-    }
-
-    #[test]
-    fn missing_type_is_general_purpose() {
-        let input = json!({"description": "Map the repo"});
-        assert_eq!(
-            subagent_label(&input, "Agent"),
-            "general-purpose - Map the repo"
-        );
-    }
-
-    #[test]
-    fn missing_description_uses_the_first_prompt_line() {
-        let input =
-            json!({"subagent_type": "explore", "prompt": "\n  Find every caller of\n  parse"});
-        assert_eq!(
-            subagent_label(&input, "Agent"),
-            "explore - Find every caller of"
-        );
-    }
-
-    #[test]
-    fn long_prompt_line_is_clipped_to_sixty_characters() {
-        let input = json!({"prompt": "a".repeat(80)});
-        assert_eq!(
-            subagent_label(&input, "Agent"),
-            format!("general-purpose - {}...", "a".repeat(57))
-        );
-    }
-
-    #[test]
-    fn model_override_is_shown_after_the_type() {
-        let input = json!({"subagent_type": "worker", "model": "sonnet", "description": "Fix it"});
-        assert_eq!(subagent_label(&input, "Agent"), "worker (sonnet) - Fix it");
-    }
-
-    #[test]
-    fn long_label_is_capped_with_an_ellipsis() {
+    fn label_is_type_model_and_description_with_the_documented_fallbacks() {
+        let cases: [(serde_json::Value, &str, String); 9] = [
+            (
+                json!({"subagent_type": "worker", "description": "Fix ledger torn tail",
+                    "prompt": "Fix it"}),
+                "Agent",
+                "worker - Fix ledger torn tail".to_owned(),
+            ),
+            (
+                json!({"description": "Map the repo"}),
+                "Agent",
+                "general-purpose - Map the repo".to_owned(),
+            ),
+            (
+                json!({"subagent_type": "explore", "prompt": "\n  Find every caller of\n  parse"}),
+                "Agent",
+                "explore - Find every caller of".to_owned(),
+            ),
+            (
+                json!({"prompt": "a".repeat(80)}),
+                "Agent",
+                format!("general-purpose - {}...", "a".repeat(57)),
+            ),
+            (
+                json!({"subagent_type": "worker", "model": "sonnet", "description": "Fix it"}),
+                "Agent",
+                "worker (sonnet) - Fix it".to_owned(),
+            ),
+            (
+                json!({}),
+                "Review the diff",
+                "general-purpose - Review the diff".to_owned(),
+            ),
+            (
+                json!({"model": "sonnet", "description": "Map the repo"}),
+                "Agent",
+                "general-purpose (sonnet) - Map the repo".to_owned(),
+            ),
+            (
+                json!({"subagent_type": "worker", "description": "Fix Müller – naïve 日本"}),
+                "Agent",
+                "worker - Fix Mueller - naive".to_owned(),
+            ),
+            (
+                json!({"subagent_type": "wor"}),
+                "Agent",
+                "wor - Agent".to_owned(),
+            ),
+        ];
+        for (input, card, want) in cases {
+            assert_eq!(subagent_label(&input, card), want);
+        }
         let input = json!({"subagent_type": "worker", "description": "x".repeat(200)});
         let label = subagent_label(&input, "Agent");
         assert_eq!(label.chars().count(), 100);
         assert!(label.ends_with("..."));
-    }
-
-    #[test]
-    fn empty_input_falls_back_to_the_card_name() {
-        assert_eq!(
-            subagent_label(&json!({}), "Review the diff"),
-            "general-purpose - Review the diff"
-        );
-    }
-
-    #[test]
-    fn missing_type_keeps_the_model_in_parentheses() {
-        let input = json!({"model": "sonnet", "description": "Map the repo"});
-        assert_eq!(
-            subagent_label(&input, "Agent"),
-            "general-purpose (sonnet) - Map the repo"
-        );
-    }
-
-    #[test]
-    fn non_ascii_text_is_mapped_to_ascii() {
-        let input = json!({"subagent_type": "worker", "description": "Fix Müller – naïve 日本"});
-        assert_eq!(
-            subagent_label(&input, "Agent"),
-            "worker - Fix Mueller - naive"
-        );
-    }
-
-    #[test]
-    fn partial_input_labels_without_panicking() {
-        let input = json!({"subagent_type": "wor"});
-        assert_eq!(subagent_label(&input, "Agent"), "wor - Agent");
     }
 }

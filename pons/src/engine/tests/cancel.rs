@@ -76,6 +76,7 @@ fn a_new_prompt_resets_the_stop_window() {
     let mut e = busy(t0);
     let out = e.on_client(&cancel(), t0 + ms(3000));
     assert_eq!(client_lines(&out).len(), 1);
+    assert!(e.sessions["s"].dropped_cancel.is_some());
     // Zed's next prompt, then a cancel 2.2s after the dropped one: not a
     // Stop (the window belongs to the earlier turn), filtered again.
     e.on_client(&prompt(2), t0 + ms(3100));
@@ -117,16 +118,6 @@ fn a_late_swallowed_response_leaves_the_new_turns_state_alone() {
 }
 
 #[test]
-fn a_new_prompt_clears_a_stale_dropped_cancel() {
-    let t0 = Instant::now();
-    let mut e = busy(t0);
-    e.on_client(&cancel(), t0 + Duration::from_millis(3000));
-    assert!(e.sessions["s"].dropped_cancel.is_some());
-    e.on_client(&prompt(2), t0 + Duration::from_millis(3001));
-    assert!(e.sessions["s"].dropped_cancel.is_none());
-}
-
-#[test]
 fn closing_a_session_drops_all_its_state_and_silences_it() {
     let t0 = Instant::now();
     let mut e = two_background(t0);
@@ -157,7 +148,7 @@ fn closing_a_session_drops_all_its_state_and_silences_it() {
 }
 
 #[test]
-fn repeated_cancel_after_window_is_dropped_again() {
+fn a_cancel_outside_the_window_or_with_a_zero_window_is_dropped_again() {
     let t0 = Instant::now();
     let ms = Duration::from_millis;
     let mut e = busy(t0);
@@ -166,12 +157,8 @@ fn repeated_cancel_after_window_is_dropped_again() {
     let out = e.on_client(&cancel(), t0 + ms(6100));
     assert!(!out.iter().any(|a| matches!(a, Action::ToAgent(_))));
     assert_eq!(client_lines(&out)[0]["id"], 2);
-}
 
-#[test]
-fn zero_stop_window_never_forwards_repeated_cancel() {
-    let t0 = Instant::now();
-    let ms = Duration::from_millis;
+    // A zero stop window never turns a repeat into a Stop.
     let mut e = busy(t0);
     e.cfg.stop_window = Duration::ZERO;
     e.on_client(&cancel(), t0 + ms(3000));
@@ -181,18 +168,15 @@ fn zero_stop_window_never_forwards_repeated_cancel() {
 }
 
 #[test]
-fn cancel_is_held_whether_or_not_the_main_agent_is_streaming() {
+fn a_cancel_is_held_after_main_or_parent_updates() {
     let t0 = Instant::now();
     let mut e = busy(t0);
     e.on_agent(&update(json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "hi"}})), t0 + Duration::from_secs(2));
     let out = e.on_client(&cancel(), t0 + Duration::from_millis(2010));
     assert!(!out.iter().any(|a| matches!(a, Action::ToAgent(_))));
     assert_eq!(client_lines(&out)[0]["result"]["stopReason"], "cancelled");
-}
 
-#[test]
-fn parent_updates_do_not_count_as_main_activity() {
-    let t0 = Instant::now();
+    // A parent's own update is not main-agent activity either.
     let mut e = busy(t0);
     e.on_agent(
         &update(json!({"sessionUpdate": "tool_call_update", "toolCallId": "P", "content": []})),

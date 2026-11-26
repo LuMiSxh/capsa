@@ -14,7 +14,7 @@ fn finished_mid_sentence(t0: Instant) -> Engine {
 }
 
 #[test]
-fn entry_waits_for_a_pause_in_the_main_agents_text() {
+fn text_and_thought_chunks_hold_the_entry_until_the_gap() {
     let t0 = Instant::now();
     let mut e = finished_mid_sentence(t0);
     e.on_agent(&chunk("agent to count"), t0 + ms(21_200));
@@ -23,11 +23,7 @@ fn entry_waits_for_a_pause_in_the_main_agents_text() {
     let out = e.tick(t0 + ms(21_800));
     assert_eq!(entries(&out).len(), 1, "600 ms after the last chunk");
     assert!(entries(&e.tick(t0 + ms(30_000))).is_empty(), "sent once");
-}
 
-#[test]
-fn thought_chunks_also_hold_the_entry() {
-    let t0 = Instant::now();
     let mut e = finished_mid_sentence(t0);
     e.on_agent(
         &update(json!({"sessionUpdate": "agent_thought_chunk",
@@ -39,7 +35,7 @@ fn thought_chunks_also_hold_the_entry() {
 }
 
 #[test]
-fn entry_goes_out_before_the_next_main_agent_tool_call() {
+fn the_held_entry_goes_out_before_the_next_tool_call_or_the_turn_end() {
     let t0 = Instant::now();
     let mut e = finished_mid_sentence(t0);
     let out = e.on_agent(&main_tool_call(), t0 + ms(21_100));
@@ -52,11 +48,7 @@ fn entry_goes_out_before_the_next_main_agent_tool_call() {
             .starts_with("pons-finished-")
     );
     assert_eq!(lines[1]["params"]["update"]["toolCallId"], "m1");
-}
 
-#[test]
-fn entry_goes_out_before_the_turn_end_response() {
-    let t0 = Instant::now();
     let mut e = finished_mid_sentence(t0);
     let out = e.on_agent(&response(1), t0 + ms(21_100));
     let lines = client_lines(&out);
