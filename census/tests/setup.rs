@@ -313,26 +313,21 @@ fn unrelated_keys_and_hooks_keep_their_order() {
 }
 
 #[test]
-fn invalid_json_exits_2_and_nothing_is_written() {
-    let home = Scratch::new("setup-invalid");
-    home.write("claude/settings.json", "{ not json");
-
-    let out = setup(&home, &[]);
-    assert_eq!(out.status.code(), Some(2));
-    let err = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert!(err.contains("error:") && err.contains("hint:"), "{err}");
-    assert_eq!(read(&settings_path(&home)), "{ not json");
-    assert!(!skill_path(&home).exists());
-}
-
-#[test]
-fn hooks_or_an_event_of_the_wrong_shape_exit_2_and_nothing_is_written() {
-    for original in [r#"{"hooks":[]}"#, r#"{"hooks":{"PostToolUse":{}}}"#] {
-        let home = Scratch::new("setup-shape");
+fn invalid_json_hooks_or_an_event_of_the_wrong_shape_exit_2_and_nothing_is_written() {
+    for (original, expect_hint) in [
+        ("{ not json", true),
+        (r#"{"hooks":[]}"#, false),
+        (r#"{"hooks":{"PostToolUse":{}}}"#, false),
+    ] {
+        let home = Scratch::new("setup-invalid");
         home.write("claude/settings.json", original);
 
         let out = setup(&home, &[]);
         assert_eq!(out.status.code(), Some(2), "{original}");
+        if expect_hint {
+            let err = String::from_utf8_lossy(&out.stderr).into_owned();
+            assert!(err.contains("error:") && err.contains("hint:"), "{err}");
+        }
         assert_eq!(read(&settings_path(&home)), original);
         assert!(!skill_path(&home).exists());
     }

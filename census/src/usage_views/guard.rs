@@ -206,28 +206,24 @@ mod tests {
 
     #[test]
     fn a_rule_shows_its_follow_rate_only_after_the_minimum_sample() {
-        let mut log = Vec::new();
-        for i in 0..5 {
-            log.push(line(i * 1_000, &format!("s{i}"), "grep", "hint"));
-        }
-        log.push(line(100_000, "x", "sed", "escape"));
-        let view = GuardView::new("log".to_owned(), &log, 10, false);
-        let grep = view.rules.iter().find(|r| r.rule == "grep").expect("grep");
-        assert_eq!(grep.observed, 5);
-        assert_eq!(grep.follow, Some(1.0));
-        assert!(view.projects.is_none());
-    }
-
-    #[test]
-    fn a_rule_below_the_minimum_sample_has_no_rate() {
-        let log = [
+        let mut five_hints: Vec<GuardEntry> = (0..5)
+            .map(|i| line(i * 1_000, &format!("s{i}"), "grep", "hint"))
+            .collect();
+        five_hints.push(line(100_000, "x", "sed", "escape"));
+        let short = vec![
             line(0, "s", "grep", "deny"),
             line(10_000, "x", "sed", "escape"),
         ];
-        let view = GuardView::new("log".to_owned(), &log, 10, false);
-        assert_eq!(view.rules[0].observed, 1);
-        assert_eq!(view.rules[0].follow, None);
-        assert_eq!(by_rule(&log)["grep"].deny, 1);
+        let cases: [(Vec<GuardEntry>, u64, Option<f32>, u64); 2] =
+            [(five_hints, 5, Some(1.0), 0), (short, 1, None, 1)];
+        for (log, observed, follow, deny) in cases {
+            let view = GuardView::new("log".to_owned(), &log, 10, false);
+            let grep = view.rules.iter().find(|r| r.rule == "grep").expect("grep");
+            assert_eq!(grep.observed, observed);
+            assert_eq!(grep.follow, follow);
+            assert!(view.projects.is_none());
+            assert_eq!(by_rule(&log)["grep"].deny, deny);
+        }
     }
 
     #[test]

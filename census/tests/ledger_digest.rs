@@ -194,107 +194,91 @@ fn rows_appended_to_a_current_digest_fold_in_without_a_rebuild() {
 }
 
 #[test]
-fn a_missing_digest_is_built_again() {
-    let e = env();
-    append(
-        &e.projects.join("a.jsonl"),
-        &rec("a", BASE, "claude-opus-5", 100),
-    );
-    let l = e.update(BASE + 60);
-    std::fs::remove_file(e.digest_path()).unwrap();
-    assert_matches_rebuild(&e, &l);
-    assert!(e.digest_path().exists());
-}
+fn a_digest_that_does_not_match_its_inputs_is_built_again() {
+    fn remove_digest(e: &Env) {
+        std::fs::remove_file(e.digest_path()).unwrap();
+    }
+    fn corrupt_digest(e: &Env) {
+        std::fs::write(e.digest_path(), b"{\"format\":3,").unwrap();
+    }
+    fn set_format(e: &Env) {
+        let mut digest = e.digest();
+        digest["format"] = json!(1);
+        e.write_digest(&digest);
+    }
+    fn set_version(e: &Env) {
+        let mut digest = e.digest();
+        digest["census"] = json!("0.0.0");
+        e.write_digest(&digest);
+    }
+    fn set_prices(e: &Env) {
+        let mut digest = e.digest();
+        digest["prices"] = json!(digest["prices"].as_u64().unwrap() + 1);
+        e.write_digest(&digest);
+    }
+    fn truncate_rows(e: &Env) {
+        let rows = std::fs::read(e.rows_path()).unwrap();
+        let first_line = rows.iter().position(|b| *b == b'\n').unwrap() + 1;
+        std::fs::write(e.rows_path(), &rows[..first_line]).unwrap();
+    }
+    fn replace_rows(e: &Env) {
+        let mut rows = std::fs::read(e.rows_path()).unwrap();
+        let at = rows.len() - 3;
+        rows[at] = if rows[at] == b'7' { b'8' } else { b'7' };
+        std::fs::write(e.rows_path(), &rows).unwrap();
+    }
+    fn touch_hourly(e: &Env) {
+        append(&e.state.join("hourly.jsonl"), "\n");
+    }
 
-#[test]
-fn a_corrupt_digest_is_built_again() {
-    let e = env();
-    append(
-        &e.projects.join("a.jsonl"),
-        &rec("a", BASE, "claude-opus-5", 100),
-    );
-    let l = e.update(BASE + 60);
-    std::fs::write(e.digest_path(), b"{\"format\":3,").unwrap();
-    assert_matches_rebuild(&e, &l);
-}
-
-#[test]
-fn a_digest_of_another_format_or_version_is_built_again() {
-    for (key, value) in [("format", json!(1)), ("census", json!("0.0.0"))] {
+    // The records the files hold, how the digest stops matching them, and the check after the read.
+    type Mismatch = fn(&Env);
+    type Check = fn(&Env, &Ledger, &str);
+    type Case = (&'static str, usize, Mismatch, Check);
+    let cases: [Case; 8] = [
+        ("removed", 1, remove_digest, |e, l, name| {
+            assert_matches_rebuild(e, l);
+            assert!(e.digest_path().exists(), "{name}");
+        }),
+        ("corrupt", 1, corrupt_digest, |e, l, name| {
+            assert_matches_rebuild(e, l);
+            assert!(e.digest_path().exists(), "{name}");
+        }),
+        ("format", 1, set_format, |e, _, name| {
+            assert!(!e.digest_is_trusted(), "{name}");
+        }),
+        ("version", 1, set_version, |e, _, name| {
+            assert!(!e.digest_is_trusted(), "{name}");
+        }),
+        ("prices", 1, set_prices, |e, _, name| {
+            assert!(!e.digest_is_trusted(), "{name}");
+        }),
+        ("truncated rows", 2, truncate_rows, |e, l, name| {
+            assert_eq!(l.priced().unwrap().raw.len(), 1, "{name}");
+            assert!(!e.digest_is_trusted(), "{name}");
+        }),
+        ("replaced rows", 1, replace_rows, |e, _, name| {
+            assert!(!e.digest_is_trusted(), "{name}");
+        }),
+        ("hourly", 1, touch_hourly, |e, _, name| {
+            assert!(!e.digest_is_trusted(), "{name}");
+        }),
+    ];
+    for (name, records, mismatch, check) in cases {
         let e = env();
-        append(
-            &e.projects.join("a.jsonl"),
-            &rec("a", BASE, "claude-opus-5", 100),
-        );
+        let file = e.projects.join("a.jsonl");
+        for i in 0..records {
+            append(
+                &file,
+                &rec(&format!("m{i}"), BASE + i as u64 * 5, "claude-opus-5", 100),
+            );
+        }
         e.update(BASE + 60);
         e.mark_digest();
-        let mut digest = e.digest();
-        digest[key] = value;
-        e.write_digest(&digest);
-        assert!(!e.digest_is_trusted(), "{key}");
+        mismatch(&e);
+        let rebuilt = Ledger::open(&e.state);
+        check(&e, &rebuilt, name);
     }
-}
-
-#[test]
-fn a_digest_of_another_price_list_is_built_again() {
-    let e = env();
-    append(
-        &e.projects.join("a.jsonl"),
-        &rec("a", BASE, "claude-opus-5", 100),
-    );
-    e.update(BASE + 60);
-    e.mark_digest();
-    let mut digest = e.digest();
-    digest["prices"] = json!(digest["prices"].as_u64().unwrap() + 1);
-    e.write_digest(&digest);
-    assert!(!e.digest_is_trusted());
-}
-
-#[test]
-fn a_truncated_rows_file_is_built_again() {
-    let e = env();
-    let file = e.projects.join("a.jsonl");
-    append(
-        &file,
-        &(rec("a", BASE, "claude-opus-5", 100) + &rec("b", BASE + 5, "claude-opus-5", 200)),
-    );
-    e.update(BASE + 60);
-    e.mark_digest();
-    let rows = std::fs::read(e.rows_path()).unwrap();
-    let first_line = rows.iter().position(|b| *b == b'\n').unwrap() + 1;
-    std::fs::write(e.rows_path(), &rows[..first_line]).unwrap();
-    let l = Ledger::open(&e.state);
-    assert_eq!(l.priced().unwrap().raw.len(), 1);
-    assert!(!e.digest_is_trusted());
-}
-
-#[test]
-fn a_rows_file_replaced_by_one_of_the_same_length_is_built_again() {
-    let e = env();
-    append(
-        &e.projects.join("a.jsonl"),
-        &rec("a", BASE, "claude-opus-5", 100),
-    );
-    e.update(BASE + 60);
-    e.mark_digest();
-    let mut rows = std::fs::read(e.rows_path()).unwrap();
-    let at = rows.len() - 3;
-    rows[at] = if rows[at] == b'7' { b'8' } else { b'7' };
-    std::fs::write(e.rows_path(), &rows).unwrap();
-    assert!(!e.digest_is_trusted());
-}
-
-#[test]
-fn a_changed_hourly_file_is_built_again() {
-    let e = env();
-    append(
-        &e.projects.join("a.jsonl"),
-        &rec("a", BASE, "claude-opus-5", 100),
-    );
-    e.update(BASE + 60);
-    e.mark_digest();
-    append(&e.state.join("hourly.jsonl"), "\n");
-    assert!(!e.digest_is_trusted());
 }
 
 #[test]

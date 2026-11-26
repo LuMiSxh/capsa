@@ -9,31 +9,40 @@ use common::Scratch;
 const LIMITS: &str = r#"{"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":1793530800},"seven_day":{"used_percentage":1,"resets_at":1794106800}}}"#;
 
 #[test]
-fn each_present_window_gives_one_statusline_snapshot() {
-    let snaps = snapshots(&parse(LIMITS).expect("the sample parses"), 100);
-    assert_eq!(snaps.len(), 2);
-    assert_eq!(snaps[0].window, Window::FiveHour);
-    assert!((snaps[0].used_percentage - 6.0).abs() < 1e-9);
-    assert_eq!(snaps[0].resets_at, 1_793_530_800);
-    assert_eq!(snaps[1].window, Window::SevenDay);
-    assert!(
-        snaps
+fn each_complete_window_gives_one_snapshot_and_incomplete_ones_are_skipped() {
+    type Case = (&'static str, Vec<(Window, f64, u64)>);
+    let cases: [Case; 4] = [
+        (
+            LIMITS,
+            vec![
+                (Window::FiveHour, 6.0, 1_793_530_800),
+                (Window::SevenDay, 1.0, 1_794_106_800),
+            ],
+        ),
+        (
+            r#"{"rate_limits":{"five_hour":{"used_percentage":6}}}"#,
+            vec![],
+        ),
+        (
+            r#"{"rate_limits":{"seven_day":{"used_percentage":1,"resets_at":5}}}"#,
+            vec![(Window::SevenDay, 1.0, 5)],
+        ),
+        ("{}", vec![]),
+    ];
+    for (input, expected) in cases {
+        let snaps = snapshots(&parse(input).expect("parses"), 100);
+        let got: Vec<(Window, f64, u64)> = snaps
             .iter()
-            .all(|s| s.t == 100 && s.source == Source::Statusline)
-    );
-}
-
-#[test]
-fn absent_windows_and_fields_are_skipped() {
-    let only_five =
-        parse(r#"{"rate_limits":{"five_hour":{"used_percentage":6}}}"#).expect("parses");
-    assert!(snapshots(&only_five, 1).is_empty());
-    let only_seven = parse(r#"{"rate_limits":{"seven_day":{"used_percentage":1,"resets_at":5}}}"#)
-        .expect("parses");
-    let snaps = snapshots(&only_seven, 1);
-    assert_eq!(snaps.len(), 1);
-    assert_eq!(snaps[0].window, Window::SevenDay);
-    assert!(snapshots(&parse("{}").expect("parses"), 1).is_empty());
+            .map(|s| (s.window, s.used_percentage, s.resets_at))
+            .collect();
+        assert_eq!(got, expected, "{input}");
+        assert!(
+            snaps
+                .iter()
+                .all(|s| s.t == 100 && s.source == Source::Statusline),
+            "{input}"
+        );
+    }
 }
 
 #[test]

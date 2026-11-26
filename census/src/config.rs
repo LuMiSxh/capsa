@@ -152,13 +152,13 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_mode_is_refused() {
-        assert!(load("mode = \"free\"").is_err());
-    }
-
-    #[test]
-    fn an_unknown_key_is_refused() {
-        assert!(load("modee = \"plan\"").is_err());
+    fn an_unknown_mode_an_unknown_key_or_invalid_toml_is_refused() {
+        for text in ["mode = \"free\"", "modee = \"plan\"", "not toml"] {
+            assert!(
+                matches!(load(text), Err(ConfigError::Parse { .. })),
+                "{text}"
+            );
+        }
     }
 
     #[test]
@@ -238,10 +238,5 @@ mod tests {
         };
         file.save(&c).unwrap();
         assert_eq!(file.load::<Config>().unwrap(), c);
-    }
-
-    #[test]
-    fn an_invalid_file_is_an_error() {
-        assert!(matches!(load("not toml"), Err(ConfigError::Parse { .. })));
     }
 }

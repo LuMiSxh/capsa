@@ -121,7 +121,7 @@ fn calibration_widens_to_ninety_days_while_recent_points_are_few() {
     let costs = Costed::new(&rows, &[]);
     let cal = calibrate(Window::FiveHour, &snaps, &costs, now).expect("four points in 90 days");
     assert_eq!(cal.points, 4);
-    assert!(cal.spread.is_some());
+    assert_eq!(cal.spread, Some(0.0));
 }
 
 #[test]

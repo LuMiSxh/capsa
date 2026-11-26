@@ -178,51 +178,40 @@ mod tests {
     }
 
     #[test]
-    fn projection_is_the_month_to_date_rate_over_the_month() {
-        let s = status(50.0, 10 * DAY_S, Some(200.0));
-        assert!((s.projected_usd - 150.0).abs() < 1e-9);
-        assert!(!s.projected_over);
-        assert!((s.percent.unwrap() - 25.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn a_projection_above_the_budget_is_flagged() {
-        let s = status(100.0, 10 * DAY_S, Some(200.0));
-        assert!((s.projected_usd - 300.0).abs() < 1e-9);
-        assert!(s.projected_over);
-    }
-
-    #[test]
-    fn remaining_budget_is_spread_over_the_days_left() {
-        let s = status(50.0, 10 * DAY_S, Some(200.0));
-        assert_eq!(s.days_left, 20);
-        assert!((s.per_day_left_usd.unwrap() - 7.5).abs() < 1e-9);
-    }
-
-    #[test]
-    fn a_spent_budget_leaves_nothing_per_day() {
-        let s = status(250.0, 10 * DAY_S, Some(200.0));
-        assert_eq!(s.per_day_left_usd, Some(0.0));
-        assert!(s.percent.unwrap() > 100.0);
-    }
-
-    #[test]
-    fn the_first_hours_do_not_scale_up_a_single_request() {
-        let s = status(2.0, 3600, Some(200.0));
-        assert!((s.projected_usd - 60.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn without_a_budget_there_is_no_share_or_flag() {
-        let s = status(50.0, 10 * DAY_S, None);
-        assert_eq!((s.percent, s.per_day_left_usd), (None, None));
-        assert!(!s.projected_over);
-    }
-
-    #[test]
-    fn the_last_started_day_counts_as_a_day_left() {
-        let s = status(1.0, 30 * DAY_S - 60, None);
-        assert_eq!(s.days_left, 1);
+    fn status_projects_the_spend_and_spreads_the_budget_over_the_days_left() {
+        type Case = (f64, u64, Option<f64>, fn(&MonthStatus));
+        let cases: &[Case] = &[
+            (50.0, 10 * DAY_S, Some(200.0), |s| {
+                assert!((s.projected_usd - 150.0).abs() < 1e-9);
+                assert!(!s.projected_over);
+                assert!((s.percent.unwrap() - 25.0).abs() < 1e-9);
+            }),
+            (100.0, 10 * DAY_S, Some(200.0), |s| {
+                assert!((s.projected_usd - 300.0).abs() < 1e-9);
+                assert!(s.projected_over);
+            }),
+            (50.0, 10 * DAY_S, Some(200.0), |s| {
+                assert_eq!(s.days_left, 20);
+                assert!((s.per_day_left_usd.unwrap() - 7.5).abs() < 1e-9);
+            }),
+            (250.0, 10 * DAY_S, Some(200.0), |s| {
+                assert_eq!(s.per_day_left_usd, Some(0.0));
+                assert!(s.percent.unwrap() > 100.0);
+            }),
+            (2.0, 3600, Some(200.0), |s| {
+                assert!((s.projected_usd - 60.0).abs() < 1e-9);
+            }),
+            (50.0, 10 * DAY_S, None, |s| {
+                assert_eq!((s.percent, s.per_day_left_usd), (None, None));
+                assert!(!s.projected_over);
+            }),
+            (1.0, 30 * DAY_S - 60, None, |s| {
+                assert_eq!(s.days_left, 1);
+            }),
+        ];
+        for &(spent, elapsed_s, budget, check) in cases {
+            check(&status(spent, elapsed_s, budget));
+        }
     }
 
     #[test]

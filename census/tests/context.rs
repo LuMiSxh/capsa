@@ -16,46 +16,53 @@ fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
 }
 
 #[test]
-fn env_window_beats_settings_and_settings_beat_the_default() {
-    let opus = Some("claude-opus-5-5");
-    let from_env = threshold(
-        opus,
-        env(&[("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "300000")]),
-        Some(400_000),
+fn the_threshold_follows_the_env_settings_and_the_model_window() {
+    type Case = (
+        Option<&'static str>,
+        &'static [(&'static str, &'static str)],
+        Option<u64>,
+        fn(&Threshold),
     );
-    assert_eq!(from_env.tokens, 300_000);
-    assert!(from_env.source.contains("CLAUDE_CODE_AUTO_COMPACT_WINDOW"));
-
-    let from_settings = threshold(opus, env(&[]), Some(400_000));
-    assert_eq!(from_settings.tokens, 400_000);
-    assert_eq!(from_settings.source, "autoCompactWindow in settings.json");
-
-    let default = threshold(opus, env(&[]), None);
-    assert_eq!(default.tokens, 1_000_000);
-    assert_eq!(default.source, "default (approximate)");
-}
-
-#[test]
-fn threshold_is_capped_at_the_model_window() {
-    let small = threshold(
-        Some("claude-haiku-4-5"),
-        env(&[("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "2000000")]),
-        None,
-    );
-    assert_eq!(small.tokens, 200_000);
-    let large = threshold(Some("claude-opus-5-5"), env(&[]), Some(1_500_000));
-    assert_eq!(large.tokens, 1_000_000);
-}
-
-#[test]
-fn percentage_override_only_lowers_the_threshold() {
-    let half = threshold(
-        Some("claude-opus-5-5"),
-        env(&[("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "50")]),
-        Some(400_000),
-    );
-    assert_eq!(half.tokens, 200_000);
-    assert!(half.source.contains("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE 50%"));
+    let cases: &[Case] = &[
+        (
+            Some("claude-opus-5-5"),
+            &[("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "300000")],
+            Some(400_000),
+            |t| {
+                assert_eq!(t.tokens, 300_000);
+                assert!(t.source.contains("CLAUDE_CODE_AUTO_COMPACT_WINDOW"));
+            },
+        ),
+        (Some("claude-opus-5-5"), &[], Some(400_000), |t| {
+            assert_eq!(t.tokens, 400_000);
+            assert_eq!(t.source, "autoCompactWindow in settings.json");
+        }),
+        (Some("claude-opus-5-5"), &[], None, |t| {
+            assert_eq!(t.tokens, 1_000_000);
+            assert_eq!(t.source, "default (approximate)");
+        }),
+        (
+            Some("claude-haiku-4-5"),
+            &[("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "2000000")],
+            None,
+            |t| assert_eq!(t.tokens, 200_000),
+        ),
+        (Some("claude-opus-5-5"), &[], Some(1_500_000), |t| {
+            assert_eq!(t.tokens, 1_000_000);
+        }),
+        (
+            Some("claude-opus-5-5"),
+            &[("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "50")],
+            Some(400_000),
+            |t| {
+                assert_eq!(t.tokens, 200_000);
+                assert!(t.source.contains("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE 50%"));
+            },
+        ),
+    ];
+    for (model, vars, settings, check) in cases {
+        check(&threshold(*model, env(vars), *settings));
+    }
 
     for ignored in ["0", "101", "abc"] {
         let t = threshold(

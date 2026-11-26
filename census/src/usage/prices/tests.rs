@@ -89,43 +89,8 @@ fn write_cache(dir: &Path, t: &Table) {
 }
 
 #[test]
-fn sonnet_5_5_cache_read_is_a_tenth_of_a_dollar_per_million() {
-    assert_usd(usd("claude-sonnet-5-5", &request(0, 1_000_000, 0, 0)), 0.10);
-}
-
-#[test]
-fn haiku_prompt_of_50k_pays_the_short_tier() {
-    // 40k input at $0.10, 10k cache read at $0.01 and 1k output at $0.50, per million.
-    let t = request(40_000, 10_000, 0, 1_000);
-    assert_usd(usd("claude-haiku-5-5", &t), 0.0046);
-}
-
-#[test]
-fn haiku_prompt_of_120k_pays_the_long_tier() {
-    // 100k input at $0.50, 10k cache read at $0.05, 10k 1h writes at $1.00 and 1k output at
-    // $2.50, per million.
-    let t = request(100_000, 10_000, 10_000, 1_000);
-    assert_usd(usd("claude-haiku-5-5", &t), 0.063);
-}
-
-#[test]
-fn haiku_prompt_of_exactly_100k_pays_the_short_tier() {
-    assert_usd(usd("claude-haiku-5-5", &request(100_000, 0, 0, 0)), 0.01);
-}
-
-#[test]
-fn opus_5_5_output_is_twenty_dollars_per_million() {
-    assert_usd(usd("claude-opus-5-5", &request(0, 0, 0, 1_000_000)), 20.0);
-}
-
-#[test]
-fn one_hour_cache_writes_cost_twice_the_input_price() {
-    assert_usd(usd("claude-sonnet-5-5", &request(0, 0, 1_000_000, 0)), 4.0);
-}
-
-#[test]
-fn five_minute_cache_writes_cost_one_and_a_quarter_times_the_input_price() {
-    let t = Tokens {
+fn request_costs_follow_the_price_list_and_its_tiers() {
+    let five_minute_writes = Tokens {
         input: 0,
         cache_read: 0,
         cache_write_5m: 1_000_000,
@@ -133,7 +98,29 @@ fn five_minute_cache_writes_cost_one_and_a_quarter_times_the_input_price() {
         output: 0,
         requests: 1,
     };
-    assert_usd(usd("claude-sonnet-5-5", &t), 2.5);
+    let cases: [(&str, Tokens, f64); 7] = [
+        ("claude-sonnet-5-5", request(0, 1_000_000, 0, 0), 0.10),
+        // 40k input at $0.10, 10k cache read at $0.01 and 1k output at $0.50, per million.
+        (
+            "claude-haiku-5-5",
+            request(40_000, 10_000, 0, 1_000),
+            0.0046,
+        ),
+        // 100k input at $0.50, 10k cache read at $0.05, 10k 1h writes at $1.00 and 1k output at
+        // $2.50, per million.
+        (
+            "claude-haiku-5-5",
+            request(100_000, 10_000, 10_000, 1_000),
+            0.063,
+        ),
+        ("claude-haiku-5-5", request(100_000, 0, 0, 0), 0.01),
+        ("claude-opus-5-5", request(0, 0, 0, 1_000_000), 20.0),
+        ("claude-sonnet-5-5", request(0, 0, 1_000_000, 0), 4.0),
+        ("claude-sonnet-5-5", five_minute_writes, 2.5),
+    ];
+    for (model, tokens, expected) in cases {
+        assert_usd(usd(model, &tokens), expected);
+    }
 }
 
 #[test]
@@ -248,27 +235,31 @@ fn a_long_tier_takes_its_threshold_from_the_key_and_skips_batches() {
 }
 
 #[test]
-fn a_cached_table_is_used_over_the_snapshot() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    write_cache(dir.path(), &cached(5, "cached-model"));
-    let t = source::load(dir.path());
-    assert!(t.models.contains_key("cached-model"));
-    assert!(!t.models.contains_key("claude-haiku-5-5"));
-}
-
-#[test]
-fn without_a_cache_the_snapshot_is_used() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let t = source::load(dir.path());
-    assert!(t.models.contains_key("claude-haiku-5-5"));
-}
-
-#[test]
-fn an_unreadable_cache_gives_the_snapshot() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    std::fs::write(dir.path().join("prices.json"), "not json").expect("write");
-    let t = source::load(dir.path());
-    assert!(t.models.contains_key("claude-haiku-5-5"));
+fn a_readable_cache_replaces_the_snapshot_and_a_missing_or_unreadable_one_keeps_it() {
+    fn readable(dir: &Path) {
+        write_cache(dir, &cached(5, "cached-model"));
+    }
+    fn missing(_: &Path) {}
+    fn unreadable(dir: &Path) {
+        std::fs::write(dir.join("prices.json"), "not json").expect("write");
+    }
+    type Case = (&'static str, fn(&Path), bool, bool);
+    let cases: [Case; 3] = [
+        ("readable", readable, true, false),
+        ("missing", missing, false, true),
+        ("unreadable", unreadable, false, true),
+    ];
+    for (name, prepare, has_cached, has_snapshot) in cases {
+        let dir = tempfile::tempdir().expect("temp dir");
+        prepare(dir.path());
+        let t = source::load(dir.path());
+        assert_eq!(t.models.contains_key("cached-model"), has_cached, "{name}");
+        assert_eq!(
+            t.models.contains_key("claude-haiku-5-5"),
+            has_snapshot,
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -313,49 +304,33 @@ fn a_list_without_models_keeps_the_cache() {
 }
 
 #[test]
-fn the_cache_goes_stale_after_the_refresh_days() {
+fn the_cache_goes_stale_after_the_refresh_days_and_a_period_below_one_day_counts_as_one() {
     let cache = cached(0, "cached-model");
-    assert!(!source::is_stale(Some(&cache), 7 * DAY_S - 1, 7));
-    assert!(source::is_stale(Some(&cache), 7 * DAY_S, 7));
-    assert!(source::is_stale(None, 0, 7));
-}
-
-#[test]
-fn a_refresh_period_below_one_day_counts_as_one_day() {
-    let cache = cached(0, "cached-model");
-    assert!(!source::is_stale(Some(&cache), DAY_S - 1, 0));
-    assert!(source::is_stale(Some(&cache), DAY_S, 0));
+    let cases: [(Option<&Table>, u64, u64, bool); 5] = [
+        (Some(&cache), 7 * DAY_S - 1, 7, false),
+        (Some(&cache), 7 * DAY_S, 7, true),
+        (None, 0, 7, true),
+        (Some(&cache), DAY_S - 1, 0, false),
+        (Some(&cache), DAY_S, 0, true),
+    ];
+    for (table, now, days, stale) in cases {
+        assert_eq!(source::is_stale(table, now, days), stale, "{now} {days}");
+    }
 }
 
 #[test]
 fn a_failed_fetch_holds_the_next_attempt_for_an_hour() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let calls = Cell::new(0);
-    let fetch = || {
-        calls.set(calls.get() + 1);
-        Err(PriceError::Fetch("offline".to_owned()))
-    };
-    assert!(!source::refresh_with(dir.path(), 100, 7, fetch));
-    assert!(!source::refresh_with(
-        dir.path(),
-        100 + HOUR_S - 1,
-        7,
-        fetch
-    ));
-    assert_eq!(calls.get(), 1);
-}
-
-#[test]
-fn a_call_after_the_hour_fetches_again() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let calls = Cell::new(0);
-    let fetch = || {
-        calls.set(calls.get() + 1);
-        Err(PriceError::Fetch("offline".to_owned()))
-    };
-    assert!(!source::refresh_with(dir.path(), 100, 7, fetch));
-    assert!(!source::refresh_with(dir.path(), 100 + HOUR_S, 7, fetch));
-    assert_eq!(calls.get(), 2);
+    for (offset, calls) in [(HOUR_S - 1, 1), (HOUR_S, 2)] {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let count = Cell::new(0);
+        let fetch = || {
+            count.set(count.get() + 1);
+            Err(PriceError::Fetch("offline".to_owned()))
+        };
+        assert!(!source::refresh_with(dir.path(), 100, 7, fetch));
+        assert!(!source::refresh_with(dir.path(), 100 + offset, 7, fetch));
+        assert_eq!(count.get(), calls, "{offset}");
+    }
 }
 
 #[test]

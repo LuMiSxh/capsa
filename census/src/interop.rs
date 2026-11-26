@@ -75,13 +75,12 @@ mod tests {
     use super::update_segment;
 
     #[test]
-    fn no_update_segment_when_no_tool_has_a_newer_release() {
-        assert_eq!(update_segment(|_| None), None);
-    }
-
-    #[test]
-    fn update_segment_names_the_tools_with_a_newer_release_in_tool_order() {
-        let newer = |tool: &str| matches!(tool, "pons" | "acus").then(|| "0.24.0".to_owned());
-        assert_eq!(update_segment(newer).as_deref(), Some("update acus,pons"));
+    fn update_segment_names_the_tools_with_a_newer_release_or_says_none() {
+        let cases: [(&[&str], Option<&str>); 2] =
+            [(&[], None), (&["pons", "acus"], Some("update acus,pons"))];
+        for (newer, expected) in cases {
+            let latest = |tool: &str| newer.contains(&tool).then(|| "0.24.0".to_owned());
+            assert_eq!(update_segment(latest).as_deref(), expected);
+        }
     }
 }

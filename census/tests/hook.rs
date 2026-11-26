@@ -143,18 +143,14 @@ const REARM: &str = "census: now Wed 10:00; context was compacted; now 100k of 4
     Earlier notes that the context is nearly full are outdated.";
 
 #[test]
-fn subagent_input_prints_nothing() {
-    let h = Hook::new("hook-sub");
-    let mut v: Value = serde_json::from_str(&h.input("PostToolUse", 330_000)).expect("json");
-    v["agent_id"] = json!("a1");
-    v["agent_type"] = json!("worker");
-    assert_eq!(h.hook(v.to_string().as_bytes()), None);
-}
-
-#[test]
-fn other_events_print_nothing() {
-    let h = Hook::new("hook-event");
-    assert_eq!(h.hook(h.input("Stop", 330_000).as_bytes()), None);
+fn a_subagent_or_another_event_prints_nothing() {
+    let h = Hook::new("hook-ignored");
+    let mut subagent: Value = serde_json::from_str(&h.input("PostToolUse", 330_000)).expect("json");
+    subagent["agent_id"] = json!("a1");
+    subagent["agent_type"] = json!("worker");
+    for input in [subagent.to_string(), h.input("Stop", 330_000)] {
+        assert_eq!(h.hook(input.as_bytes()), None);
+    }
 }
 
 #[test]
@@ -190,27 +186,20 @@ fn bulletin_at(h: &Hook) -> Option<u64> {
 }
 
 #[test]
-fn a_session_start_keeps_a_fresh_bulletin() {
-    let h = Hook::new("hook-bulletin-fresh");
-    h.home.write(
-        &bulletin("census"),
-        &json!({"guard_follow": {"at": NOW - 3600, "ttl": 604_800, "value": {"grep": 0.5}}})
-            .to_string(),
-    );
-    h.hook(h.input("SessionStart", 48_000).as_bytes());
-    assert_eq!(bulletin_at(&h), Some(NOW - 3600));
-}
-
-#[test]
-fn a_session_start_rewrites_a_bulletin_older_than_six_hours() {
-    let h = Hook::new("hook-bulletin-stale");
-    h.home.write(
-        &bulletin("census"),
-        &json!({ "guard_follow": { "at": NOW - 6 * 3600, "ttl": 604_800, "value": {} } })
-            .to_string(),
-    );
-    h.hook(h.input("SessionStart", 48_000).as_bytes());
-    assert_eq!(bulletin_at(&h), Some(NOW));
+fn a_session_start_keeps_a_bulletin_younger_than_six_hours_and_rewrites_an_older_one() {
+    let cases: [(u64, Value, u64); 2] = [
+        (3600, json!({"grep": 0.5}), NOW - 3600),
+        (6 * 3600, json!({}), NOW),
+    ];
+    for (age, value, expected) in cases {
+        let h = Hook::new(&format!("hook-bulletin-{age}"));
+        h.home.write(
+            &bulletin("census"),
+            &json!({"guard_follow": {"at": NOW - age, "ttl": 604_800, "value": value}}).to_string(),
+        );
+        h.hook(h.input("SessionStart", 48_000).as_bytes());
+        assert_eq!(bulletin_at(&h), Some(expected), "{age}");
+    }
 }
 
 /// Returns the file size that the ledger index records for `file`, if it has one.
@@ -492,33 +481,29 @@ fn the_status_line_starts_with_the_local_time_of_the_prompt() {
 }
 
 #[test]
-fn a_second_prompt_within_an_hour_adds_no_status_line() {
-    let h = Hook::new("hook-status-again");
-    h.snapshot("five_hour", 8.0, NOW + 3 * 3600);
-    assert!(
-        h.hook(h.input("UserPromptSubmit", 48_000).as_bytes())
-            .is_some()
-    );
-    assert_eq!(h.hook(h.input("UserPromptSubmit", 48_000).as_bytes()), None);
-}
-
-#[test]
-fn a_prompt_after_an_hour_adds_the_status_line_again() {
-    let mut h = Hook::new("hook-status-gap");
-    h.snapshot("five_hour", 8.0, NOW + 3 * 3600);
-    assert!(
-        h.hook(h.input("UserPromptSubmit", 48_000).as_bytes())
-            .is_some()
-    );
-    h.now = NOW + 3601;
-    h.snapshot("five_hour", 8.0, NOW + 3 * 3600);
-    let text = h
-        .hook(h.input("UserPromptSubmit", 48_000).as_bytes())
-        .expect("a status line");
-    assert!(
-        text.starts_with("census: status: now Wed 11:00; context 48k"),
-        "{text}"
-    );
+fn the_status_line_waits_an_hour_between_prompts() {
+    let cases: [(u64, Option<&str>); 2] = [
+        (0, None),
+        (3601, Some("census: status: now Wed 11:00; context 48k")),
+    ];
+    for (gap, expected) in cases {
+        let mut h = Hook::new(&format!("hook-status-gap-{gap}"));
+        h.snapshot("five_hour", 8.0, NOW + 3 * 3600);
+        assert!(
+            h.hook(h.input("UserPromptSubmit", 48_000).as_bytes())
+                .is_some()
+        );
+        h.now = NOW + gap;
+        h.snapshot("five_hour", 8.0, NOW + 3 * 3600);
+        let text = h.hook(h.input("UserPromptSubmit", 48_000).as_bytes());
+        match expected {
+            None => assert_eq!(text, None),
+            Some(prefix) => {
+                let text = text.expect("a status line");
+                assert!(text.starts_with(prefix), "{text}");
+            }
+        }
+    }
 }
 
 #[test]

@@ -75,7 +75,7 @@ fn guard_log_reads_on_past_a_line_that_is_not_utf8() {
 }
 
 #[test]
-fn guard_without_a_log_prints_the_hint_and_exits_1() {
+fn guard_without_a_log_exits_1_with_the_hint_or_the_empty_report() {
     let home = Scratch::new("cli-guard-empty");
     let cwd = home.path().to_path_buf();
     let out = census(home.path(), &cwd, &["usage", "--guard"], "", &[]);
@@ -85,12 +85,6 @@ fn guard_without_a_log_prints_the_hint_and_exits_1() {
         "{}",
         text(&out.stdout)
     );
-}
-
-#[test]
-fn guard_json_without_a_log_is_the_empty_report() {
-    let home = Scratch::new("cli-guard-empty-json");
-    let cwd = home.path().to_path_buf();
     let out = census(home.path(), &cwd, &["usage", "--guard", "--json"], "", &[]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let v: Value = serde_json::from_slice(&out.stdout).expect("guard --json");

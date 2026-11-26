@@ -130,39 +130,69 @@ fn a_row_in_two_transcripts_counts_once_across_fast_and_full_updates() {
 }
 
 #[test]
-fn a_missing_sweep_time_means_a_full_sweep() {
-    let e = env();
-    let (cur, other) = (e.file("cur.jsonl"), e.file("other.jsonl"));
-    append(&cur, &rec("c1", BASE));
-    append(&other, &rec("o1", BASE));
-    e.update(BASE, None);
-    let index = e.state.join("index.json");
-    let mut value: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&index).unwrap()).unwrap();
-    value.as_object_mut().unwrap().remove("swept_at").unwrap();
-    std::fs::write(&index, value.to_string()).unwrap();
-
-    append(&other, &rec("o2", BASE + 5));
-    let l = e.update(BASE + 5, Some(&cur));
-    assert_eq!(ids(&l), ["c1", "o1", "o2"]);
-}
-
-#[test]
-fn a_torn_index_means_a_full_sweep_even_with_a_recent_sweep_time() {
-    let e = env();
-    let (cur, other) = (e.file("cur.jsonl"), e.file("other.jsonl"));
-    append(&cur, &rec("c1", BASE));
-    append(&other, &rec("o1", BASE));
-    e.update(BASE, None);
-    std::fs::write(
-        e.state.join("index.json"),
-        b"{\"version\":1,\"oldest_t\":null,\"swept_at\":1792583740,\"files\":{",
-    )
-    .unwrap();
-
-    append(&other, &rec("o2", BASE + 5));
-    let l = e.update(BASE + 5, Some(&cur));
-    assert_eq!(ids(&l), ["c1", "o1", "o2"]);
+fn a_full_sweep_happens_when_the_index_or_the_current_transcript_is_off() {
+    fn remove_swept_at(e: &Env) {
+        let index = e.state.join("index.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&index).unwrap()).unwrap();
+        value.as_object_mut().unwrap().remove("swept_at").unwrap();
+        std::fs::write(&index, value.to_string()).unwrap();
+    }
+    fn tear_index(e: &Env) {
+        std::fs::write(
+            e.state.join("index.json"),
+            b"{\"version\":1,\"oldest_t\":null,\"swept_at\":1792583740,\"files\":{",
+        )
+        .unwrap();
+    }
+    fn nothing(_: &Env) {}
+    fn append_outside(e: &Env) {
+        append(&e._tmp.path().join("outside.jsonl"), &rec("x1", BASE));
+    }
+    fn inside(_: &Env, cur: &Path) -> PathBuf {
+        cur.to_owned()
+    }
+    fn outside(e: &Env, _: &Path) -> PathBuf {
+        e._tmp.path().join("outside.jsonl")
+    }
+    type Damage = fn(&Env);
+    type Pick = fn(&Env, &Path) -> PathBuf;
+    type Case = (&'static str, u64, u64, Damage, Pick);
+    let cases: [Case; 4] = [
+        (
+            "missing sweep time",
+            BASE,
+            BASE + 5,
+            remove_swept_at,
+            inside,
+        ),
+        ("torn index", BASE, BASE + 5, tear_index, inside),
+        (
+            "sweep time after now",
+            BASE + 100,
+            BASE + 50,
+            nothing,
+            inside,
+        ),
+        (
+            "current transcript outside the roots",
+            BASE,
+            BASE + 5,
+            append_outside,
+            outside,
+        ),
+    ];
+    for (name, initial_now, now, damage, pick) in cases {
+        let e = env();
+        let (cur, other) = (e.file("cur.jsonl"), e.file("other.jsonl"));
+        append(&cur, &rec("c1", BASE));
+        append(&other, &rec("o1", BASE));
+        e.update(initial_now, None);
+        damage(&e);
+        append(&other, &rec("o2", BASE + 5));
+        let l = e.update(now, Some(&pick(&e, &cur)));
+        assert_eq!(ids(&l), ["c1", "o1", "o2"], "{name}");
+    }
 }
 
 #[test]
@@ -180,32 +210,4 @@ fn a_partial_sweep_does_not_open_the_fresh_window() {
 
     let l = e.update(BASE + 5, Some(&cur));
     assert_eq!(ids(&l), ["c1", "o1"]);
-}
-
-#[test]
-fn a_sweep_time_after_now_means_a_full_sweep() {
-    let e = env();
-    let (cur, other) = (e.file("cur.jsonl"), e.file("other.jsonl"));
-    append(&cur, &rec("c1", BASE));
-    append(&other, &rec("o1", BASE));
-    e.update(BASE + 100, None);
-
-    append(&other, &rec("o2", BASE + 5));
-    let l = e.update(BASE + 50, Some(&cur));
-    assert_eq!(ids(&l), ["c1", "o1", "o2"]);
-}
-
-#[test]
-fn a_current_transcript_outside_the_roots_means_a_full_sweep() {
-    let e = env();
-    let (cur, other) = (e.file("cur.jsonl"), e.file("other.jsonl"));
-    append(&cur, &rec("c1", BASE));
-    append(&other, &rec("o1", BASE));
-    e.update(BASE, None);
-
-    let outside = e._tmp.path().join("outside.jsonl");
-    append(&outside, &rec("x1", BASE));
-    append(&other, &rec("o2", BASE + 5));
-    let l = e.update(BASE + 5, Some(&outside));
-    assert_eq!(ids(&l), ["c1", "o1", "o2"]);
 }

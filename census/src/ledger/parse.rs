@@ -37,7 +37,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn assistant_record_gives_a_row_with_cache_split() {
+    fn parsed_rows_carry_the_cache_split_and_keep_roles_only_for_subagents() {
         let line = r#"{"type":"assistant","timestamp":"2026-10-21T11:55:40Z","sessionId":"s","agentId":"a1","attributionAgent":"Explore","message":{"id":"m","model":"claude-haiku-5-5","usage":{"input_tokens":1,"cache_creation_input_tokens":7,"cache_creation":{"ephemeral_5m_input_tokens":3,"ephemeral_1h_input_tokens":4},"cache_read_input_tokens":5,"output_tokens":2}}}"#;
         let r = parse_line(line).unwrap();
         assert_eq!(
@@ -48,11 +48,8 @@ mod tests {
             (r.agent.as_deref(), r.role.as_deref()),
             (Some("a1"), Some("Explore"))
         );
-    }
 
-    #[test]
-    fn role_is_dropped_for_the_main_agent() {
-        let line = r#"{"type":"assistant","timestamp":"2026-10-21T11:55:40Z","attributionAgent":"x","message":{"id":"m","model":"m","usage":{}}}"#;
-        assert_eq!(parse_line(line).unwrap().role, None);
+        let main = r#"{"type":"assistant","timestamp":"2026-10-21T11:55:40Z","attributionAgent":"x","message":{"id":"m","model":"m","usage":{}}}"#;
+        assert_eq!(parse_line(main).unwrap().role, None);
     }
 }

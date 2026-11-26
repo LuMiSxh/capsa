@@ -106,37 +106,37 @@ mod tests {
     }
 
     #[test]
-    fn the_derived_limit_shares_the_budget_left_before_today_over_the_days_left() {
-        let d = DailyStatus::of(&month(50.0, 2.0, 10, Some(100.0)), None).unwrap();
-        assert_eq!(d.source, DailySource::Derived);
-        assert!((d.limit - 5.2).abs() < 1e-9);
-        assert!((d.percent - 100.0 * 2.0 / 5.2).abs() < 1e-9);
-    }
-
-    #[test]
-    fn the_last_day_of_the_month_gets_all_that_is_left() {
-        let d = DailyStatus::of(&month(90.0, 0.0, 1, Some(100.0)), None).unwrap();
-        assert!((d.limit - 10.0).abs() < 1e-9);
-        assert_eq!(d.percent, 0.0);
-    }
-
-    #[test]
-    fn an_overspent_month_floors_the_limit_at_zero_so_any_spend_is_full() {
-        let spent = month(250.0, 0.5, 10, Some(200.0));
-        let d = DailyStatus::of(&spent, None).unwrap();
-        assert_eq!(d.limit, 0.0);
-        assert_eq!(d.percent, 100.0);
-        let quiet = DailyStatus::of(&month(250.0, 0.0, 10, Some(200.0)), None).unwrap();
-        assert_eq!(quiet.percent, 0.0);
-    }
-
-    #[test]
-    fn a_fixed_limit_replaces_the_derived_one_and_needs_no_budget() {
-        let d = DailyStatus::of(&month(50.0, 4.0, 10, Some(100.0)), Some(8.0)).unwrap();
-        assert_eq!((d.source, d.limit), (DailySource::Fixed, 8.0));
-        assert_eq!(d.percent, 50.0);
-        let no_budget = DailyStatus::of(&month(50.0, 4.0, 10, None), Some(8.0)).unwrap();
-        assert_eq!(no_budget.source, DailySource::Fixed);
+    fn the_daily_limit_is_derived_from_the_budget_or_fixed_and_floors_at_zero() {
+        type Case = (f64, f64, u64, Option<f64>, Option<f64>, fn(&DailyStatus));
+        let cases: &[Case] = &[
+            (50.0, 2.0, 10, Some(100.0), None, |d| {
+                assert_eq!(d.source, DailySource::Derived);
+                assert!((d.limit - 5.2).abs() < 1e-9);
+                assert!((d.percent - 100.0 * 2.0 / 5.2).abs() < 1e-9);
+            }),
+            (90.0, 0.0, 1, Some(100.0), None, |d| {
+                assert!((d.limit - 10.0).abs() < 1e-9);
+                assert_eq!(d.percent, 0.0);
+            }),
+            (250.0, 0.5, 10, Some(200.0), None, |d| {
+                assert_eq!(d.limit, 0.0);
+                assert_eq!(d.percent, 100.0);
+            }),
+            (250.0, 0.0, 10, Some(200.0), None, |d| {
+                assert_eq!(d.percent, 0.0);
+            }),
+            (50.0, 4.0, 10, Some(100.0), Some(8.0), |d| {
+                assert_eq!((d.source, d.limit), (DailySource::Fixed, 8.0));
+                assert_eq!(d.percent, 50.0);
+            }),
+            (50.0, 4.0, 10, None, Some(8.0), |d| {
+                assert_eq!(d.source, DailySource::Fixed);
+            }),
+        ];
+        for &(spent, today_usd, days_left, budget, fixed, check) in cases {
+            let month = month(spent, today_usd, days_left, budget);
+            check(&DailyStatus::of(&month, fixed).unwrap());
+        }
     }
 
     #[test]

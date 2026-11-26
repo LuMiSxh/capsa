@@ -121,22 +121,23 @@ mod tests {
     }
 
     #[test]
-    fn a_decision_without_a_line_past_its_window_is_not_observed() {
-        let log = [
-            line(100, Some("s1"), "grep", "hint"),
-            line(200, Some("s1"), "grep", "deny"),
+    fn an_unobserved_decision_an_escape_and_a_line_without_a_session_are_left_out() {
+        let cases = [
+            // Its own window runs past the horizon, so there is no line after it.
+            vec![
+                line(100, Some("s1"), "grep", "hint"),
+                line(200, Some("s1"), "grep", "deny"),
+            ],
+            // An escape is not a suggestion, and a line without a session cannot be joined.
+            vec![
+                line(100, Some("s1"), "grep", "escape"),
+                line(100, None, "grep", "deny"),
+                line(1000, Some("s1"), "sed", "escape"),
+            ],
         ];
-        assert!(follow_rates(&log).is_empty());
-    }
-
-    #[test]
-    fn escapes_and_lines_without_a_session_are_left_out() {
-        let log = [
-            line(100, Some("s1"), "grep", "escape"),
-            line(100, None, "grep", "deny"),
-            line(1000, Some("s1"), "sed", "escape"),
-        ];
-        assert!(follow_rates(&log).is_empty());
+        for log in cases {
+            assert!(follow_rates(&log).is_empty());
+        }
     }
 
     #[test]
