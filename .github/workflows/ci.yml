@@ -1,32 +1,48 @@
 name: ci
 
 on:
-  push:
-  pull_request:
-  workflow_call:
+    push:
+    pull_request:
+    workflow_call:
 
 permissions:
-  contents: read
+    contents: read
 
 env:
-  CARGO_TERM_COLOR: always
+    CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
+    test:
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [macos-latest, ubuntu-latest, windows-latest]
+        runs-on: ${{ matrix.os }}
+        steps:
+            - uses: actions/checkout@v6
 
-      # rustup reads rust-toolchain.toml (stable) and installs it with clippy and rustfmt.
-      - name: Install toolchain
-        run: rustup show
+            # rustup reads rust-toolchain.toml (stable) and installs it with clippy and rustfmt.
+            - name: Install toolchain
+              run: rustup show
 
-      - uses: Swatinem/rust-cache@v2
+            - uses: Swatinem/rust-cache@v2
 
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --all-features --locked --keep-going -- -D warnings
-      - run: cargo test --workspace --all-features --locked
+            # Nextest gives the parallel per-test output acus run understands; the step below still
+            # falls back to cargo test if the install ever stops providing it.
+            - uses: taiki-e/install-action@v2
+              with:
+                  tool: nextest
+
+            - run: cargo fmt --all --check
+            - run: cargo clippy --workspace --all-targets --all-features --locked --keep-going -- -D warnings
+            - name: No conflict markers
+              if: matrix.os == 'ubuntu-latest'
+              run: python3 scripts/check-conflicts.py
+            - name: Test
+              shell: bash
+              run: |
+                  if cargo nextest --version >/dev/null 2>&1; then
+                    cargo nextest run --workspace --all-features --locked
+                  else
+                    cargo test --workspace --all-features --locked
+                  fi
