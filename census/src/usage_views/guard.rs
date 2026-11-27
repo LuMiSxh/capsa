@@ -19,6 +19,34 @@ struct RuleCount {
     observed: u64,
     /// The share of the observed decisions that were not repeated; `None` below `MIN_SAMPLE`.
     follow: Option<f32>,
+    #[serde(flatten)]
+    kinds: Kinds,
+}
+
+/// The follow rate of each kind of suggestion. A rewrite that the guard applied itself is often
+/// repeated by the agent on the next call, so its rate is read apart from a refusal or a hint.
+#[derive(Serialize)]
+struct Kinds {
+    deny_observed: u64,
+    deny_follow: Option<f32>,
+    hint_observed: u64,
+    hint_follow: Option<f32>,
+    rewrite_observed: u64,
+    rewrite_follow: Option<f32>,
+}
+
+impl Kinds {
+    fn of(f: &census::usage::Follow) -> Self {
+        let (deny, hint, rewrite) = (f.deny.rate(), f.hint.rate(), f.rewrite.rate());
+        Self {
+            deny_observed: f.deny.observed,
+            deny_follow: deny,
+            hint_observed: f.hint.observed,
+            hint_follow: hint,
+            rewrite_observed: f.rewrite.observed,
+            rewrite_follow: rewrite,
+        }
+    }
 }
 
 /// One rule of one project, as `--by-project` lists it.
@@ -67,6 +95,7 @@ impl<'a> GuardView<'a> {
                     tally,
                     observed: f.observed,
                     follow: f.rate(),
+                    kinds: Kinds::of(&f),
                 }
             })
             .collect();
@@ -117,18 +146,30 @@ impl<'a> GuardView<'a> {
                     r.tally.rewrite.to_string(),
                     r.observed.to_string(),
                     rate(r.follow.map(f64::from)),
+                    rate(r.kinds.deny_follow.map(f64::from)),
+                    rate(r.kinds.hint_follow.map(f64::from)),
+                    rate(r.kinds.rewrite_follow.map(f64::from)),
                 ]
             })
             .collect();
         doc.table(table(
             &[
-                "rule", "deny", "hint", "escape", "rewrite", "observed", "follow",
+                "rule",
+                "deny",
+                "hint",
+                "escape",
+                "rewrite",
+                "observed",
+                "follow",
+                "deny-follow",
+                "hint-follow",
+                "rewrite-follow",
             ],
-            "lrrrrrr",
+            "lrrrrrrrrr",
             rows,
         ));
         doc.line(format!(
-            "follow: the share of observed refusals, hints and rewrites that the rule did not repeat in the same session within {} min; n/a below {MIN_SAMPLE} observed",
+            "follow: the share of observed decisions that the rule did not repeat in the same session within {} min, overall and per kind; n/a below {MIN_SAMPLE} observed",
             WINDOW_SECS / 60
         ));
     }

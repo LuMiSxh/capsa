@@ -1,0 +1,1 @@
+{"total":{"role":"all","requests":6,"output":120,"thinking":54,"text":10,"tool":44,"residual":12},"roles":[{"role":"main","requests":5,"output":70,"thinking":24,"text":6,"tool":38,"residual":2},{"role":"worker","requests":1,"output":50,"thinking":30,"text":4,"tool":6,"residual":10}]}

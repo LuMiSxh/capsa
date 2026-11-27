@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-27
+
+### Added
+
+- `census usage --output` splits output tokens into thinking, visible text, tool-call JSON and the
+  residual, per role and for all requests. Thinking comes from
+  `usage.output_tokens_details.thinking_tokens`; text and tool input are characters / 4.
+- `census usage --cache` lists requests by the pause since the previous one, the cache writes and
+  the rewrites over 5k tokens after a pause over 5 minutes with their list price, then the requests,
+  cost, cache reads and cache writes of each context-size bucket, split into main and subagent.
+- `census usage --returns` reports each subagent role's spawns, transcripts, launch-result and
+  completion-notification sizes, final-message words and thinking share.
+- `census usage --skills` counts `Skill` tool calls and skill text printed through
+  `acus self skill` or `census self skill`, with the sessions, roles and result characters.
+- `census usage --guard` shows a follow rate per kind next to the overall one: deny, hint and
+  rewrite. The overall rate and the census bulletin keep their meaning.
+
+### Fixed
+
+- Assistant text and Bash commands that contain JSON escapes (a quoted path, a `\n`) were dropped
+  by the transcript parser, which asked serde for a borrowed string and then failed the whole
+  record. They are read as `Cow`, so tool classification, visible-text counts and subagent final
+  words now include them. This restores the output anatomy to the measured 52.7% thinking, 7.5%
+  visible text and 31.7% tool JSON over the 9 Oct - 27 Nov transcripts.
+
 ## [0.9.0] - 2026-11-23
 
 ### Added
@@ -44,7 +69,7 @@
 - The hook's limit line comes only at a threshold, once per window and threshold, and tells the
   agent to finish the current step and ask the user whether to continue. For example:
   ``census: now Wed 10:00; 5h limit 86%, reset Wed 13:00. Finish the current step, then stop and
-  ask the user whether to continue. Current numbers: `census limits`.``
+ask the user whether to continue. Current numbers: `census limits`.``
 - The hook no longer prints a 75 % limit line, a standalone forecast or the five-hour burn surge. A
   forecast is added to a threshold line when one is due. `census limits --json` still reports the
   surge.
@@ -71,7 +96,7 @@
 - `census hook` warns once per five-hour window, before 75 %, when the list-price burn of the last
   15 minutes is at least twice the typical rate of this hour, with the time it fills at that rate,
   such as `census: now Wed 10:00; 5h burn $4.8/h, 2x your typical rate; at this rate full around
-  Wed 10:34, reset Wed 13:00. Avoid large parallel agent batches; tell Luca.` The typical rate is
+Wed 10:34, reset Wed 13:00. Avoid large parallel agent batches; tell Luca.` The typical rate is
   the expected cost of the hour of the week from the history; under $0.25 in the last 15 minutes
   is too little to compare. `census limits --json` gains a `surge` object only while one applies.
 - `census usage --guard` shows a follow rate per rule: the share of its observed refusals, hints
@@ -97,7 +122,7 @@
   1.7 ms before and 1.7 ms after (σ 0.1 ms), memory 3.1 to 3.2 MiB. Only `--line` reads them.
 - `census self doctor` gets an `interop` group after the others, with an `ok` line for acus,
   vicarius and pons. An installed sibling shows the feature it feeds, such as `guard log for
-  census usage --guard`, and for acus and vicarius the age of its bulletin; a sibling that is not
+census usage --guard`, and for acus and vicarius the age of its bulletin; a sibling that is not
   installed reads `not installed, off`. No line fails.
 - `census statusline --line` adds an `update` segment after the interop segments, such as
   `update acus,pons`, naming the capsa tools (acus, census, pons, vicarius) whose `<tool>-release`
@@ -228,14 +253,14 @@
   `anthropic` is the subscription by default, and a provider the map does not list is `api`.
   `census self config set billing <provider> <subscription|api>` sets one entry. Any lowercase
   provider name is accepted; a name the price table does not list gets a warning. `census self
-  config` shows the map, and its `--json` gains `billing`. `census usage` names each provider's
+config` shows the map, and its `--json` gains `billing`. `census usage` names each provider's
   billing on the `providers` row and in a `billing` column of the models table, and `census
-  session` counts requests by it, so `openai` set to `subscription` moves its history from API
+session` counts requests by it, so `openai` set to `subscription` moves its history from API
   spend to the subscription. The limits, the budget month and `census usage --by` still count
   `anthropic` only, whatever `billing` says, so the windows keep tracking Claude's own limits.
 - `census hook` also runs at `SessionStart` and points the main agent at the usage history once
   per session: hand-backs, guard blocks, tool use and cost by day or role come from `census
-  usage` (`--handbacks`, `--guard`, `--tools`, `--days`) or `census session`, not from reading
+usage` (`--handbacks`, `--guard`, `--tools`, `--days`) or `census session`, not from reading
   `~/.claude` transcripts. `census self setup` adds the hook to `SessionStart`.
 
 ### Changed
@@ -369,7 +394,7 @@
 ### Added
 
 - Budget mode for API billing. `census config set mode budget` and `census config set
-  monthly-budget <usd>` (`census config show`) write `config.json` in the census config directory;
+monthly-budget <usd>` (`census config show`) write `config.json` in the census config directory;
   without the file census stays in plan mode. In budget mode `census limits` prints the spend of the
   local calendar month, the budget share, the projection to the end of the month and the budget left
   per remaining day instead of the 5h and weekly windows, `census statusline --line` shows
@@ -438,7 +463,7 @@
   5h window is forecast to fill or the weekly one to run out before its reset, and when the weekly
   reset is within 12 h with at least 30 % left. Always exits 0 and prints nothing on error.
 - `census self skill [--install]`, `census self update [--check|--force]`, `census self uninstall
-  [--dry-run]`, and the skill `census/skill/SKILL.md`. Update and uninstall need the `cmd-update`
+[--dry-run]`, and the skill `census/skill/SKILL.md`. Update and uninstall need the `cmd-update`
   feature (default; the release build sets it).
 - `census limits`: the five-hour and weekly subscription windows, each with its share (from the
   newest snapshot, or estimated from a calibration over the list-price cost), reset, calibration

@@ -9,28 +9,34 @@ mod follow;
 mod guard;
 mod handback;
 mod merge;
+mod output;
 pub(crate) mod prices;
 mod read;
+mod returns;
 mod script;
+mod skills;
 pub(crate) mod time;
 mod tools;
 
 pub use bulletin::{
     guard_follow, refresh_guard_follow, refresh_guard_follow_unless_recent, write_guard_follow,
 };
-pub use follow::{Follow, MIN_SAMPLE, WINDOW_SECS, follow_rates};
+pub use follow::{Follow, KindFollow, MIN_SAMPLE, WINDOW_SECS, follow_rates};
 pub use guard::{
     GuardEntry, ProjectRule, Tally, by_project, by_rule, log_path as guard_log_path, read_log,
 };
 pub use handback::{HandbackWeek, RoleHandbacks};
+pub use output::{ContextBucket, GapBucket, OutputStat};
 pub use prices::{
     Cost, LOG as PRICE_LOG, LOG_LIMIT as PRICE_LOG_LIMIT, PROVIDERS, knows_provider,
     refresh as refresh_prices,
 };
+pub use returns::ReturnStat;
 pub use script::{
     InlineStat, ScriptEntry, ScriptStat, by_script, inline_stat, log_path as script_log_path,
     read_log as read_script_log,
 };
+pub use skills::SkillStat;
 pub use time::{parse_date, parse_ts};
 pub use tools::group;
 
@@ -167,6 +173,11 @@ pub struct AgentStat {
     pub share: f64,
     pub median_weighted: f64,
     pub tokens: Tokens,
+    /// Reasoning tokens of the role's requests, as the provider reports them.
+    pub thinking: u64,
+    /// Characters of the assistant text and of the tool-call inputs, at four per token.
+    pub text_chars: u64,
+    pub tool_chars: u64,
     pub cost: Cost,
     pub cache: CacheStat,
 }
@@ -206,6 +217,16 @@ pub struct Report {
     /// Spawns and hand-backs per role, see `handback`. Kept out of the JSON, which stays the weeks.
     #[serde(skip)]
     pub handback_roles: Vec<RoleHandbacks>,
+    /// Output tokens split into thinking, visible text and tool-call JSON.
+    pub output: OutputStat,
+    /// The requests of each pause bucket between two requests of a thread.
+    pub gaps: Vec<GapBucket>,
+    /// The requests of each context-size bucket, per role group (`main` or `subagent`).
+    pub contexts: Vec<ContextBucket>,
+    /// The subagent returns per role.
+    pub returns: Vec<ReturnStat>,
+    /// The skills used, per skill and source.
+    pub skills: Vec<SkillStat>,
 }
 
 /// One model of the report, with the provider that bills its requests.
@@ -302,6 +323,8 @@ pub(crate) struct FileStats {
     pub calls: Vec<Call>,
     /// Result characters of results whose call is not in this file.
     pub orphan_result_chars: u64,
+    /// Words of the last assistant message that carried text.
+    pub final_words: u64,
 }
 
 /// One API request of a thread, sent at `ts` (ms since the epoch, 0 if unknown).
@@ -309,6 +332,10 @@ pub(crate) struct Request {
     pub id: Option<String>,
     pub model: String,
     pub tokens: Tokens,
+    /// Reasoning tokens that the provider reports apart from `output`.
+    pub thinking: u64,
+    /// Characters of the text blocks of this request's assistant messages.
+    pub text_chars: u64,
     pub ts: u64,
     /// A compact boundary came before this request in its transcript.
     pub after_compact: bool,
@@ -321,6 +348,10 @@ pub(crate) struct SpawnCall {
     pub start_ms: u64,
     /// When the call's result came back, if it did.
     pub end_ms: Option<u64>,
+    /// Characters of the result that the launch returned.
+    pub result_chars: u64,
+    /// Characters of the `<result>` of the completion notification, if one came.
+    pub notification_chars: Option<u64>,
 }
 
 /// A compaction of a thread and the context size before it.
@@ -343,6 +374,8 @@ pub(crate) struct Call {
     /// Whether the acus guard denied the call or ran it rewritten, so it never ran as sent.
     pub intercepted: bool,
     pub result_chars: u64,
+    /// The skill this call loaded with the `Skill` tool, or printed from a tool's own binary.
+    pub skill: Option<(String, &'static str)>,
 }
 
 /// Shell commands whose first real step only searches or reads (`cd x && rg …` counts).

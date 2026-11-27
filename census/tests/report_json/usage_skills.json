@@ -1,0 +1,1 @@
+[{"skill":"acus:script","source":"print","calls":1,"sessions":1,"roles":["main"],"result_chars":0},{"skill":"agents-md","source":"tool","calls":1,"sessions":1,"roles":["main"],"result_chars":0}]

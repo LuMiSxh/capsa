@@ -8,7 +8,7 @@
 [![Rust 1.100+](https://img.shields.io/badge/Rust-1.100%2B-9c7ae8?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-9c7ae8?style=flat-square&labelColor=23252a)
 [![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-9c7ae8?style=flat-square&labelColor=23252a)](../LICENSE)
-[![Version](https://img.shields.io/badge/version-0.9.0-9c7ae8?style=flat-square&labelColor=23252a)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.10.0-9c7ae8?style=flat-square&labelColor=23252a)](CHANGELOG.md)
 
 **[capsa](../README.md)** · [Changelog](CHANGELOG.md)
 

@@ -7,18 +7,26 @@ use census::usage::{Cost, HandbackWeek, Report};
 
 mod agents;
 mod by;
+mod cache;
 mod compare;
 mod guard;
 mod handbacks;
+mod output;
+mod returns;
 mod scripts;
+mod skills;
 mod tools;
 
 pub(crate) use agents::AgentsView;
 pub(crate) use by::ByView;
+pub(crate) use cache::CacheView;
 pub(crate) use compare::CompareOut;
 pub(crate) use guard::GuardView;
 pub(crate) use handbacks::HandbacksView;
+pub(crate) use output::OutputView;
+pub(crate) use returns::ReturnsView;
 pub(crate) use scripts::ScriptsView;
+pub(crate) use skills::SkillsView;
 pub(crate) use tools::ToolsView;
 
 /// A table with one header per column; `align` holds an `r` for each right-aligned column.

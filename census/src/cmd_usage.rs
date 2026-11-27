@@ -4,8 +4,9 @@
 use crate::now_secs;
 use crate::out::Out;
 use crate::usage_views::{
-    AgentsView, ByView, CompareOut, GuardView, HandbacksView, ScriptsView, ToolsView, cost_rows, k,
-    money, provider_kind, rate, sizes_text, table,
+    AgentsView, ByView, CacheView, CompareOut, GuardView, HandbacksView, OutputView, ReturnsView,
+    ScriptsView, SkillsView, ToolsView, cost_rows, k, money, provider_kind, rate, sizes_text,
+    table,
 };
 use anyhow::Result;
 use capsa_core::exit::Outcome;
@@ -62,6 +63,20 @@ pub struct Args {
     /// cost, cache hit rate, and cache rewrites (expired-cache writes, unexpected busts and compactions).
     #[arg(long)]
     agents: bool,
+    /// Output tokens split into thinking, visible text, tool-call JSON and residual, per role.
+    #[arg(long)]
+    output: bool,
+    /// Requests by the pause since the previous one, with the cost of expired-cache rewrites, and by
+    /// context size; a main request over 200k is counted separately.
+    #[arg(long)]
+    cache: bool,
+    /// Per subagent role: launch result size, completion notification size, final-message words and
+    /// thinking share.
+    #[arg(long)]
+    returns: bool,
+    /// Skills loaded with the `Skill` tool or printed through `acus self skill` or `census self skill`.
+    #[arg(long)]
+    skills: bool,
     /// Spawns per ISO week and hand-backs: a senior-worker spawn within 30 min after a worker
     /// spawn of the same session ended (heuristic; rate = hand-backs / worker spawns).
     #[arg(long)]
@@ -145,6 +160,18 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     }
     if a.agents {
         return emit(&AgentsView(&r.agents), out.format);
+    }
+    if a.output {
+        return emit(&OutputView::new(&r), out.format);
+    }
+    if a.cache {
+        return emit(&CacheView::new(&r.gaps, &r.contexts), out.format);
+    }
+    if a.returns {
+        return emit(&ReturnsView(&r.returns), out.format);
+    }
+    if a.skills {
+        return emit(&SkillsView(&r.skills), out.format);
     }
     let body = Summary {
         report: &r,

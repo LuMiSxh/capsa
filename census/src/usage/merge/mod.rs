@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Folds the transcripts of a report into sessions, models, roles, tool statistics and hand-backs.
 
+use super::output::{CONTEXT_BUCKETS, GAP_BUCKETS, REWRITE_GAP_MS, REWRITE_TOKENS, bucket_of};
 use super::prices::write_cost;
-use super::{Cost, FileStats, MissStat, Report, Session, SpawnCall, Tokens, ToolStat, handback};
+use super::returns::{self, ReturnAcc};
+use super::skills::{self, SkillAcc};
+use super::{
+    ContextBucket, Cost, FileStats, GapBucket, MissStat, OutputStat, Report, Request, Session,
+    SpawnCall, Tokens, ToolStat, handback,
+};
 use agents::{Spawn, agent_stats};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -52,27 +58,32 @@ struct Acc<'a> {
     providers: HashMap<&'static str, (Tokens, Cost)>,
     tools: HashMap<String, ToolStat>,
     contexts: Vec<u64>,
+    context_buckets: HashMap<(&'static str, usize), ContextAcc>,
     compactions: Vec<u64>,
     roles: HashMap<String, Vec<Spawn>>,
     spawns: Vec<(&'a str, &'a SpawnCall)>,
     misses: HashMap<(&'static str, String), MissAcc>,
+    gaps: [GapAcc; 4],
+    returns: HashMap<String, ReturnAcc>,
+    skills: HashMap<(String, &'static str), SkillAcc>,
 }
 
 impl<'a> Acc<'a> {
     fn file(&mut self, f: &'a FileStats, side: Side) {
         let mut s = self.take_session(f);
         add_calls(&mut self.r, &mut self.tools, &mut self.misses, f);
-        let spawn = self.fold_requests(f, side, &mut s);
+        skills::add_file(&mut self.skills, f);
+        returns::add_file(&mut self.returns, f);
+        let mut spawn = self.fold_requests(f, side, &mut s);
+        spawn.tool_chars += f.calls.iter().map(|c| c.input_chars).sum::<u64>();
         self.fold_compactions(f, side, &mut s);
         if spawn.requests > 0 {
             self.roles.entry(f.role.clone()).or_default().push(spawn);
         }
-        self.spawns.extend(
-            f.spawns
-                .iter()
-                .filter(|c| side.keeps(c.start_ms))
-                .map(|c| (f.session.as_str(), c)),
-        );
+        for c in f.spawns.iter().filter(|c| side.keeps(c.start_ms)) {
+            self.spawns.push((f.session.as_str(), c));
+            returns::add_spawn(&mut self.returns, c);
+        }
         self.sessions.insert((f.agent, f.session.clone()), s);
     }
 
@@ -117,23 +128,31 @@ impl<'a> Acc<'a> {
         let mut prev = None;
         let mut prev_context = 0;
         for q in &f.requests {
-            if q.id.as_deref().is_some_and(|id| !self.seen.insert(id)) {
-                continue;
-            }
             let gap = prev
                 .filter(|&p| p > 0 && q.ts > 0)
                 .map(|p| q.ts.saturating_sub(p));
             prev = Some(q.ts);
+            let keeps = side.keeps(q.ts);
+            if keeps {
+                spawn.text_chars += q.text_chars;
+            }
+            if q.id.as_deref().is_some_and(|id| !self.seen.insert(id)) {
+                continue;
+            }
             // A context under half of the previous request's is a compaction, as is a request after
             // a compact boundary; its cache writes are neither expired nor a bust.
             let compacted = q.after_compact || 2 * q.tokens.context() < prev_context;
             prev_context = q.tokens.context();
-            if !side.keeps(q.ts) {
+            if !keeps {
                 continue;
             }
             let t = &q.tokens;
             let mut cost = Cost::default();
             cost.add_request(&q.model, t);
+            if let Some(g) = gap {
+                self.gap(g, q);
+            }
+            self.context(f.is_subagent, q, &cost);
             match gap {
                 _ if compacted && t.cache_writes() > 0 => spawn.cache.compactions += 1,
                 Some(g) if g > ttl && t.cache_writes() > 0 => {
@@ -145,7 +164,7 @@ impl<'a> Acc<'a> {
                 }
                 _ => {}
             }
-            spawn.add(&q.model, t, &cost);
+            spawn.add(&q.model, t, &cost, q.thinking);
             s.tokens.add(t);
             s.cost.merge(&cost);
             s.max_context = s.max_context.max(t.context());
@@ -181,6 +200,33 @@ impl<'a> Acc<'a> {
             s.prompts += f.prompts;
             self.r.prompts += f.prompts;
         }
+    }
+
+    /// Adds one request to the pause bucket of `gap` milliseconds and to the context bucket of its
+    /// context size. A cache write after a pause over five minutes is a rewrite when it exceeds 5k
+    /// tokens.
+    fn gap(&mut self, gap: u64, q: &Request) {
+        let i = bucket_of(&GAP_BUCKETS, gap);
+        let b = &mut self.gaps[i];
+        b.requests += 1;
+        b.cache_read += q.tokens.cache_read;
+        b.cache_writes += q.tokens.cache_writes();
+        b.output += q.tokens.output;
+        if gap > REWRITE_GAP_MS && q.tokens.cache_writes() > REWRITE_TOKENS {
+            b.rewrites += 1;
+            b.rewrite_usd += write_cost(&q.model, &q.tokens).unwrap_or(0.0);
+        }
+    }
+
+    fn context(&mut self, subagent: bool, q: &Request, cost: &Cost) {
+        let role = if subagent { "subagent" } else { "main" };
+        let i = bucket_of(&CONTEXT_BUCKETS, q.tokens.context());
+        let b = self.context_buckets.entry((role, i)).or_default();
+        b.requests += 1;
+        b.cost.merge(cost);
+        b.cache_read += q.tokens.cache_read;
+        b.cache_writes += q.tokens.cache_writes();
+        b.output += q.tokens.output;
     }
 
     fn finish(self) -> Report {
@@ -254,8 +300,88 @@ impl<'a> Acc<'a> {
         r.agents = agent_stats(self.roles, r.weighted);
         r.handbacks = handback::weeks(&self.spawns);
         r.handback_roles = handback::roles(&self.spawns);
+        r.output = output_total(&r.agents);
+        r.gaps = gap_buckets(self.gaps);
+        r.contexts = context_buckets(self.context_buckets);
+        r.returns = returns::finish(self.returns, &r.agents);
+        r.skills = skills::finish(self.skills);
         r
     }
+}
+
+/// The requests of one pause bucket.
+#[derive(Default, Clone, Copy)]
+struct GapAcc {
+    requests: u64,
+    cache_read: u64,
+    cache_writes: u64,
+    output: u64,
+    rewrites: u64,
+    rewrite_usd: f64,
+}
+
+/// The requests of one role group at one context size.
+#[derive(Default)]
+struct ContextAcc {
+    requests: u64,
+    cost: Cost,
+    cache_read: u64,
+    cache_writes: u64,
+    output: u64,
+}
+
+/// Returns the output split of the whole report from its role rows.
+fn output_total(agents: &[super::AgentStat]) -> OutputStat {
+    let mut o = OutputStat::default();
+    for a in agents {
+        o.requests += a.tokens.requests;
+        o.output += a.tokens.output;
+        o.thinking += a.thinking;
+        o.text_chars += a.text_chars;
+        o.tool_chars += a.tool_chars;
+    }
+    o
+}
+
+/// Returns the gap buckets in pause order.
+fn gap_buckets(acc: [GapAcc; 4]) -> Vec<GapBucket> {
+    acc.into_iter()
+        .zip(GAP_BUCKETS)
+        .map(|(a, (_, label))| GapBucket {
+            label,
+            requests: a.requests,
+            cache_read: a.cache_read,
+            cache_writes: a.cache_writes,
+            output: a.output,
+            rewrites: a.rewrites,
+            rewrite_usd: a.rewrite_usd,
+        })
+        .collect()
+}
+
+/// Returns the context buckets, main before subagent and the smallest context first.
+fn context_buckets(acc: HashMap<(&'static str, usize), ContextAcc>) -> Vec<ContextBucket> {
+    let mut rows: Vec<ContextBucket> = acc
+        .into_iter()
+        .map(|((role, i), a)| ContextBucket {
+            role,
+            label: CONTEXT_BUCKETS[i].1,
+            requests: a.requests,
+            cost: a.cost,
+            cache_read: a.cache_read,
+            cache_writes: a.cache_writes,
+            output: a.output,
+        })
+        .collect();
+    rows.sort_by_key(|r| (r.role != "main", r.role, context_index(r.label)));
+    rows
+}
+
+fn context_index(label: &str) -> usize {
+    CONTEXT_BUCKETS
+        .iter()
+        .position(|(_, l)| *l == label)
+        .unwrap_or(0)
 }
 
 /// The 50th, 90th and 99th percentile of `values`, or 0 for each when there are none.

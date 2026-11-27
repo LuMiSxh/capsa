@@ -12,17 +12,45 @@ pub const WINDOW_SECS: u64 = 10 * 60;
 /// A rule shows its follow rate only after this many observed decisions.
 pub const MIN_SAMPLE: u64 = 5;
 
+/// The observed decisions of one kind, and those that were not repeated in their window.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct KindFollow {
+    pub observed: u64,
+    pub followed: u64,
+}
+
+impl KindFollow {
+    /// Returns the share of observed decisions of this kind that were followed, or `None` below
+    /// `MIN_SAMPLE`.
+    pub fn rate(self) -> Option<f32> {
+        (self.observed >= MIN_SAMPLE).then(|| self.followed as f32 / self.observed as f32)
+    }
+}
+
 /// The observed decisions of one rule, and those that were not repeated in their window.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Follow {
     pub observed: u64,
     pub followed: u64,
+    pub deny: KindFollow,
+    pub hint: KindFollow,
+    pub rewrite: KindFollow,
 }
 
 impl Follow {
     /// Returns the share of observed decisions that were followed, or `None` below `MIN_SAMPLE`.
     pub fn rate(self) -> Option<f32> {
         (self.observed >= MIN_SAMPLE).then(|| self.followed as f32 / self.observed as f32)
+    }
+
+    /// Returns the kind that `kind` names, if it is a suggestion.
+    fn kind_mut(&mut self, kind: &str) -> Option<&mut KindFollow> {
+        match kind {
+            "deny" => Some(&mut self.deny),
+            "hint" => Some(&mut self.hint),
+            "rewrite" => Some(&mut self.rewrite),
+            _ => None,
+        }
     }
 }
 
@@ -66,6 +94,10 @@ pub fn follow_rates(entries: &[GuardEntry]) -> BTreeMap<&str, Follow> {
         let slot = out.entry(e.rule.as_str()).or_default();
         slot.observed += 1;
         slot.followed += u64::from(!repeated);
+        if let Some(kind) = slot.kind_mut(&e.kind) {
+            kind.observed += 1;
+            kind.followed += u64::from(!repeated);
+        }
     }
     out
 }
@@ -96,7 +128,16 @@ mod tests {
             rates["grep"],
             Follow {
                 observed: 2,
-                followed: 1
+                followed: 1,
+                deny: KindFollow {
+                    observed: 1,
+                    followed: 1
+                },
+                hint: KindFollow {
+                    observed: 1,
+                    followed: 0
+                },
+                rewrite: KindFollow::default(),
             }
         );
         assert!(!rates.contains_key("sed"));
@@ -115,7 +156,13 @@ mod tests {
             follow_rates(&log)["grep"],
             Follow {
                 observed: 2,
-                followed: 2
+                followed: 2,
+                deny: KindFollow::default(),
+                hint: KindFollow {
+                    observed: 2,
+                    followed: 2
+                },
+                rewrite: KindFollow::default(),
             }
         );
     }
@@ -141,11 +188,52 @@ mod tests {
     }
 
     #[test]
+    fn each_kind_keeps_its_own_follow_rate() {
+        let log = [
+            line(0, Some("s1"), "deny-rule", "deny"),
+            line(100, Some("s1"), "deny-rule", "deny"),
+            line(200, Some("s1"), "hint-rule", "hint"),
+            line(10_000, Some("s2"), "hint-rule", "hint"),
+            line(20_000, Some("s2"), "rewrite-rule", "rewrite"),
+            line(30_000, Some("s3"), "rewrite-rule", "rewrite"),
+            line(30_100, Some("s3"), "rewrite-rule", "rewrite"),
+            line(1_000_000, Some("x"), "other", "escape"),
+        ];
+        let rates = follow_rates(&log);
+        assert_eq!(
+            rates["deny-rule"].deny,
+            KindFollow {
+                observed: 2,
+                followed: 1
+            }
+        );
+        assert_eq!(
+            rates["hint-rule"].hint,
+            KindFollow {
+                observed: 2,
+                followed: 2
+            }
+        );
+        assert_eq!(
+            rates["rewrite-rule"].rewrite,
+            KindFollow {
+                observed: 3,
+                followed: 2
+            }
+        );
+        assert_eq!(
+            (rates["deny-rule"].observed, rates["deny-rule"].followed),
+            (2, 1)
+        );
+    }
+
+    #[test]
     fn a_rate_waits_for_the_minimum_sample() {
         assert_eq!(
             Follow {
                 observed: 4,
-                followed: 4
+                followed: 4,
+                ..Default::default()
             }
             .rate(),
             None
@@ -153,7 +241,8 @@ mod tests {
         assert_eq!(
             Follow {
                 observed: 5,
-                followed: 4
+                followed: 4,
+                ..Default::default()
             }
             .rate(),
             Some(0.8)

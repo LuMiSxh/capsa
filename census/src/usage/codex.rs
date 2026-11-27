@@ -107,6 +107,8 @@ pub(crate) fn parse(text: &str) -> FileStats {
                     id: None,
                     model: model.clone(),
                     tokens: t,
+                    thinking: 0,
+                    text_chars: 0,
                     ts,
                     after_compact: false,
                 });
@@ -126,6 +128,7 @@ pub(crate) fn parse(text: &str) -> FileStats {
                     name,
                     intercepted: false,
                     result_chars: 0,
+                    skill: None,
                 });
             }
             ("response_item", Some("function_call_output" | "custom_tool_call_output")) => {

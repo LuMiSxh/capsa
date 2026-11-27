@@ -6,6 +6,7 @@ use super::{Call, Compaction, FileStats, Request, SpawnCall, is_explore_cmd, tex
 use crate::transcript::{Attachment, Record, records};
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 /// The guard's note on a call it ran rewritten; Claude Code records it as an attachment tied to
@@ -45,6 +46,8 @@ struct Block<'a> {
     input: Option<&'a RawValue>,
     #[serde(borrow)]
     content: Option<&'a RawValue>,
+    #[serde(borrow)]
+    text: Option<Cow<'a, str>>,
 }
 
 impl Block<'_> {
@@ -62,12 +65,20 @@ impl Block<'_> {
 
 #[derive(Deserialize)]
 struct BashInput<'a> {
-    command: Option<&'a str>,
+    #[serde(borrow)]
+    command: Option<Cow<'a, str>>,
 }
 
 #[derive(Deserialize)]
 struct AgentInput<'a> {
-    subagent_type: Option<&'a str>,
+    #[serde(borrow)]
+    subagent_type: Option<Cow<'a, str>>,
+}
+
+#[derive(Deserialize)]
+struct SkillInput<'a> {
+    #[serde(borrow)]
+    skill: Option<Cow<'a, str>>,
 }
 
 /// The state of one transcript while its records are read in file order.
@@ -127,16 +138,33 @@ impl Parser {
     }
 
     fn assistant(&mut self, r: &Record<'_>, content: &str, ts: u64) {
+        let blocks = blocks(content);
+        let text_chars: u64 = blocks
+            .iter()
+            .filter(|b| b.kind == "text")
+            .map(|b| b.text.as_deref().map_or(0, |t| t.chars().count() as u64))
+            .sum();
+        if let Some(words) = blocks
+            .iter()
+            .filter(|b| b.kind == "text")
+            .filter_map(|b| b.text.as_deref())
+            .find(|t| !t.trim().is_empty())
+            .map(|t| t.split_whitespace().count() as u64)
+        {
+            self.st.final_words = words;
+        }
         if let Some(req) = r.request() {
             self.st.requests.push(Request {
                 id: req.id,
                 model: req.model,
                 tokens: req.tokens,
+                thinking: req.thinking,
+                text_chars,
                 ts,
                 after_compact: std::mem::take(&mut self.after_compact),
             });
         }
-        for b in blocks(content).iter().filter(|b| b.kind == "tool_use") {
+        for b in blocks.iter().filter(|b| b.kind == "tool_use") {
             self.tool_call(b, ts);
         }
     }
@@ -152,11 +180,14 @@ impl Parser {
                     role,
                     start_ms: ts,
                     end_ms: None,
+                    result_chars: 0,
+                    notification_chars: None,
                 });
             }
             self.tool_of.insert(id.to_owned(), self.st.calls.len());
         }
         let hits = super::tools::claude_tool(&name, input);
+        let skill = skill_of(&name, input);
         self.st.calls.push(Call {
             categories: hits.categories,
             commands: hits.commands,
@@ -165,13 +196,19 @@ impl Parser {
             name,
             intercepted: false,
             result_chars: 0,
+            skill,
         });
     }
 
-    /// A user record: a prompt, or the results of the tool calls it answers.
+    /// A user record: a prompt, a task notification, or the results of the tool calls it answers.
     fn user(&mut self, content: &str, ts: u64) {
         if content.starts_with('"') {
-            self.st.prompts += 1;
+            let text = serde_json::from_str::<String>(content).unwrap_or_default();
+            if text.starts_with("<task-notification>") {
+                self.notification(&text);
+            } else {
+                self.st.prompts += 1;
+            }
             return;
         }
         let bs = blocks(content);
@@ -180,6 +217,17 @@ impl Parser {
         }
         for b in bs.iter().filter(|b| b.kind == "tool_result") {
             self.tool_result(b, ts);
+        }
+    }
+
+    /// Reads the `<result>` of a completion notification and files it under its `Agent` call.
+    fn notification(&mut self, text: &str) {
+        let id = between(text, "<tool-use-id>", "</tool-use-id>");
+        let result = between(text, "<result>", "</result>");
+        if let (Some(id), Some(result)) = (id, result)
+            && let Some(s) = self.st.spawns.iter_mut().rev().find(|s| s.id == id)
+        {
+            s.notification_chars = Some(result.chars().count() as u64);
         }
     }
 
@@ -202,6 +250,7 @@ impl Parser {
             .find(|s| Some(s.id.as_str()) == b.tool_use_id)
         {
             s.end_ms = Some(ts);
+            s.result_chars = chars;
         }
     }
 
@@ -220,10 +269,10 @@ impl Parser {
 fn is_explore(name: &str, input: &str) -> bool {
     match name {
         "Read" | "Grep" | "Glob" | "LS" => true,
-        "Bash" => serde_json::from_str::<BashInput>(input)
+        "Bash" => serde_json::from_str::<BashInput<'_>>(input)
             .ok()
             .and_then(|i| i.command)
-            .is_some_and(is_explore_cmd),
+            .is_some_and(|c| is_explore_cmd(&c)),
         _ => false,
     }
 }
@@ -233,10 +282,45 @@ fn spawned_role(name: &str, input: &str) -> Option<String> {
     if !matches!(name, "Agent" | "Task") {
         return None;
     }
-    let role = serde_json::from_str::<AgentInput>(input)
+    let role = serde_json::from_str::<AgentInput<'_>>(input)
         .ok()?
         .subagent_type?;
-    Some(role.to_owned())
+    Some(role.into_owned())
+}
+
+/// The skill a call loads: the `skill` of a `Skill` tool call, or the tool whose skill a shell
+/// command prints. A `--topic` print is named after its topic.
+fn skill_of(name: &str, input: &str) -> Option<(String, &'static str)> {
+    if name == "Skill" {
+        let skill = serde_json::from_str::<SkillInput<'_>>(input)
+            .ok()?
+            .skill?
+            .into_owned();
+        return Some((skill, "tool"));
+    }
+    if name != "Bash" {
+        return None;
+    }
+    let cmd = serde_json::from_str::<BashInput<'_>>(input).ok()?.command?;
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let at = words.iter().position(|w| *w == "self")?;
+    let tool = *words.get(at.checked_sub(1)?)?;
+    if !matches!(tool, "acus" | "census") || words.get(at + 1).copied() != Some("skill") {
+        return None;
+    }
+    let topic = words
+        .iter()
+        .position(|w| *w == "--topic")
+        .and_then(|i| words.get(i + 1).copied());
+    let skill = topic.map_or_else(|| tool.to_owned(), |topic| format!("{tool}:{topic}"));
+    Some((skill, "print"))
+}
+
+/// The text between `open` and `close`, if both occur in order.
+fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let start = text.find(open)? + open.len();
+    let end = text.get(start..)?.find(close)? + start;
+    text.get(start..end)
 }
 
 /// The call whose rewrite an attachment records, when it is the guard's rewrite note.

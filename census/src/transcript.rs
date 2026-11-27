@@ -79,6 +79,7 @@ pub(crate) struct Usage {
     cache_creation: Option<CacheCreation>,
     #[serde(default)]
     output_tokens: u64,
+    output_tokens_details: Option<OutputDetails>,
 }
 
 #[derive(Deserialize)]
@@ -89,14 +90,28 @@ struct CacheCreation {
     ephemeral_1h_input_tokens: u64,
 }
 
+#[derive(Deserialize)]
+struct OutputDetails {
+    #[serde(default)]
+    thinking_tokens: u64,
+}
+
 /// One API request of a transcript.
 pub(crate) struct Request {
     pub id: Option<String>,
     pub model: String,
     pub tokens: Tokens,
+    /// Reasoning tokens that the provider reports apart from `output_tokens`.
+    pub thinking: u64,
 }
 
 impl Usage {
+    fn thinking(&self) -> u64 {
+        self.output_tokens_details
+            .as_ref()
+            .map_or(0, |d| d.thinking_tokens)
+    }
+
     /// Splits the cache writes by TTL when the record gives the split, as Claude Code does.
     fn tokens(&self) -> Tokens {
         let (cache_write_5m, cache_write_1h) = match &self.cache_creation {
@@ -131,6 +146,7 @@ impl Record<'_> {
             id: message.id.clone(),
             model,
             tokens: usage.tokens(),
+            thinking: usage.thinking(),
         })
     }
 

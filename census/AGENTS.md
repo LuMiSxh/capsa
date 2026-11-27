@@ -38,15 +38,16 @@ skill|setup|config|doctor|update|uninstall`; update and uninstall need feature `
   spend, `daily.rs` the daily limit of the budget mode, `error.rs`, `tests.rs`.
 - `src/usage/`: transcript analytics. `mod.rs` builds the report and lists the `*.jsonl` files,
   `claude.rs` and `codex.rs` parse transcripts, `guard.rs` and `script.rs` read acus's
-  `guard.jsonl` and `script.jsonl`, `follow.rs` derives the follow rate of each guard rule,
-  `bulletin.rs` writes census's own status bulletin, `tools/` classifies tool calls (`classify.rs`
-  rules, `codex.rs` arguments, `pipelines.rs` parsing, `shape.rs` grouping), `prices/` holds the
-  list prices (see Gotchas), `merge/` folds the files into the report (`agents.rs` summarises the
-  subagent spawns), `handback.rs` counts hand-backs, `read.rs` reads files in parallel, `time.rs`
-  does dates and ISO weeks.
+  `guard.jsonl` and `script.jsonl`, `follow.rs` derives the follow rate of each guard rule and kind,
+  `output.rs` owns the output, cache-gap and context buckets, `returns.rs` the subagent returns,
+  `skills.rs` the skill use, `bulletin.rs` writes census's own status bulletin, `tools/` classifies
+  tool calls (`classify.rs` rules, `codex.rs` arguments, `pipelines.rs` parsing, `shape.rs`
+  grouping), `prices/` holds the list prices (see Gotchas), `merge/` folds the files into the
+  report (`agents.rs` summarises the subagent spawns), `handback.rs` counts hand-backs, `read.rs`
+  reads files in parallel, `time.rs` does dates and ISO weeks.
 - `src/usage_views/`: the table views of `census usage` (`--by`, `--agents`, `--handbacks`,
-  `--compare`, `--tools`), one module each, and the formatting helpers the report commands share
-  (`k`, `usd`, `money`, `rate`) in `mod.rs`.
+  `--compare`, `--tools`, `--output`, `--cache`, `--returns`, `--skills`), one module each, and the
+  formatting helpers the report commands share (`k`, `usd`, `money`, `rate`) in `mod.rs`.
 - `src/out.rs`: `Out`, the output format and colour of a command, and `field`, the `label  value`
   line of `census self setup`.
 - `src/setup.rs`: `census self setup`, the skill and the hooks and statusLine in `settings.json`.
@@ -138,6 +139,10 @@ hook` and `census statusline` never fetch. The digest records the table's `fetch
   from the snapshot.
 - `WEIGHTS` in `usage/mod.rs` is a fixed unit, not read from the table: the list ratios differ per
   model, and the weighted unit feeds the limit calibration.
+- A field that a transcript or tool-input parser reads as `&str` must be `Cow` when JSON escapes
+  can occur in it. serde refuses to borrow a string with an escape, and the whole record was
+  dropped: assistant text with a quoted path and Bash commands with `\n` or `\"` disappeared from
+  the report. `claude.rs` reads text, commands and subagent type that way.
 - The provider of a request is `billed_by` in `usage/prices/mod.rs`: the table's provider, else
   `anthropic` for a `claude` id, else `unknown`. `billing` in the config classifies it for `census
 usage` and `census session` only (`Config::billing_of`). The limits, the budget month and `census

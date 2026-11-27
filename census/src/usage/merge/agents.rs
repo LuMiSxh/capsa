@@ -13,11 +13,14 @@ pub(super) struct Spawn {
     models: HashMap<String, u64>,
     tokens: Tokens,
     cost: Cost,
+    pub(super) thinking: u64,
+    pub(super) text_chars: u64,
+    pub(super) tool_chars: u64,
     pub(super) cache: CacheStat,
 }
 
 impl Spawn {
-    pub(super) fn add(&mut self, model: &str, t: &Tokens, cost: &Cost) {
+    pub(super) fn add(&mut self, model: &str, t: &Tokens, cost: &Cost, thinking: u64) {
         if self.requests == 0 {
             self.first_context = t.context();
         }
@@ -25,6 +28,7 @@ impl Spawn {
         self.weighted += t.weighted();
         self.tokens.add(t);
         self.cost.merge(cost);
+        self.thinking += thinking;
         if !model.is_empty() && model != "<synthetic>" {
             *self.models.entry(model.to_owned()).or_default() += 1;
         }
@@ -46,10 +50,16 @@ pub(super) fn agent_stats(roles: HashMap<String, Vec<Spawn>>, total: f64) -> Vec
             let mut tokens = Tokens::default();
             let mut cost = Cost::default();
             let mut cache = CacheStat::default();
+            let mut thinking = 0;
+            let mut text_chars = 0;
+            let mut tool_chars = 0;
             for s in &spawns {
                 tokens.add(&s.tokens);
                 cost.merge(&s.cost);
                 cache.add(&s.cache);
+                thinking += s.thinking;
+                text_chars += s.text_chars;
+                tool_chars += s.tool_chars;
             }
             AgentStat {
                 spawns: spawns.len() as u64,
@@ -60,6 +70,9 @@ pub(super) fn agent_stats(roles: HashMap<String, Vec<Spawn>>, total: f64) -> Vec
                 share: weighted / total.max(1.0),
                 median_weighted: col(|s| s.weighted),
                 tokens,
+                thinking,
+                text_chars,
+                tool_chars,
                 cost,
                 cache,
                 role,

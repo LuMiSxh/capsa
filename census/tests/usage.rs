@@ -67,6 +67,93 @@ fn aggregates_both_agents() {
 }
 
 #[test]
+fn output_gaps_returns_and_skills_come_from_the_transcripts() {
+    let d = tempfile::tempdir().unwrap();
+    let sub = d.path().join("-x-Proj/s1/subagents");
+    fs::create_dir_all(&sub).unwrap();
+    let main = [
+        r#"{"type":"user","cwd":"/x/Proj","message":{"role":"user","content":"go"}}"#.to_owned(),
+        r#"{"type":"assistant","timestamp":"2026-10-02T09:00:00.000Z","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":0},"output_tokens":10,"output_tokens_details":{"thinking_tokens":30}},"content":[{"type":"thinking"}]}}"#.to_owned(),
+        r#"{"type":"assistant","timestamp":"2026-10-02T09:00:00.000Z","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":0},"output_tokens":10,"output_tokens_details":{"thinking_tokens":30}},"content":[{"type":"text","text":"hello world from the main agent"}]}}"#.to_owned(),
+        r#"{"type":"assistant","timestamp":"2026-10-02T09:10:00.000Z","message":{"id":"m2","model":"claude-opus-5-5","usage":{"input_tokens":500,"cache_creation":{"ephemeral_5m_input_tokens":6000,"ephemeral_1h_input_tokens":0},"output_tokens":50,"output_tokens_details":{"thinking_tokens":5000}},"content":[{"type":"tool_use","id":"a1","name":"Agent","input":{"subagent_type":"worker"}}]}}"#.to_owned(),
+        r#"{"type":"user","timestamp":"2026-10-02T09:10:30.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"a1","content":"launched"}]}}"#.to_owned(),
+        r#"{"type":"user","timestamp":"2026-10-02T09:11:00.000Z","message":{"role":"user","content":"<task-notification>\n<tool-use-id>a1</tool-use-id>\n<result>done well</result>\n</task-notification>"}}"#.to_owned(),
+        r#"{"type":"assistant","timestamp":"2026-10-02T09:11:00.000Z","message":{"id":"m3","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tokens":5},"content":[{"type":"tool_use","id":"s1","name":"Skill","input":{"skill":"agents-md"}}]}}"#.to_owned(),
+        r#"{"type":"assistant","timestamp":"2026-10-02T09:12:00.000Z","message":{"id":"m4","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tokens":5},"content":[{"type":"tool_use","id":"s2","name":"Bash","input":{"command":"acus self skill --topic script"}}]}}"#.to_owned(),
+    ]
+    .join("\n");
+    fs::write(d.path().join("-x-Proj/s1.jsonl"), format!("{main}\n")).unwrap();
+    fs::write(
+        sub.join("agent-w.jsonl"),
+        r#"{"type":"assistant","timestamp":"2026-10-02T09:10:10.000Z","message":{"id":"w1","model":"claude-sonnet-5-5","usage":{"input_tokens":100,"output_tokens":100,"output_tokens_details":{"thinking_tokens":60}},"content":[{"type":"text","text":"worker final words here"}]}}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        sub.join("agent-w.meta.json"),
+        r#"{"agentType":"worker","toolUseId":"a1"}"#,
+    )
+    .unwrap();
+
+    let r = report(&UsageOpts {
+        claude_root: Some(d.path().to_owned()),
+        codex_root: Some(d.path().join("none")),
+        ..Default::default()
+    });
+
+    assert_eq!(r.output.requests, 5);
+    assert_eq!(r.output.output, 170);
+    assert_eq!(r.output.thinking, 5090);
+    // The text of the second line of `m1` counts even though its usage is deduped.
+    assert_eq!(r.output.text_chars, 31 + 23);
+    assert!(r.output.tool_chars > 0);
+    assert_eq!(
+        r.output.residual(),
+        170 - 5090 - (54 / 4) - (r.output.tool_chars / 4) as i64
+    );
+
+    let gap = |label: &str| r.gaps.iter().find(|g| g.label == label).expect(label);
+    assert_eq!((gap("<5m").requests, gap("5-60m").requests), (2, 1));
+    assert_eq!(gap("5-60m").rewrites, 1);
+    assert!(gap("5-60m").rewrite_usd > 0.0);
+
+    let context = |role: &str, label: &str| {
+        r.contexts
+            .iter()
+            .find(|c| c.role == role && c.label == label)
+            .expect(label)
+    };
+    assert_eq!(
+        (
+            context("main", "<50k").requests,
+            context("subagent", "<50k").requests
+        ),
+        (4, 1)
+    );
+
+    let worker = r
+        .returns
+        .iter()
+        .find(|x| x.role == "worker")
+        .expect("worker");
+    assert_eq!(worker.calls, 1);
+    assert_eq!(worker.transcripts, 1);
+    assert_eq!(worker.notification_p50, 9);
+    assert_eq!(worker.notifications, 1);
+    assert_eq!(worker.final_words_p50, 4);
+    assert_eq!((worker.output, worker.thinking), (100, 60));
+
+    let skill = |name: &str, source: &str| {
+        r.skills
+            .iter()
+            .find(|s| s.skill == name && s.source == source)
+            .unwrap_or_else(|| panic!("{name}/{source}"))
+    };
+    assert_eq!(skill("agents-md", "tool").calls, 1);
+    assert_eq!(skill("acus:script", "print").calls, 1);
+}
+
+#[test]
 fn project_filter() {
     let d = tempfile::tempdir().unwrap();
     fs::create_dir_all(d.path().join("p")).unwrap();

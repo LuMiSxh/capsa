@@ -120,24 +120,37 @@ fn claude_fixture(home: &Scratch) {
                 "message": {"id": "m1", "model": "claude-opus-5-5",
                     "usage": {"input_tokens": 1000, "cache_read_input_tokens": 59000,
                         "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 2000},
-                        "output_tokens": 10},
-                    "content": [{"type": "tool_use", "id": "t1", "name": "Grep", "input": {"pattern": "x"}},
+                        "output_tokens": 10, "output_tokens_details": {"thinking_tokens": 4}},
+                    "content": [{"type": "text", "text": "Looking at the file now."},
+                        {"type": "tool_use", "id": "t1", "name": "Grep", "input": {"pattern": "x"}},
                         {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "sed -n 1,5p a"}}]}}),
             json!({"type": "user", "timestamp": "2026-10-02T09:00:20.000Z",
                 "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "0123456789"}]}}),
             json!({"type": "assistant", "timestamp": "2026-10-03T10:00:00.000Z",
                 "message": {"id": "m2", "model": "claude-opus-5-5",
-                    "usage": {"input_tokens": 500, "cache_read_input_tokens": 60000, "output_tokens": 20},
+                    "usage": {"input_tokens": 500, "cache_read_input_tokens": 60000, "output_tokens": 20,
+                        "output_tokens_details": {"thinking_tokens": 8}},
                     "content": [{"type": "tool_use", "id": "a1", "name": "Agent", "input": {"subagent_type": "worker"}},
                         {"type": "tool_use", "id": "t3", "name": "Read", "input": {"file_path": "a"}}]}}),
             json!({"type": "user", "timestamp": "2026-10-03T10:05:00.000Z",
-                "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "a1", "content": "done"}]}}),
+                "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "a1", "content": "launched"}]}}),
+            json!({"type": "user", "timestamp": "2026-10-03T10:06:00.000Z",
+                "message": {"role": "user", "content": "<task-notification>\n<tool-use-id>a1</tool-use-id>\n<result>worker done</result>\n</task-notification>"}}),
             json!({"type": "assistant", "timestamp": "2026-10-03T10:06:00.000Z",
                 "message": {"id": "m3", "model": "claude-opus-5-5",
                     "usage": {"input_tokens": 300, "cache_read_input_tokens": 61000,
                         "cache_creation": {"ephemeral_5m_input_tokens": 2000, "ephemeral_1h_input_tokens": 0},
-                        "output_tokens": 30},
+                        "output_tokens": 30, "output_tokens_details": {"thinking_tokens": 12}},
                     "content": [{"type": "tool_use", "id": "t4", "name": "Edit", "input": {}}]}}),
+            json!({"type": "assistant", "timestamp": "2026-10-03T10:06:30.000Z",
+                "message": {"id": "m4", "model": "claude-opus-5-5",
+                    "usage": {"input_tokens": 1, "output_tokens": 5},
+                    "content": [{"type": "tool_use", "id": "k1", "name": "Skill", "input": {"skill": "agents-md"}}]}}),
+            json!({"type": "assistant", "timestamp": "2026-10-03T10:06:40.000Z",
+                "message": {"id": "m5", "model": "claude-opus-5-5",
+                    "usage": {"input_tokens": 1, "output_tokens": 5},
+                    "content": [{"type": "tool_use", "id": "k2", "name": "Bash",
+                        "input": {"command": "acus self skill --topic script"}}]}}),
             json!({"type": "system", "subtype": "compact_boundary", "timestamp": "2026-10-03T10:07:00.000Z"}),
         ]),
     );
@@ -146,9 +159,15 @@ fn claude_fixture(home: &Scratch) {
         &jsonl(&[json!({"type": "assistant", "attributionAgent": "worker",
             "timestamp": "2026-10-03T10:05:10.000Z",
             "message": {"id": "w1", "model": "claude-sonnet-5-5",
-                "usage": {"input_tokens": 100, "cache_read_input_tokens": 5000, "output_tokens": 50},
-                "content": [{"type": "tool_use", "id": "t5", "name": "Bash", "input": {"command": "acus find x"}}]}}),
+                "usage": {"input_tokens": 100, "cache_read_input_tokens": 5000, "output_tokens": 50,
+                    "output_tokens_details": {"thinking_tokens": 30}},
+                "content": [{"type": "text", "text": "worker final report"},
+                    {"type": "tool_use", "id": "t5", "name": "Bash", "input": {"command": "acus find x"}}]}}),
         ]),
+    );
+    home.write(
+        "claude/projects/-work-app/s1/subagents/agent-a.meta.json",
+        r#"{"agentType":"worker","toolUseId":"a1"}"#,
     );
 }
 
@@ -288,6 +307,17 @@ fn usage_hour_buckets_follow_the_offset() {
     };
     assert_eq!(filled("0"), ["09:00", "10:00"]);
     assert_eq!(filled("7200"), ["11:00", "12:00"]);
+}
+
+#[test]
+fn usage_output_cache_returns_skills_json_are_unchanged() {
+    let home = Scratch::new("golden-usage-anatomy");
+    claude_fixture(&home);
+    let run = |args: &[&str]| census(home.path(), home.path(), args, "");
+    for view in ["output", "cache", "returns", "skills"] {
+        let out = run(&["--json", "usage", &format!("--{view}")]);
+        golden(&format!("usage_{view}"), &out, home.path(), 0);
+    }
 }
 
 #[test]

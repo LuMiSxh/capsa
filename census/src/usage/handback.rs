@@ -145,6 +145,8 @@ mod tests {
             role: role.to_owned(),
             start_ms,
             end_ms,
+            result_chars: 0,
+            notification_chars: None,
         }
     }
 
