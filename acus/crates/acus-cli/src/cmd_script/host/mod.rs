@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The data functions a script can call besides the acus commands: files under the allowed roots,
-//! environment variables, TOML, YAML and text diffs. Each returns a JSON value, or a `HostError`
-//! with the fix in its hint.
+//! environment variables, TOML, YAML, CSV and text diffs. Each returns a JSON value, or a
+//! `HostError` with the fix in its hint.
 
 mod fs;
 #[cfg(test)]
@@ -11,7 +11,7 @@ mod text;
 use serde_json::{Value, json};
 
 pub(super) use fs::{exists, lexical, read, resolve, stat};
-pub(super) use text::{parse_toml, parse_yaml, text_diff};
+pub(super) use text::{parse_csv, parse_toml, parse_yaml, text_diff};
 
 /// Words that make an environment variable value secret when they appear in its name.
 const SECRET_WORDS: &[&str] = &["KEY", "TOKEN", "SECRET", "PASS", "AUTH", "CREDENTIAL"];

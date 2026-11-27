@@ -25,7 +25,7 @@ acus outline PATH… [--depth 1] [-k fn,struct] [-g '*.rs']
 ```
 
 `--depth N` keeps symbols nested less than N deep, `-k` keeps the named kinds and their parents,
-`-g` filters a directory walk, and `--max-lines N` caps the output (default 400).
+`-g` filters a directory walk, and `--max-lines N` caps the output (default 200).
 
 Symbols exist for Rust, Swift, TS/JS, Svelte, Python, Shell, C, CSS, SCSS, HTML, XML/plist,
 Markdown and TOML/JSON/YAML keys. Other files: use `find` and `show PATH:A-B`.

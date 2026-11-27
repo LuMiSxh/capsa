@@ -28,7 +28,11 @@ __method('paths', function () {
   return [...new Set(this.map((x) => x && x.path).filter((p) => typeof p === 'string'))];
 });
 const print = (...values) => { __prints.push(...values); };
-const parse = { toml: (text) => parse_toml(text), yaml: (text) => parse_yaml(text) };
+const parse = {
+  toml: (text) => parse_toml(text),
+  yaml: (text) => parse_yaml(text),
+  csv: (text, o) => parse_csv(text, o),
+};
 const __waiting = new Map();
 let __next = 0;
 const __install = (names) => {

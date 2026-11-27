@@ -43,9 +43,11 @@ const NAMES: &[&str] = &[
     "exists",
     "env",
     "fetch",
+    "readJson",
     "textDiff",
     "parse_toml",
     "parse_yaml",
+    "parse_csv",
     "sleep",
     mcp::CALL,
 ];

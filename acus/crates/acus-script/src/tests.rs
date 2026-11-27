@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-use crate::{Host, HostError, Limits, ScriptError, check_module, run};
+use crate::{Host, HostError, Limits, ScriptError, check, check_module, run};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -30,6 +30,15 @@ fn limits() -> Limits {
         memory: 32 << 20,
         ..Limits::default()
     }
+}
+
+#[test]
+fn check_accepts_a_program_and_names_a_syntax_error_without_running_it() {
+    check("const x = await rows(1); return x;", Fake, &limits()).unwrap();
+    let error = check("return (", Fake, &limits()).unwrap_err();
+    assert!(matches!(error, ScriptError::Uncaught { .. }), "{error:?}");
+    // A host call that would throw if run still parses, so the check never reached it.
+    check("await fail();", Fake, &limits()).unwrap();
 }
 
 #[test]

@@ -106,7 +106,7 @@ pub struct Args {
     #[arg(long, default_value_t = 50)]
     max_hits: usize,
     /// Per printed block.
-    #[arg(long, default_value_t = 80)]
+    #[arg(long, default_value_t = 40)]
     max_lines: usize,
     /// Keep only the last N hits of each file. Applied after -m, which stops the search early;
     /// -c and -l still count every hit.

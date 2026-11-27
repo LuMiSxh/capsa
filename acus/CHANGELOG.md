@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-27
+
+### Added
+
+- `acus script --check` parses an inline program and stops: nothing runs, no file or command
+  changes. It prints the size and exits 0, or the syntax error and exits 2; `--json` prints
+  `{"bytes": N}`.
+- Script function `readJson(path)` parses a JSON file under the same Read rules as `read`, and
+  `parse.csv(text, {delimiter, header})` turns CSV into objects keyed by the header, or arrays with
+  `header: false`. Quoted fields may hold the delimiter, a newline and doubled quotes; an unclosed
+  quote is an error with a hint.
+- `acus batch` caps each line whose command takes `--head` at 100 lines by default; an explicit `--head`
+  or `--full` on the line lifts it, and a `--json` or `--format json` line is left whole.
+- The guard rewrites a whole-command `acus ctx` to `acus run`, so instructions written before 0.24 no
+  longer cost a failed turn.
+
+### Changed
+
+- `acus outline` caps output at 200 lines by default (was 400), and `acus find --block` caps one block
+  at 40 lines (was 80).
+- The `acus` skill description is 498 characters (was 883), and CORE carries the cap, multi-address
+  `show`, `map` and `patch --run` habits. CORE opens with the one-script habit, names
+  `acus script --check` and saved scripts, and stays under 400 words.
+- `reference/script.md` gains a cookbook of one-call recipes for find-then-read, map-then-edit,
+  edit-then-check and JSON/CSV data, and documents `readJson` and `parse.csv`.
+
+### Removed
+
+- The guard's tree hint for `tree`, `ls -R` and `find` listings; CORE names `acus map` and `acus files` directly. An old `tree` line in `guard.jsonl` still parses.
+- The guard's edit-script hint for scripts whose file literals are outside the repository; the deny for
+  repository source files stays.
+
 ## [0.26.0] - 2026-11-26
 
 ### Added

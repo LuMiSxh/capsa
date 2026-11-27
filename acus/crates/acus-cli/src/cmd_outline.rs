@@ -31,7 +31,7 @@ pub struct Args {
     #[arg(long)]
     hidden: bool,
     /// Cap on printed lines.
-    #[arg(long, default_value_t = 400)]
+    #[arg(long, default_value_t = 200)]
     max_lines: usize,
     /// Stop after N printed lines, headers included; the rest is counted in a footer.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]

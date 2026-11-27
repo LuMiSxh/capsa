@@ -31,7 +31,7 @@ acus find 'PAT' [PATH…] [-g '*.rs'] [-i] [-F] [--block]
 - `-A N`, `-B N` and `-C N` print grep-style context (`N-` marks context, `--` splits groups).
 - `-l` lists matching files, `-c` counts matching lines per file, `-m N` stops after N matching
   lines per file, and `--last N` keeps the last N hits per file.
-- `--max-hits N` caps the total (default 50) and `--max-lines N` caps one block (default 80).
+- `--max-hits N` caps the total (default 50) and `--max-lines N` caps one block (default 40).
 - `--cut N` clips each hit to N characters, `--head N` stops after N printed lines, and
   `--no-syntax` skips tree-sitter.
 - `--json` for scripts; `--human` for tables and colour.

@@ -235,9 +235,10 @@ fn converts_name_listings_to_acus_files() {
     }
     assert!(check("fd rs | wc -l").is_none());
     // The Glob tool cannot become a Bash call, so its hint names the replacement.
-    for hint in [GLOB_HINT, TREE_HINT] {
-        assert!(hint.contains("`acus files [DIR] -g 'GLOB'`"), "{hint}");
-    }
+    assert!(
+        GLOB_HINT.contains("`acus files [DIR] -g 'GLOB'`"),
+        "{GLOB_HINT}"
+    );
     // A rewritten listing is a conversion of a call the guard let through before.
     assert_eq!(
         rewrite("find src -name '*.rs'", None).unwrap().rule,

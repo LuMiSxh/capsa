@@ -38,6 +38,23 @@ enum Step {
     Fold(Fold),
 }
 
+/// Rewrites a whole-command `acus ctx` to its 0.24 name, `acus run`, so old instructions cost no
+/// failed turn. The rest of the line is kept byte for byte.
+fn ctx_run(cmd: &str, scope: Option<&Scope>) -> Option<Rewrite> {
+    let rest = cmd.trim().strip_prefix("acus ctx")?;
+    if !rest.is_empty() && !rest.starts_with([' ', '\t']) {
+        return None;
+    }
+    let command = format!("acus run{rest}");
+    accepted(&command, scope).then(|| Rewrite {
+        command,
+        note: "acus guard: `acus ctx` is `acus run` since 0.24; the command was rewritten, not refused."
+            .to_string(),
+        rule: Rule::CtxPipe,
+        deferred: true,
+    })
+}
+
 /// Rewrites every segment the guard would refuse, when each has an exact acus replacement;
 /// returns `None` (refuse as usual) if any segment has none. A rewritten build is `deferred`: the
 /// permission flow decides on it, as it does for a build the agent runs itself.
@@ -56,6 +73,11 @@ pub(super) fn rewrite_parsed(cmd: &str, p: &Parsed, scope: Option<&Scope>) -> Op
     // The splitter of a build without a Bash grammar knows no byte ranges to splice.
     if segs.iter().any(|s| s.range.is_empty()) {
         return None;
+    }
+    if segs.len() == 1
+        && let Some(rw) = ctx_run(cmd, scope)
+    {
+        return Some(rw);
     }
     // A whole-command `sed -i` becomes an `acus patch` call. The note says how the two differ,
     // because the agent sees the result and a failed patch writes nothing where sed might have.

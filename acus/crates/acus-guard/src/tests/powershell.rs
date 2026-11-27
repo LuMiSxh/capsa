@@ -32,10 +32,7 @@ fn recognises_windows_commands_in_either_shell() {
     ] {
         assert_eq!(check(cmd), None, "{cmd}");
     }
-    assert!(matches!(
-        check("dir /s"),
-        Some(Verdict::Hint(Rule::Tree, _))
-    ));
+    assert!(check("dir /s").is_none());
     let (_, r) = deny(check(r#"cd x && findstr /n /c:"two words" src\a.rs"#));
     assert!(r.contains(r"`acus find 'two words' 'src\a.rs' -F`"), "{r}");
 }
@@ -101,10 +98,7 @@ fn covers_powershell_habits() {
         "Get-ChildItem -Recurse -Depth 2",
         "dir /s",
     ] {
-        assert!(
-            matches!(check_ps(cmd, None), Some(Verdict::Hint(Rule::Tree, _))),
-            "{cmd}"
-        );
+        assert_eq!(check_ps(cmd, None), None, "{cmd}");
     }
     // `ls -r` reverses in Bash.
     assert_eq!(check("ls -r src"), None);

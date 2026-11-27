@@ -1,6 +1,6 @@
 ---
 name: acus
-description: Code search, read, patch and git-summary CLI for coding agents. Always invoke this skill first, before any Grep, Glob, Read, Edit or WebFetch call and before any Bash grep, rg, find, cat, head, sed -i, git diff, git log or ls. It owns every code lookup and edit, so use it to find usages, callers or definitions (acus find, follow), read lines N-M or a function (acus show), list files with line counts (acus files), see what changed on a branch or versus main (acus diff main -p), read git log for a path (acus log), rename or replace text across files, add, change or delete a method or lines (acus patch), search a log file and keep the last hits, run cargo test or npm test and show only failures (acus run), batch 2+ planned calls into one `acus script`, run independent commands with `acus batch`, or run a saved script by name. Results are line-numbered and grouped by symbol.
+description: Code search, read, patch and run CLI for coding agents. Use when grepping, reading files, editing, running tests or inspecting git; it owns code lookups and edits. Find usages, callers or definitions (`acus find`, `acus follow`), read functions (`acus show`), list files with counts (`acus files`), see what changed (`acus diff main -p`), read git log (`acus log`), edit lines or symbols (`acus patch`), run tests with only failures (`acus run`), and batch calls with `acus script` or `acus batch`.
 ---
 
 # acus
@@ -9,22 +9,22 @@ One call replaces search → read: line-numbered, grouped by symbol; every trunc
 
 ## Instead of … run
 
-| Instead of | Run |
-|---|---|
-| 2+ calls you can plan before seeing results: Read, Grep, Glob, Edit, Bash, WebFetch | one `acus script`; independent calls run in parallel |
-| several independent acus commands, no logic | `acus batch <<'EOF'`: one acus command per line, in parallel, no JS |
-| grep, rg, find | `acus find 'PAT' [PATH…]`; `--block` adds code |
-| cat, head, tail, sed -n, Read | `acus show PATH#Sym PATH:A-B`; `acus outline PATH` |
-| Glob, find -name, ls, fd, git ls-files | `acus files [PATH…] [-g GLOB]`; `--lines` adds counts |
-| ls -R, tree | `acus map [DIR…]` |
-| sed -i, perl -pi, Edit | `acus patch` (below) |
-| cargo test, npm test | `acus run 'CMD'`; failures plus their code |
-| git status, git diff | `acus diff [REV]`; `-p` adds the changed lines |
-| git log | `acus log [-n N] [REV] [PATH…]` |
-| git blame | `acus blame PATH#Sym` |
-| who calls, what it calls | `acus follow PATH#Sym`; `--down` for callees |
-| a script to keep and run again | `acus script save NAME --note TEXT`; `acus script NAME key=value`; `acus script list` |
-| edit, then test or build | `acus patch --run 'CMD'` (below) |
+| Instead of                                               | Run                                                                                    |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| 2+ planned calls: Read, Grep, Glob, Edit, Bash, WebFetch | one `acus script`; independent calls run in parallel                                   |
+| independent acus commands, no logic                      | `acus batch <<'EOF'`: one acus command per line, in parallel, no JS                    |
+| grep, rg, find                                           | `acus find 'PAT' [PATH…]`; `--block` adds code                                         |
+| cat, head, tail, sed -n, Read                            | `acus show a.rs#A b.rs:40-80 c.rs#B`: several addresses, one call; `acus outline PATH` |
+| Glob, find -name, fd, git ls-files                       | `acus files [PATH…] [-g GLOB]`; `--lines` counts                                       |
+| ls -R, tree                                              | `acus map [DIR]`                                                                       |
+| sed -i, perl -pi, Edit                                   | `acus patch`                                                                           |
+| cargo test, npm test                                     | `acus run 'CMD'`; failures with code                                                   |
+| git status, git diff                                     | `acus diff [REV]`; `-p` adds changed lines                                             |
+| git log                                                  | `acus log [-n N] [REV] [PATH…]`                                                        |
+| git blame                                                | `acus blame PATH#Sym`                                                                  |
+| callers, callees                                         | `acus follow PATH#Sym`; `--down` for callees                                           |
+| a script to keep and run again                           | `acus script save NAME --note TEXT`; `acus script NAME key=value`; `acus script list`  |
+| edit, then test or build                                 | `acus patch --run 'CMD'` (below)                                                       |
 
 ```bash
 acus script <<'JS'
@@ -33,7 +33,7 @@ print(o, s, f);
 JS
 ```
 
-Plan 2+ calls as one script: a later call can take an earlier result with `await`, and the code can branch on it. Keep a step that needs your judgement as its own call. Saved scripts are ES modules with `description`, `params` and a default function; `save` needs `--note`. Details: [script](reference/script.md).
+Plan 2+ calls as one script: a later call can take an earlier result with `await`, and the code can branch on it. Keep a step that needs your judgement as its own call. `acus script --check` parses without running. Saved scripts are ES modules with `description`, `params` and a default function; `save` needs `--note`. Details: [script](reference/script.md).
 
 ```bash
 acus script <<'JS'
@@ -42,21 +42,21 @@ await run('cargo test', {tail: 40})
 JS
 ```
 
-- The last expression is printed when the script has no `return` or `print`.
-- A script's `read`, `write`, `edit` and `fetch` replace Claude's Read, Write, Edit and WebFetch in a batch, under the same permission rules.
+- Last expression prints unless the script calls `return` or `print`; `read`, `write`, `edit` and `fetch` replace Read, Write, Edit and WebFetch under the same permissions; `--check` only parses.
+- A script used twice: `acus script save NAME`; run `acus script NAME key=value`.
 
 Exact forms:
 
-| Task | Command |
-|---|---|
-| callers, callees | `acus follow src/parser.rs#Parser::parse`, add `--down` for callees |
-| read lines 40-80 | `acus show src/parser.rs:40-80` |
-| branch vs main, changed lines | `acus diff main -p` |
-| rename everywhere under src | `*** Replace All: src` block in `acus patch` |
-| delete lines 40-44 | `*** Delete Lines: src/a.rs:40-44` plus `*** Expect:` in `acus patch` |
-| edit, then run the tests | `acus patch --run 'cargo test' <<'PATCH' … PATCH` |
-| run saved script `fix-imports` | `acus script fix-imports module=./util` |
-| find, then show, then callers | one `acus script`; never chain acus commands with `&&` |
+| Task                           | Command                                                               |
+| ------------------------------ | --------------------------------------------------------------------- |
+| callers, callees               | `acus follow src/parser.rs#Parser::parse`, add `--down` for callees   |
+| read lines 40-80               | `acus show src/parser.rs:40-80`                                       |
+| branch vs main, changed lines  | `acus diff main -p`                                                   |
+| rename everywhere under src    | `*** Replace All: src` block in `acus patch`                          |
+| delete lines 40-44             | `*** Delete Lines: src/a.rs:40-44` plus `*** Expect:` in `acus patch` |
+| edit, then run the tests       | `acus patch --run 'cargo test' <<'PATCH' … PATCH`                     |
+| run saved script `fix-imports` | `acus script fix-imports module=./util`                               |
+| find, then show, then callers  | one `acus script`; never chain acus commands with `&&`                |
 
 ```bash
 acus patch <<'PATCH'
@@ -112,14 +112,13 @@ acus patch <<'PATCH'
 PATCH
 ```
 
-- SEARCH is the exact text without `acus show` line numbers; it must occur once; add a line when ambiguous. A miss shows nearest lines.
+- SEARCH is exact text without `show` numbers, once only; add context if ambiguous; a miss shows nearest lines.
 - All or nothing: reports every failing block; fix all, resend once.
-- `acus patch -q`: summary only.
-- Output shows the written lines; don't re-read them.
-- One patch holds the whole change set; never write files with `cat >` or Python scripts.
-- `acus patch --check` validates a large patch without writing; `--diff` shows the result.
-- `acus patch --run 'CMD'` runs CMD after the patch applies, with `acus run`'s output and exit code; `--check` runs nothing.
-- `acus patch --fmt` formats the written files; add it only where the project requires it.
+- A SEARCH block that fails twice: `acus show` the symbol, re-quote from output; `--fuzzy` only after exact matching fails.
+- `acus patch --run 'CMD'` runs CMD after the edit, as `acus run`; `--check` validates a large patch without writing.
+- Written lines print; don't re-read. `-q` for summary only.
+- One patch holds the whole change; never `cat >` or Python writes.
+- `--diff` shows a unified diff; `acus patch --fmt` formats the written files, add it only where the project requires it.
 - Symbol edits, `*** Append File`, line directives, `*** Resolve Conflict`, `*** Replace All` and `-q` are in [patch](reference/patch.md).
 
 ## Addresses
@@ -132,13 +131,15 @@ An address names code without reading it first; every command that takes a path 
 ## Reading the output
 
 - Exit 0 = results, 1 = nothing found (not a failure), 2 = error with a `hint:` line naming the fix; `run` returns the command's own code.
-- Limit output with `--head N` (`find`, `show`, `outline`, `diff`) or `acus run --tail N`, `--grep RE`, `--drop RE`.
+- Cap every call: `find --max-hits 20`, `--block --head 80`, `outline --max-lines 200`, `show --head N`, `diff --stat` before `-p`; raise only to edit.
+- Limit `acus run` output: `--tail N`, `--grep RE`, `--drop RE`.
 - `… N more …` names the follow-up command; run it instead of searching again.
 - `run` says `3rd identical failure …` after three identical failures in one session; fix the key line it repeats instead of rerunning.
 - `acus show` on a file over 400 lines prints its outline, and output stops near 24k characters; `--full` prints everything. Details: [read](reference/read.md).
 
 ## Common mistakes
 
+- No prose before a tool call unless required.
 - A SEARCH block that differs from the file only in whitespace (tabs vs spaces, extra spaces or blank lines) misses: add `--fuzzy` after the exact forms fail; it still refuses two matches.
 - A pattern that starts with `-` is read as a flag: use `acus find -e '-x' PATH`.
 - Pipes: `| head -N` after `find`, `show`, `outline` or `diff` is `--head N`; `acus run --tail`, `--grep` and `--drop` replace `| tail` and `| grep`.
@@ -152,4 +153,4 @@ An address names code without reading it first; every command that takes a path 
 - `acus run <<'EOF'` is not a batch: `run` takes one command and never reads stdin, so the heredoc is ignored and the project's test command runs. Use `acus batch`.
 - Symbols exist for Rust, Swift, TS/JS, Svelte, Python, Shell, C, CSS, SCSS, HTML, XML/plist, Markdown and TOML/JSON/YAML keys; on other files use `find` and `show PATH:A-B`.
 
-This covers everyday use; invoke the acus skill only for a flag or form not shown here. More: `acus self skill --full`, `--topic <topic>`.
+More: `acus self skill --full`, `--topic <topic>`.

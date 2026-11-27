@@ -54,6 +54,21 @@ impl Bindings {
         Ok(json!({"status": page.status, "url": page.url, "text": page.text}))
     }
 
+    /// Reads a JSON file under the repository or an `additionalDirectories` entry, as
+    /// `readJson(path)`.
+    pub(super) fn read_json(&self, call: &Call) -> Result<Value, HostError> {
+        let path = one_string(call, "readJson")?;
+        let value = host::read(&self.permissions, &self.cwd, path, &ReadOptions::default())?;
+        let Some(text) = value.as_str() else {
+            return Err(HostError::new(format!("readJson() reads text, not {path}"))
+                .with_hint("read an image or binary file with read() and stat()"));
+        };
+        serde_json::from_str(text).map_err(|e| {
+            HostError::new(format!("cannot parse JSON from {path}: {e}"))
+                .with_hint("check commas, quotes and trailing commas")
+        })
+    }
+
     pub(super) fn text_diff(&self, call: &Call) -> Result<Value, HostError> {
         let [old, new] = call.positionals.as_slice() else {
             return Err(HostError::new("textDiff() takes two texts")

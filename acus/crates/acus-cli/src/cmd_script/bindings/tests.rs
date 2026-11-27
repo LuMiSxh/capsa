@@ -52,6 +52,22 @@ fn run_timeouts_are_cut_to_the_seconds_left_before_the_deadline() {
 }
 
 #[test]
+fn read_json_and_parse_csv_are_host_functions() {
+    let cwd = std::env::current_dir().unwrap();
+    let file = tempfile::NamedTempFile::new_in(&cwd).unwrap();
+    std::fs::write(file.path(), r#"{"a": 1}"#).unwrap();
+    let name = file.path().file_name().unwrap().to_str().unwrap();
+    let host = Bindings::new(Config::default()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let json = host.call("readJson", vec![json!(name)], deadline).unwrap();
+    assert_eq!(json, json!({"a": 1}));
+    let rows = host
+        .call("parse_csv", vec![json!("a,b\n1,2\n")], deadline)
+        .unwrap();
+    assert_eq!(rows, json!([{"a": "1", "b": "2"}]));
+}
+
+#[test]
 fn an_identical_read_only_call_runs_once_but_counts_each_time() {
     let host = Bindings::new(Config::default()).unwrap();
     let args = vec![json!("memo_marker"), json!({"paths": ["src/main.rs"]})];

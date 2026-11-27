@@ -11,7 +11,7 @@ mod module;
 mod pool;
 mod source;
 
-pub use engine::{Outcome, run};
+pub use engine::{Outcome, check, run};
 pub use error::{Partial, ScriptError};
 pub use host::{Host, HostError};
 pub use limits::Limits;

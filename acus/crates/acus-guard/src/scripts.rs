@@ -57,7 +57,7 @@ fn code_paths(s: &str) -> impl Iterator<Item = &str> {
 
 /// Returns the verdict for an edit script `s` run by `interp`, or `None` when `s` is not one. A
 /// script whose every code-file literal is a source file inside the repository is refused; any
-/// other one is only hinted at, because telling it from data processing is a heuristic.
+/// other one runs as written, because telling it from data processing is a heuristic.
 pub(super) fn script_verdict(interp: &str, s: &str, scope: Option<&Scope>) -> Option<Verdict> {
     if !is_edit_script(s) {
         return None;
@@ -70,10 +70,5 @@ pub(super) fn script_verdict(interp: &str, s: &str, scope: Option<&Scope>) -> Op
             ),
         ));
     }
-    Some(Verdict::Hint(
-        Rule::EditScript,
-        format!(
-            "acus hint: this {interp} script edits source files. Next time use one `acus patch` with SEARCH/REPLACE blocks or `*** Replace All: PATHS` (literal or REGEX): it edits every file at once, all or nothing, and prints the written lines."
-        ),
-    ))
+    None
 }

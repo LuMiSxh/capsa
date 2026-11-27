@@ -55,9 +55,18 @@ impl Bindings {
             "exists" => self.exists(&call),
             "env" => Ok(host::env(one_string(&call, name)?)),
             "fetch" => self.fetch(&call, deadline),
+            "readJson" => self.read_json(&call),
             "textDiff" => self.text_diff(&call),
             "parse_toml" => host::parse_toml(one_string(&call, name)?),
             "parse_yaml" => host::parse_yaml(one_string(&call, name)?),
+            "parse_csv" => host::parse_csv(
+                one_string(&call, name)?,
+                call.text("delimiter").unwrap_or(","),
+                call.options
+                    .get("header")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+            ),
             "show" => {
                 let Cmd::Show(a) = parse(name, &call, &[])? else {
                     return Err(internal(name));

@@ -4,6 +4,14 @@
 use super::*;
 
 #[test]
+fn rewrites_acus_ctx_to_run() {
+    let r = rewrite("acus ctx 'cargo test' --tail 3", None).unwrap();
+    assert_eq!(r.command, "acus run 'cargo test' --tail 3");
+    assert_eq!(r.rule, Rule::CtxPipe);
+    assert!(r.deferred);
+}
+
+#[test]
 fn rewrites_reads_and_searches_into_acus_calls() {
     let cases = [
         ("cat src/a.rs", "acus show 'src/a.rs'"),

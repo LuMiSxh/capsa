@@ -187,7 +187,6 @@ impl Verdict {
 const ESCAPE: &str = "Only if acus cannot do this, rerun with a `command ` prefix.";
 const ESCAPE_PS: &str = "Only if acus cannot do this, rerun with `# acus-skip` at the end.";
 const GLOB_HINT: &str = "acus hint: `acus files [DIR] -g 'GLOB'` lists the files matching a glob (sorted, .gitignore respected, capped with a note), `acus map [DIR]` shows the layout with file and line counts, `acus outline DIR --depth 1` lists a directory's source files with their top-level symbols, and `acus find -l 'PAT'` lists the files containing a text.";
-const TREE_HINT: &str = "acus hint: `acus files [DIR] -g 'GLOB'` lists the files matching a glob (sorted, .gitignore respected, capped with a note), `acus map [DIR]` shows the tree with file and line counts within a token budget, rolls up deep paths and lists the top-level symbols of small directories.";
 /// Checks PowerShell with the same rules (cmdlets ignore case, so the rules see a lowercased
 /// command), plus `-replace … | Set-Content` edits and .NET file reads.
 pub fn check_ps(cmd: &str, scope: Option<&Scope>) -> Option<Verdict> {

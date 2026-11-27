@@ -26,7 +26,8 @@ use capsa_core::claude_settings::permissions::Refusal;
 use capsa_core::exit::Outcome;
 use capsa_core::format::Format;
 use capsa_core::hint::hinted;
-use capsa_core::render;
+use capsa_core::render::{self, Doc, Render};
+use serde::Serialize;
 use serde_json::{Map, Value};
 use std::io::Read;
 use std::sync::atomic::Ordering;
@@ -61,6 +62,9 @@ pub struct Args {
     /// `[script] output` in the config (400). The byte limit scales with it. `--json` is not capped.
     #[arg(long, value_name = "N")]
     max_output: Option<usize>,
+    /// Parse the program and stop; nothing runs, no file or command changes.
+    #[arg(long)]
+    check: bool,
     #[command(subcommand)]
     saved: Option<Saved>,
 }
@@ -85,6 +89,7 @@ enum Saved {
 pub fn run(a: Args, cfg: Config, format: Format) -> Result<Outcome> {
     let cwd = || std::env::current_dir().context("cannot read the current directory");
     match a.saved {
+        None if a.check => check_inline(a.code, cfg, format),
         None => run_inline(a.code, a.max_output, cfg, format),
         Some(Saved::Save(s)) => render::emit(&manage::save(&s, cfg)?, format),
         Some(Saved::List) => render::emit(&manage::list(&cfg, &cwd()?), format),
@@ -94,12 +99,8 @@ pub fn run(a: Args, cfg: Config, format: Format) -> Result<Outcome> {
     }
 }
 
-fn run_inline(
-    code: Option<String>,
-    max_output: Option<usize>,
-    cfg: Config,
-    format: Format,
-) -> Result<Outcome> {
+/// Reads the inline program from `-e` or stdin, and refuses an empty one.
+fn read_program(code: Option<String>) -> Result<String> {
     let code = match code {
         Some(code) => code,
         None => {
@@ -116,6 +117,41 @@ fn run_inline(
             "pass it with -e 'return await find(\"x\")' or on stdin",
         ));
     }
+    Ok(code)
+}
+
+/// Parses the inline program and stops, so a typo costs no turn and changes nothing.
+fn check_inline(code: Option<String>, cfg: Config, format: Format) -> Result<Outcome> {
+    let code = read_program(code)?;
+    let limits = limits(&cfg);
+    acus_script::check(&code, bindings::Bindings::for_check(cfg)?, &limits).map_err(failure)?;
+    let body = Checked { bytes: code.len() };
+    render::emit(&body, format)
+}
+
+/// The result of `acus script --check`.
+#[derive(Serialize)]
+struct Checked {
+    bytes: usize,
+}
+
+impl Render for Checked {
+    fn doc(&self, doc: &mut Doc) {
+        doc.title("acus script --check");
+        doc.line(format!(
+            "script ok: {} bytes; nothing ran, no file or command changed",
+            self.bytes
+        ));
+    }
+}
+
+fn run_inline(
+    code: Option<String>,
+    max_output: Option<usize>,
+    cfg: Config,
+    format: Format,
+) -> Result<Outcome> {
+    let code = read_program(code)?;
     let limits = limits(&cfg);
     let cap = cap(&cfg, max_output);
     let log = usage::path(&cfg);

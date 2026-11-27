@@ -235,7 +235,7 @@ fn compound_with_one_unrewritable_segment_is_still_refused() {
 }
 
 #[test]
-fn hints_at_edit_scripts() {
+fn refuses_repo_edit_scripts_and_leaves_outside_ones() {
     for cmd in [
         "python3 - <<'EOF'\np='src/a.rs'\ns=open(p).read()\nopen(p,'w').write(s.replace('a','b'))\nEOF",
         "cd app && uv run python - <<'E'\nimport re, pathlib\nf=pathlib.Path(\"Sources/A.swift\")\nf.write_text(re.sub(r'x','y',f.read_text()))\nE",
@@ -246,13 +246,10 @@ fn hints_at_edit_scripts() {
     ] {
         assert!(matches!(check(cmd), Some(Verdict::Deny(..))), "{cmd}");
     }
-    // A literal outside the repository keeps the hint.
+    // A literal outside the repository runs as written.
     let scope = Scope::fixed("/repo");
     let outside = "python3 - <<'EOF'\np='/tmp/a.rs'\ns=open(p).read()\nopen(p,'w').write(s.replace('a','b'))\nEOF";
-    assert!(matches!(
-        check_in(outside, false, Some(&scope)),
-        Some(Verdict::Hint(Rule::EditScript, _))
-    ));
+    assert_eq!(check_in(outside, false, Some(&scope)), None);
     // A script file is a source file like any other.
     assert!(matches!(
         check("cat > run.py <<'EOF'\nprint('hi')\nEOF"),
@@ -261,22 +258,16 @@ fn hints_at_edit_scripts() {
 }
 
 #[test]
-fn hints_at_acus_for_listings_and_plain_git() {
+fn plain_listings_and_git_hints() {
     for cmd in [
         "tree -L 2",
         "ls -laR src",
         "find . -type f",
         "find Sources -maxdepth 2",
     ] {
-        assert!(
-            matches!(check(cmd), Some(Verdict::Hint(Rule::Tree, _))),
-            "{cmd}"
-        );
+        assert!(check(cmd).is_none(), "{cmd}");
     }
-    assert!(matches!(
-        check_ps("Get-ChildItem -Recurse src", None),
-        Some(Verdict::Hint(Rule::Tree, _))
-    ));
+    assert!(check_ps("Get-ChildItem -Recurse src", None).is_none());
     for cmd in [
         "ls -la",
         "find . -name '*.rs'",

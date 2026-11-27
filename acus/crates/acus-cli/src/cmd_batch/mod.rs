@@ -22,6 +22,10 @@ use lines::{shown_args, split};
 /// Characters `batch` prints before it cuts output, safely under Claude Code's 30k result cap.
 const BUDGET: usize = 24_000;
 
+/// Lines `batch` keeps from a line's output when the command takes `--head` and the line gives
+/// no cap of its own. A line without `--head` (a test run, a patch) is left whole.
+const DEFAULT_HEAD: usize = 100;
+
 /// Longest failure reason `batch` repeats in its `failed:` footer.
 const REASON: usize = 80;
 
@@ -30,7 +34,8 @@ const HEAD_COMMANDS: [&str; 7] = ["find", "outline", "diff", "files", "follow", 
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// Cap each line's output at N lines, unless that line sets --head itself.
+    /// Cap each line's output at N lines, unless that line sets --head itself. Defaults to 100
+    /// for commands that take --head; a line without that flag is left whole.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
     head: Option<u64>,
     /// Clip each printed line of a command's output to N characters, unless that line sets
@@ -360,10 +365,33 @@ fn cap_lines(a: &Args, args: &[String], body: String) -> String {
         Some(n) if !has_flag(args, "--cut") => clip_lines(&body, as_usize(n)),
         _ => body,
     };
-    match a.head {
-        Some(n) if !has_flag(args, "--head") => head_text(&body, as_usize(n), args),
+    let head = a
+        .head
+        .map(as_usize)
+        .or_else(|| takes_head(args).then_some(DEFAULT_HEAD));
+    match head {
+        Some(n) if !has_flag(args, "--head") && !has_flag(args, "--full") && !json_output(args) => {
+            head_text(&body, n, args)
+        }
         _ => body,
     }
+}
+
+/// Whether the line asks for JSON, which must not be cut by line.
+fn json_output(args: &[String]) -> bool {
+    has_flag(args, "--json")
+        || args.iter().any(|a| a == "--format=json")
+        || args
+            .windows(2)
+            .any(|w| w[0] == "--format" && w[1] == "json")
+}
+
+/// Whether the line's command accepts `--head` or can lift a cut with `--full`.
+fn takes_head(args: &[String]) -> bool {
+    let cmd = args.first().map_or("", String::as_str);
+    HEAD_COMMANDS.contains(&cmd)
+        || cmd == "show"
+        || (cmd == "diff" && args.iter().any(|a| a == "-p"))
 }
 
 /// Keeps the first `n` lines of `body` and names the command that shows the rest.
@@ -451,6 +479,87 @@ fn with_flag(args: &[String], flag: &str, value: Option<usize>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caps_a_head_capable_line_at_the_default() {
+        let args = ["find", "x"].map(str::to_owned);
+        let body: String = (0..DEFAULT_HEAD + 5)
+            .map(|i| format!("line {i}\n"))
+            .collect();
+        let capped = cap_lines(
+            &Args {
+                head: None,
+                cut: None,
+            },
+            &args,
+            body,
+        );
+        assert!(capped.contains("output cut at --head 100"), "{capped}");
+        assert!(capped.contains("acus find x --head 105"), "{capped}");
+    }
+
+    #[test]
+    fn leaves_a_full_show_whole_without_an_explicit_head() {
+        let args = ["show", "big.rs", "--full"].map(str::to_owned);
+        let body: String = (0..DEFAULT_HEAD + 5)
+            .map(|i| format!("line {i}\n"))
+            .collect();
+        assert_eq!(
+            cap_lines(
+                &Args {
+                    head: None,
+                    cut: None
+                },
+                &args,
+                body.clone()
+            ),
+            body
+        );
+    }
+
+    #[test]
+    fn leaves_a_json_line_whole_without_an_explicit_head() {
+        for args in [
+            vec!["show", "big.rs", "--json"],
+            vec!["show", "big.rs", "--format", "json"],
+            vec!["show", "big.rs", "--format=json"],
+        ] {
+            let args: Vec<String> = args.into_iter().map(str::to_owned).collect();
+            let body: String = (0..DEFAULT_HEAD + 5)
+                .map(|i| format!("line {i}\n"))
+                .collect();
+            assert_eq!(
+                cap_lines(
+                    &Args {
+                        head: None,
+                        cut: None
+                    },
+                    &args,
+                    body.clone()
+                ),
+                body
+            );
+        }
+    }
+
+    #[test]
+    fn leaves_a_run_line_whole_without_an_explicit_head() {
+        let args = ["run", "cargo test"].map(str::to_owned);
+        let body: String = (0..DEFAULT_HEAD + 5)
+            .map(|i| format!("line {i}\n"))
+            .collect();
+        assert_eq!(
+            cap_lines(
+                &Args {
+                    head: None,
+                    cut: None
+                },
+                &args,
+                body.clone()
+            ),
+            body
+        );
+    }
 
     #[test]
     fn replaces_an_existing_head_instead_of_appending() {

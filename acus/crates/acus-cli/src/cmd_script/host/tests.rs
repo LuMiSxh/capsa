@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::fs::decode;
-use super::{ReadOptions, env, exists, masked, parse_toml, parse_yaml, read, stat, text_diff};
+use super::{
+    ReadOptions, env, exists, masked, parse_csv, parse_toml, parse_yaml, read, stat, text_diff,
+};
 use capsa_core::claude_settings::permissions::Permissions;
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -201,6 +203,32 @@ fn env_returns_null_for_an_unset_or_invalid_name() {
     assert_eq!(env("ACUS_HELPERS_TEST_UNSET_VARIABLE"), Value::Null);
     assert_eq!(env(""), Value::Null);
     assert_eq!(env("A=B"), Value::Null);
+}
+
+#[test]
+fn parse_csv_reads_quoted_fields_crlf_and_the_header() {
+    let text = "name,note\r\nada,\"one, two\"\r\nbob,\"he said \"\"hi\"\"\"\r\n";
+    let rows = parse_csv(text, ",", true).unwrap();
+    assert_eq!(
+        rows,
+        json!([
+            {"name": "ada", "note": "one, two"},
+            {"name": "bob", "note": "he said \"hi\""}
+        ])
+    );
+    let rows = parse_csv("a;b\n1;2\n", ";", false).unwrap();
+    assert_eq!(rows, json!([["a", "b"], ["1", "2"]]));
+    let rows = parse_csv("a,a\n1,2\n", ",", true).unwrap();
+    assert_eq!(rows, json!([{"a": "1", "a_2": "2"}]));
+}
+
+#[test]
+fn parse_csv_refuses_an_unclosed_quote_and_a_multi_character_delimiter() {
+    let error = parse_csv("a,b\n\"x,2\n", ",", true).unwrap_err();
+    assert!(error.message.contains("not closed"), "{}", error.message);
+    assert!(error.hint.is_some());
+    let error = parse_csv("a,b\n", "::", true).unwrap_err();
+    assert!(error.message.contains("one character"), "{}", error.message);
 }
 
 #[test]

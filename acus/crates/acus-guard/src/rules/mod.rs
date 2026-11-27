@@ -154,7 +154,7 @@ pub(super) fn rule(
         return Some(Verdict::Deny(Rule::Grep, grep_reason(command_name(exec))));
     }
     if is_listing(head, &args, ps) {
-        return Some(Verdict::Hint(Rule::Tree, TREE_HINT.into()));
+        return None;
     }
     if head == "git" {
         // A short log that feeds a filter is data for that filter.

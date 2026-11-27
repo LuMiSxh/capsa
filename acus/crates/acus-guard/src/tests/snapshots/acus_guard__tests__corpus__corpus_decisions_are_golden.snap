@@ -26,11 +26,11 @@ skipped 0 cases (grammar not built)
 0021 deny sed-i ⇒
 0022 deny sed-i ⇒
 0023 deny sed-i ⇒
-0024 escape edit-script ⇒
+0024 pass - ⇒
 0025 escape sed-i ⇒
-0026 hint edit-script ⇒
+0026 pass - ⇒
 0027 rewrite patch-quiet ⇒ acus patch -q < /tmp/x.patch; python3 - <<'E'\ns=open('/tmp/x/loop.py').read()\ns=s.replace("pat=re.compile(r'^\\s*(?:@","pat=re.compile(r'^\\t(?:@")\nopen('/tmp/x/loop.py','w').write(s)\nprint("^\\t(?:@" in s)\nE\npython3 /tmp/x/loop.py 2>&1 | tail -60
-0028 hint edit-script ⇒
+0028 pass - ⇒
 0029 rewrite git-diff ⇒ ls -l CLAUDE.md AGENTS.md && wc -l AGENTS.md && acus diff -p AGENTS.md
 0030 hint git-diff ⇒
 0031 rewrite git-diff ⇒ git status --short; acus diff -p HEAD crates/acus-search crates/acus-walk crates/acus-edit crates/acus-cli/src/cmd_show.rs crates/acus-cli/src/cmd_find.rs crates/acus-cli/src/cmd_skill.rs
@@ -39,8 +39,8 @@ skipped 0 cases (grammar not built)
 0034 rewrite git-diff ⇒ acus diff -p HEAD~3..HEAD crates/acus-search/src/lib.rs crates/acus-walk/src/lib.rs
 0035 hint git-diff ⇒
 0036 hint git-status ⇒
-0037 hint tree ⇒
-0038 hint tree ⇒
+0037 pass - ⇒
+0038 pass - ⇒
 0039 rewrite build-pipe ⇒ acus run 'cargo check -q --workspace --all-targets' --tail 5; echo "check_exit=${pipestatus[1]:-$?}"
 0040 rewrite build-pipe ⇒ acus diff --stat 2>&1 | tail -5; acus run 'cargo build -p acus-cli -q' --tail 20; echo "exit=$?"; ls -la target/debug/acus; target/debug/acus patch --help 2>&1 | grep -n -i -E 'search|hunk|@@' | head -20
 0041 rewrite build-pipe ⇒ acus run 'cargo test -p acus-edit' --tail 15; echo "exit=$?"; acus run 'cargo clippy -p acus-edit --all-targets -- -D warnings' --tail 30; echo "clippy exit=$?"
@@ -150,13 +150,13 @@ skipped 0 cases (grammar not built)
 0145 deny read-shell ⇒
 0146 pass - ⇒
 0147 pass - ⇒
-0148 hint tree ⇒
+0148 pass - ⇒
 0149 deny build-pipe ⇒
 0150 deny build-pipe ⇒
 0151 deny ps-replace ⇒
 0152 pass - ⇒
 0153 pass - ⇒
-0154 hint tree ⇒
+0154 pass - ⇒
 0155 deny read-shell ⇒
 0156 hint read-shell ⇒
 0157 pass - ⇒

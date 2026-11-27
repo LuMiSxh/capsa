@@ -87,7 +87,7 @@ fn refuses_edit_scripts_only_for_repo_source_files() {
         )
     };
     assert_eq!(kind(&script("src/a.rs")), Some(("deny", "edit-script")));
-    assert_eq!(kind(&script("/tmp/a.rs")), Some(("hint", "edit-script")));
+    assert_eq!(kind(&script("/tmp/a.rs")), None);
     assert_eq!(kind(&script(".gitattributes")), None);
     assert_eq!(
         kind("python3 -c \"open('src/a.rs','w').write(open('src/a.rs').read().replace('a','b'))\""),

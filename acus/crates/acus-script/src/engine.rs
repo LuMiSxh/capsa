@@ -5,7 +5,7 @@ use crate::module::{HostModules, Imports};
 use crate::pool::Calls;
 use crate::{Host, HostError, Limits, Partial, ScriptError};
 use regex::Regex;
-use rquickjs::{Context, Ctx, Error, Exception, Function, Object, Promise, Runtime};
+use rquickjs::{Context, Ctx, Error, Exception, Function, Module, Object, Promise, Runtime};
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -50,6 +50,31 @@ pub fn run<H: Host>(code: &str, host: H, limits: &Limits) -> Result<Outcome, Scr
     );
 
     execute(&source, offset, host, limits)
+}
+
+/// Checks that `code` parses as an async function body, without running it or calling the host.
+///
+/// A saved script uses `check_module`, which also evaluates the module's top level so its exports
+/// exist. This check only proves the syntax, so it catches a typo before a real run.
+///
+/// # Errors
+/// Returns the syntax error with the program's own line when it is known.
+pub fn check<H: Host>(code: &str, host: H, limits: &Limits) -> Result<(), ScriptError> {
+    let names = serde_json::to_string(host.names())
+        .map_err(|e| ScriptError::Engine(format!("cannot name the host functions: {e}")))?;
+    let head = format!("{PRELUDE}\n__install({names});\n(async () => {{\n");
+    let offset = head.matches('\n').count();
+    let source = format!(
+        "{head}{}\n}})().then(__finish)",
+        crate::source::implicit_return(&crate::imports::dynamic(code))
+    );
+    let host = Arc::new(host);
+    let sandbox = Sandbox::new(&host, limits)?;
+    sandbox.context.with(|ctx| {
+        Module::declare(ctx.clone(), "inline", source)
+            .map(|_| ())
+            .map_err(|e| sandbox.fail(&ctx, e, offset, limits))
+    })
 }
 
 /// Evaluates `source`, a script that ends in `.then(__finish)`, and reads the document it built.
