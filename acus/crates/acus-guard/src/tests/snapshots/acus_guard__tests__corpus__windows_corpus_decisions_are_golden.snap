@@ -104,9 +104,9 @@ skipped 0 cases (grammar not built)
 0099 hint git-status ⇒
 0100 hint grep ⇒
 0101 hint grep ⇒
-0102 hint tree ⇒
-0103 hint tree ⇒
-0104 hint tree ⇒
+0102 pass - ⇒
+0103 pass - ⇒
+0104 pass - ⇒
 0105 rewrite acus-pipe ⇒ acus find 'Process\(|Thread\(|Queue\(|SharedMemory|multiprocessing|zmq|socket|ProcessPoolExecutor|ThreadPoolExecutor|perf_counter|time\.time\(\)|monotonic' C:\repo C:\repo -t py -l --head 120
 0106 rewrite acus-pipe ⇒ acus show C:\repo/main.py C:\repo/pkg_a/mod_a.py C:\repo/pkg_a/mod_b.py:66-90 C:\repo/pkg_a/mod_c/file_a.py#EnumA.__init__ C:\repo/pkg_a/mod_c/file_a.py#EnumA._build_pool C:\repo/pkg_a/mod_c/file_a.py#EnumA.start_all --head 500
 0107 rewrite acus-pipe ⇒ acus show C:\repo/pkg_a/mod_c/file_b.py#fn_a C:\repo/pkg_a/mod_d/file_c.py#fn_b C:\repo/pkg_a/mod_d/file_c.py#fn_c --head 400
@@ -180,8 +180,8 @@ skipped 0 cases (grammar not built)
 0175 hint git-show ⇒
 0176 hint git-status ⇒
 0177 hint git-status ⇒
-0178 hint tree ⇒
-0179 hint tree ⇒
+0178 pass - ⇒
+0179 pass - ⇒
 0180 rewrite read-shell ⇒ acus show 'C:/repo/src/lib.rs'
 0181 deny read-shell ⇒
 0182 deny grep ⇒
@@ -197,7 +197,7 @@ skipped 0 cases (grammar not built)
 0192 deny read-shell ⇒
 0193 pass - ⇒
 0194 pass - ⇒
-0195 hint tree ⇒
+0195 pass - ⇒
 0196 deny build-pipe ⇒
 0197 deny build-pipe ⇒
 0198 deny ps-replace ⇒
