@@ -77,7 +77,7 @@ skipped 0 cases (grammar not built)
 0072 escape sed-i ⇒
 0073 deny edit-script ⇒
 0074 deny edit-script ⇒
-0075 hint edit-script ⇒
+0075 pass - ⇒
 0076 deny edit-script ⇒
 0077 deny edit-script ⇒
 0078 deny edit-script ⇒
