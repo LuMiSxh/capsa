@@ -17,7 +17,7 @@ pub use callers::callers;
 
 /// Kinds a call can target: functions, methods and the types a constructor call names.
 pub const CALLABLE: &[&str] = &[
-    "fn", "method", "def", "func", "function", "macro", "class", "struct", "enum",
+    "fn", "method", "def", "func", "function", "macro", "class", "struct", "enum", "record",
 ];
 
 /// A symbol that `follow` walks from: its file, outline entry and call-site language.
@@ -58,8 +58,10 @@ fn family(l: Lang) -> u8 {
         Lang::Swift => 2,
         Lang::Python => 3,
         Lang::C => 4,
-        Lang::Shell => 5,
-        _ => 6,
+        Lang::CSharp => 5,
+        Lang::Shell => 6,
+        Lang::Go => 7,
+        _ => 8,
     }
 }
 

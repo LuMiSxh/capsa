@@ -1,22 +1,24 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Routes one request by its model and relays the upstream answer without holding it back.
 
+use super::compat;
 use super::headers::{HeaderLog, strip_hop_by_hop, strip_request_framing};
 use super::record::{Pending, Recorder, RequestLine, Route};
 use super::tap::Tap;
 use super::usage::{Usage, UsageTap};
-use super::{BoxError, ResBody, inline_tools, local};
-use crate::gate::{Closed, Gate, unix_now};
+use super::{BoxError, ProviderRuntime, ResBody, local};
+use crate::config::Auth;
+use crate::gate::{Closed, unix_now};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::http::request::Parts;
 use hyper::http::uri::PathAndQuery;
 use hyper::http::{Extensions, HeaderValue, Version};
-use hyper::{Request, Response, StatusCode};
+use hyper::{Method, Request, Response, StatusCode};
 use reqwest::header::{
     ACCEPT_ENCODING, AUTHORIZATION, CONTENT_TYPE, COOKIE, HOST, HeaderName, ORIGIN,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::borrow::Cow;
 use std::convert::Infallible;
@@ -33,12 +35,9 @@ const X_SHOULD_RETRY: HeaderName = HeaderName::from_static("x-should-retry");
 pub struct State {
     pub client: reqwest::Client,
     pub anthropic_base: String,
-    pub deepseek_base: String,
-    pub key: Option<HeaderValue>,
-    pub gate: Arc<Gate>,
+    pub providers: Vec<ProviderRuntime>,
     pub recorder: Arc<Recorder>,
     pub started_at: u64,
-    pub refresher: Option<Arc<crate::refresh::Refresher>>,
     /// The `Host` values a request may carry: the loopback names with the bound port.
     pub hosts: [String; 2],
 }
@@ -71,6 +70,9 @@ pub async fn handle(
     let path = parts.uri.path();
     if path == "/vicarius" || path.starts_with("/vicarius/") {
         return Ok(local::respond(&state, &parts).await);
+    }
+    if parts.method == Method::GET && path == "/v1/models" {
+        return Ok(models(&state));
     }
     let body = match Limited::new(body, MAX_REQUEST).collect().await {
         Ok(collected) => collected.to_bytes(),
@@ -114,39 +116,60 @@ fn model_of(parts: &Parts, body: &[u8]) -> Option<String> {
     Some(model.into_owned())
 }
 
+/// Returns the longest provider prefix that matches `model`, or `None` for Anthropic.
+fn provider_of<'a>(state: &'a State, model: &str) -> Option<&'a ProviderRuntime> {
+    state
+        .providers
+        .iter()
+        .flat_map(|provider| {
+            provider
+                .prefixes
+                .iter()
+                .map(move |prefix| (prefix.as_str(), provider))
+        })
+        .filter(|(prefix, _)| model.starts_with(*prefix))
+        .max_by_key(|(prefix, _)| prefix.len())
+        .map(|(_, provider)| provider)
+}
+
 async fn route(state: &Arc<State>, parts: &Parts, body: Bytes) -> Response<ResBody> {
     let started = Instant::now();
     let model = model_of(parts, &body);
-    let route = if model.as_deref().is_some_and(|m| m.starts_with("deepseek-")) {
-        Route::Deepseek
-    } else {
-        Route::Anthropic
+    let provider = match model.as_deref() {
+        Some(model) => provider_of(state, model).or_else(|| {
+            // Claude models are expected to take the Anthropic route; only an id outside every
+            // provider prefix is a config or model typo worth warning about.
+            if !model.starts_with("claude") {
+                state.recorder.unknown_model(model);
+            }
+            None
+        }),
+        None => None,
     };
-    state.recorder.begin(route);
+    let route = match provider {
+        Some(provider) => Route::Provider(provider.id.clone()),
+        None => Route::Anthropic,
+    };
+    state.recorder.begin(&route);
     let mut line = RequestLine::new(
-        route,
+        &route,
         model,
         parts.method.as_str(),
         parts.uri.path(),
         HeaderLog::from_headers(&parts.headers),
     );
-    let pending = |line| Pending::new(state.recorder.clone(), route, line, started);
-    if route == Route::Deepseek
-        && let Some(reason) = refusal(state)
+    if let Some(provider) = provider
+        && let Some(why) = refusal(provider)
     {
-        state.recorder.refuse(route);
+        state.recorder.refuse(&route);
         line.status = 400;
-        pending(line).finish(Usage::default());
-        return closed_response(&reason);
+        Pending::new(state.recorder.clone(), route, line, started).finish(Usage::default());
+        return closed_response(&why);
     }
-    let Ok(upstream) = send(state, route, parts, body).await else {
+    let Ok(upstream) = send(state, provider, parts, body).await else {
         line.status = 502;
-        pending(line).finish(Usage::default());
-        let host = if route == Route::Deepseek {
-            "DeepSeek"
-        } else {
-            "Anthropic"
-        };
+        let host = provider.map_or("Anthropic", |p| p.id.as_str());
+        Pending::new(state.recorder.clone(), route, line, started).finish(Usage::default());
         return json_error(
             StatusCode::BAD_GATEWAY,
             "api_error",
@@ -154,68 +177,85 @@ async fn route(state: &Arc<State>, parts: &Parts, body: Bytes) -> Response<ResBo
         );
     };
     let status = upstream.status();
-    if route == Route::Deepseek {
-        let reason = match status {
-            StatusCode::PAYMENT_REQUIRED => Some(Closed::PaymentRequired),
-            StatusCode::UNAUTHORIZED => Some(Closed::KeyRejected),
-            _ => None,
-        };
-        if let Some(reason) = reason {
-            state.gate.close(reason.clone(), unix_now());
-            if let Some(refresher) = &state.refresher {
+    if let Some(provider) = provider
+        && let Some(reason) = close_reason(status)
+    {
+        if let Some(gate) = &provider.gate {
+            gate.close(reason.clone(), unix_now());
+            if let Some(refresher) = &provider.refresher {
                 // Detached: the bulletin write finishes after the response has gone out.
                 drop(refresher.publish_gate());
             }
-            state.recorder.refuse(route);
-            line.status = 400;
-            line.upstream_status = Some(status.as_u16());
-            pending(line).finish(Usage::default());
-            return closed_response(&reason);
         }
+        state.recorder.refuse(&route);
+        line.status = 400;
+        line.upstream_status = Some(status.as_u16());
+        let why = format!(
+            "provider `{}` is unavailable ({reason}); its key comes from {}",
+            provider.id, provider.key_env
+        );
+        Pending::new(state.recorder.clone(), route, line, started).finish(Usage::default());
+        return closed_response(&why);
     }
+    let pending = |line| Pending::new(state.recorder.clone(), route, line, started);
     relay(upstream, line, pending)
 }
 
-fn refusal(state: &State) -> Option<Closed> {
-    state
-        .gate
-        .closed()
-        .or_else(|| state.key.is_none().then_some(Closed::NoKey))
+fn close_reason(status: StatusCode) -> Option<Closed> {
+    match status {
+        StatusCode::PAYMENT_REQUIRED => Some(Closed::PaymentRequired),
+        StatusCode::UNAUTHORIZED => Some(Closed::KeyRejected),
+        _ => None,
+    }
+}
+
+/// Names why a provider refuses requests, or `None` when it accepts them.
+fn refusal(provider: &ProviderRuntime) -> Option<String> {
+    if let Some(gate) = &provider.gate
+        && let Some(closed) = gate.closed()
+    {
+        return Some(format!(
+            "provider `{}` is unavailable ({closed}); its key comes from {}",
+            provider.id, provider.key_env
+        ));
+    }
+    provider.credential().is_none().then(|| {
+        format!(
+            "provider `{}` has no key; set {}",
+            provider.id, provider.key_env
+        )
+    })
 }
 
 async fn send(
     state: &State,
-    route: Route,
+    provider: Option<&ProviderRuntime>,
     parts: &Parts,
     body: Bytes,
 ) -> Result<reqwest::Response, reqwest::Error> {
-    let base = match route {
-        Route::Anthropic => &state.anthropic_base,
-        Route::Deepseek => &state.deepseek_base,
-    };
+    let base = provider.map_or(state.anthropic_base.as_str(), |p| p.base_url.as_str());
     let target = parts.uri.path_and_query().map_or("/", PathAndQuery::as_str);
     let mut headers = parts.headers.clone();
     strip_hop_by_hop(&mut headers);
     strip_request_framing(&mut headers);
     // The usage tap reads only plain bodies, so the upstream must not compress the response.
     headers.remove(ACCEPT_ENCODING);
-    if route == Route::Deepseek {
+    let mut body = body;
+    if let Some(provider) = provider {
         headers.remove(AUTHORIZATION);
         headers.remove(X_API_KEY);
         headers.remove(COOKIE);
-        if let Some(key) = &state.key {
-            headers.insert(X_API_KEY, key.clone());
+        if let Some(key) = provider.credential() {
+            let name = match provider.auth {
+                Auth::XApiKey => X_API_KEY,
+                Auth::Bearer => AUTHORIZATION,
+            };
+            headers.insert(name, key.clone());
+        }
+        if let Cow::Owned(bytes) = compat::apply(&body, &provider.compat) {
+            body = Bytes::from(bytes);
         }
     }
-    // DeepSeek rejects Claude Code's inline `tool_definition` blocks, so they move to `tools`.
-    let body = if route == Route::Deepseek {
-        match inline_tools::rewrite(&body) {
-            Cow::Borrowed(_) => body,
-            Cow::Owned(bytes) => Bytes::from(bytes),
-        }
-    } else {
-        body
-    };
     let mut request = state
         .client
         .request(parts.method.clone(), format!("{base}{target}"))
@@ -242,14 +282,48 @@ fn relay(
     Response::from_parts(head, tap.map_err(BoxError::from).boxed_unsync())
 }
 
-fn closed_response(reason: &Closed) -> Response<ResBody> {
-    let message =
-        format!("DeepSeek is currently unavailable ({reason}). Use worker or senior-worker.");
-    let mut response = json_error(StatusCode::BAD_REQUEST, "invalid_request_error", &message);
+fn closed_response(why: &str) -> Response<ResBody> {
+    let mut response = json_error(StatusCode::BAD_REQUEST, "invalid_request_error", why);
     response
         .headers_mut()
         .insert(X_SHOULD_RETRY, HeaderValue::from_static("false"));
     response
+}
+
+#[derive(Serialize)]
+struct ModelList {
+    object: &'static str,
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Serialize)]
+struct ModelEntry {
+    id: String,
+    object: &'static str,
+    created: u64,
+    owned_by: String,
+}
+
+fn models(state: &State) -> Response<ResBody> {
+    let data = state
+        .providers
+        .iter()
+        .flat_map(|provider| {
+            provider.models.iter().map(|model| ModelEntry {
+                id: model.clone(),
+                object: "model",
+                created: state.started_at,
+                owned_by: provider.id.as_str().to_owned(),
+            })
+        })
+        .collect();
+    local::json_response(
+        StatusCode::OK,
+        &ModelList {
+            object: "list",
+            data,
+        },
+    )
 }
 
 /// Builds an Anthropic-shaped error response.

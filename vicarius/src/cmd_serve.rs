@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! `vicarius serve`: runs the proxy in the foreground until SIGTERM or SIGINT. The refresher task
-//! owns the balance refresh, the gate and the derived agent files; shutdown withdraws the agents.
+//! `vicarius serve`: runs the proxy in the foreground until SIGTERM or SIGINT. One refresher task
+//! per gated provider owns the balance refresh, the gate and, for DeepSeek, the derived agents;
+//! shutdown withdraws them.
 
 use anyhow::{Context, Result};
 use capsa_core::exit::Outcome;
@@ -11,11 +12,11 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use vicarius::config::Config;
 use vicarius::gate::Gate;
-use vicarius::proxy::{DeepseekKey, Proxy, ProxyConfig};
+use vicarius::proxy::{ProviderId, ProviderKey, ProviderSpec, Proxy, ProxyConfig};
 use vicarius::refresh::{RefreshConfig, Refresher};
 
-/// The environment variable that holds the DeepSeek API key.
-const KEY_VARIABLE: &str = "DEEPSEEK_API_KEY";
+/// The providers the proxy needs and the refreshers it runs, by provider.
+type Runtime = (Vec<ProviderSpec>, Vec<(ProviderId, Arc<Refresher>)>);
 
 #[derive(clap::Args)]
 pub struct Args {}
@@ -24,23 +25,18 @@ pub fn run(_: &Args, _: Format) -> Result<Outcome> {
     let config = Config::load_from(&Config::path())
         .map_err(anyhow::Error::from)
         .context("cannot load the vicarius config")?;
-    let key = std::env::var(KEY_VARIABLE)
-        .ok()
-        .and_then(|value| DeepseekKey::new(&value));
-    let gate = Arc::new(Gate::new(key.is_some()));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("cannot start the async runtime")?;
     runtime.block_on(async {
-        let refresher = Refresher::new(RefreshConfig::new(key.clone()), gate.clone())
-            .map(Arc::new)
-            .map_err(anyhow::Error::from)
-            .context("cannot set up the balance refresh")?;
-        let proxy = Proxy::bind(ProxyConfig::new(config.port, key), gate)
+        let (specs, refreshers) = runtime_providers(&config)?;
+        let mut proxy = Proxy::bind(ProxyConfig::new(config.port, specs))
             .await
-            .hinted()?
-            .with_refresher(refresher.clone());
+            .hinted()?;
+        for (id, refresher) in &refreshers {
+            proxy = proxy.with_refresher(id, refresher.clone());
+        }
         let addr = proxy
             .local_addr()
             .context("cannot read the listening address")?;
@@ -50,11 +46,57 @@ pub fn run(_: &Args, _: Format) -> Result<Outcome> {
             capsa_core::process::shutdown_signal().await;
             let _ = stop_tx.send(true);
         });
-        let refreshing = tokio::spawn(refresher.run(stop_rx.clone()));
+        let refreshing: Vec<_> = refreshers
+            .iter()
+            .map(|(_, refresher)| tokio::spawn(refresher.clone().run(stop_rx.clone())))
+            .collect();
         proxy.run(stopped(stop_rx)).await;
-        let _ = refreshing.await;
+        for task in refreshing {
+            let _ = task.await;
+        }
         Ok(Outcome::Found)
     })
+}
+
+/// Builds one proxy spec and, for each provider with a balance block, its refresher.
+fn runtime_providers(config: &Config) -> Result<Runtime> {
+    let mut specs = Vec::new();
+    let mut refreshers = Vec::new();
+    for (name, provider) in &config.providers {
+        let id = ProviderId::new(name.clone());
+        let key = std::env::var(&provider.key_env)
+            .ok()
+            .and_then(|value| ProviderKey::new(&value));
+        let gate = provider
+            .balance
+            .as_ref()
+            .map(|_| Arc::new(Gate::new(key.is_some())));
+        if let Some(gate) = &gate {
+            // The `-ds` agent derivation stays DeepSeek-only until providers have their own
+            // suffixes.
+            let derives_agents = name == "deepseek";
+            let refresher = Refresher::new(
+                RefreshConfig::new(id.clone(), key.clone(), derives_agents),
+                gate.clone(),
+            )
+            .map(Arc::new)
+            .map_err(anyhow::Error::from)
+            .context("cannot set up the balance refresh")?;
+            refreshers.push((id.clone(), refresher));
+        }
+        specs.push(ProviderSpec {
+            id,
+            prefixes: provider.prefixes.clone(),
+            base_url: provider.base_url.clone(),
+            key_env: provider.key_env.clone(),
+            auth: provider.auth,
+            models: provider.models.clone(),
+            gate,
+            compat: provider.compat,
+            key,
+        });
+    }
+    Ok((specs, refreshers))
 }
 
 /// Completes once the stop flag turns true.

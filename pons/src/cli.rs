@@ -204,6 +204,21 @@ pub struct Cli {
     #[arg(long, value_name = "NAME=COMMAND[,ARG...]", value_parser = parse_mcp_server)]
     pub mcp_server: Vec<McpServer>,
 
+    /// Start the session on this model and add it to the model picker: sets
+    /// ANTHROPIC_MODEL and ANTHROPIC_CUSTOM_MODEL_OPTION on the agent.
+    #[arg(long, value_name = "ID", conflicts_with = "model_option")]
+    pub model: Option<String>,
+
+    /// Add this model to the picker without starting on it: sets only
+    /// ANTHROPIC_CUSTOM_MODEL_OPTION, so the session starts on Claude.
+    #[arg(long, value_name = "ID")]
+    pub model_option: Option<String>,
+
+    /// Label the picker row added by --model or --model-option: sets
+    /// ANTHROPIC_CUSTOM_MODEL_OPTION_NAME.
+    #[arg(long, value_name = "LABEL")]
+    pub model_name: Option<String>,
+
     /// Test hook: lines containing this text make the rules fail.
     #[arg(long, value_name = "TEXT", env = "PONS_INJECT_FAILURE", hide = true)]
     pub inject_failure: Option<String>,
@@ -228,6 +243,86 @@ impl App for Cli {
 
     fn format(&self) -> Format {
         self.output.resolve()
+    }
+}
+
+/// The model-selection environment pons passes to the adapter.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ModelEnv {
+    /// `ANTHROPIC_MODEL`: the model the session starts on.
+    pub model: Option<String>,
+    /// `ANTHROPIC_CUSTOM_MODEL_OPTION`: an extra row in the model picker.
+    pub option: Option<String>,
+    /// `ANTHROPIC_CUSTOM_MODEL_OPTION_NAME`: the label of that row.
+    pub option_name: Option<String>,
+}
+
+/// The environment names [`ModelEnv`] reads and writes.
+const MODEL: &str = "ANTHROPIC_MODEL";
+const OPTION: &str = "ANTHROPIC_CUSTOM_MODEL_OPTION";
+const OPTION_NAME: &str = "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME";
+
+impl Cli {
+    /// Returns the model variables the flags override. `--model` sets both the startup
+    /// model and the picker row; `--model-option` sets only the row.
+    pub fn model_env(&self) -> ModelEnv {
+        ModelEnv {
+            model: self.model.clone(),
+            option: self.model_option.clone().or_else(|| self.model.clone()),
+            option_name: self.model_name.clone(),
+        }
+    }
+}
+
+impl ModelEnv {
+    /// Reads the values already in pons's environment.
+    pub fn from_process() -> Self {
+        let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+        Self {
+            model: var(MODEL),
+            option: var(OPTION),
+            option_name: var(OPTION_NAME),
+        }
+    }
+
+    /// Reads the model variables from environment pairs, such as a Zed entry's `env`.
+    pub fn from_pairs(pairs: &[(String, String)]) -> Self {
+        let get = |name: &str| {
+            pairs
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        };
+        Self {
+            model: get(MODEL),
+            option: get(OPTION),
+            option_name: get(OPTION_NAME),
+        }
+    }
+
+    /// Returns the set variables as an ordered `NAME=value, …` list, or `None` when none is set.
+    pub fn summary(&self) -> Option<String> {
+        let set: Vec<String> = [
+            (MODEL, &self.model),
+            (OPTION, &self.option),
+            (OPTION_NAME, &self.option_name),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| value.as_ref().map(|value| format!("{name}={value}")))
+        .collect();
+        (!set.is_empty()).then(|| set.join(", "))
+    }
+
+    /// Returns the entries to set on the agent; empty leaves its model environment alone.
+    pub fn entries(&self) -> Vec<(String, String)> {
+        [
+            (MODEL, &self.model),
+            (OPTION, &self.option),
+            (OPTION_NAME, &self.option_name),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| value.clone().map(|value| (name.to_owned(), value)))
+        .collect()
     }
 }
 
@@ -392,5 +487,61 @@ mod tests {
         assert_eq!(root.format(), Format::Json);
         let sub = Cli::try_parse_from(["pons", "self", "doctor", "--human"]).unwrap();
         assert_eq!(sub.format(), Format::Human);
+    }
+
+    #[test]
+    fn model_flags_map_to_the_adapter_environment() {
+        let cli = Cli::try_parse_from(["pons", "--model", "deepseek-flash"]).unwrap();
+        assert_eq!(
+            cli.model_env().entries(),
+            vec![
+                ("ANTHROPIC_MODEL".to_owned(), "deepseek-flash".to_owned()),
+                (
+                    "ANTHROPIC_CUSTOM_MODEL_OPTION".to_owned(),
+                    "deepseek-flash".to_owned()
+                ),
+            ]
+        );
+
+        let cli = Cli::try_parse_from(["pons", "--model-option", "deepseek-v4-pro"]).unwrap();
+        assert_eq!(
+            cli.model_env().entries(),
+            vec![(
+                "ANTHROPIC_CUSTOM_MODEL_OPTION".to_owned(),
+                "deepseek-v4-pro".to_owned()
+            )]
+        );
+
+        let cli = Cli::try_parse_from([
+            "pons",
+            "--model",
+            "deepseek-flash",
+            "--model-name",
+            "DeepSeek Flash",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.model_env().entries(),
+            vec![
+                ("ANTHROPIC_MODEL".to_owned(), "deepseek-flash".to_owned()),
+                (
+                    "ANTHROPIC_CUSTOM_MODEL_OPTION".to_owned(),
+                    "deepseek-flash".to_owned()
+                ),
+                (
+                    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME".to_owned(),
+                    "DeepSeek Flash".to_owned()
+                ),
+            ]
+        );
+
+        let cli = Cli::try_parse_from(["pons"]).unwrap();
+        assert_eq!(cli.model_env().entries(), Vec::new());
+    }
+
+    #[test]
+    fn model_and_model_option_conflict() {
+        let err = Cli::try_parse_from(["pons", "--model", "a", "--model-option", "b"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
     }
 }

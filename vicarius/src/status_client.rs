@@ -2,6 +2,7 @@
 //! Talks to the running service over localhost with one plain HTTP/1.1 request on a TCP socket,
 //! and reads its status leniently: a key that a service does not send is a default, not an error.
 
+use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -23,9 +24,20 @@ pub struct ServiceStatus {
     pub counters: Counters,
     pub agents: Option<AgentsStatus>,
     pub refresh: Option<RefreshStatus>,
+    pub providers: BTreeMap<String, ProviderStatus>,
 }
 
-/// Whether the DeepSeek route is open, and the last balance.
+/// The gate and refresh state of one configured provider.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ProviderStatus {
+    /// Whether the provider has a balance gate at all.
+    pub gated: bool,
+    pub gate: GateStatus,
+    pub refresh: Option<RefreshStatus>,
+}
+
+/// Whether a route is open, and its last balance.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct GateStatus {
@@ -37,12 +49,13 @@ pub struct GateStatus {
     pub checked_at: Option<u64>,
 }
 
-/// The request counters of both routes.
+/// The request counters of every route, `anthropic` included.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Counters {
-    pub anthropic: Route,
-    pub deepseek: Route,
+    pub routes: BTreeMap<String, Route>,
+    /// Requests refused for a foreign `Host` or an `Origin` header.
+    pub forbidden: u64,
 }
 
 /// The counters of one route.

@@ -19,9 +19,9 @@ Paths are relative to `pons/`. pons does not use another workspace crate today.
 - `src/permission.rs`: the opt-in `--auto-approve` policy for `session/request_permission`.
 - `src/state.rs`: per-session state: pending cancels, open tools.
 - `src/failsafe.rs`: `catch_unwind` around the rules, failure counting, and the switch to passthrough.
-- `src/launcher/mod.rs` (tests in `tests.rs`): picks the agent command and builds the spawn plan; the program lookup (`PATH`, then the user tool directories) is `capsa_core::which`.
+- `src/launcher/mod.rs` (tests in `tests.rs`): picks the agent command and builds the spawn plan (program, args, `PATH` and the model `env`); the program lookup (`PATH`, then the user tool directories) is `capsa_core::which`.
 - `src/log/`: `mod.rs` the wire log for each start: one JSON line per message through `capsa_core::log`, its levels and its unit tests; `files.rs` the log directory, the per-start file and pruning; `render.rs` the text of each line (session updates are summarized).
-- `src/doctor/`: `mod.rs` the report and the wire-log summary (`summarize_log`); `view.rs` the report in the shared doctor model (`capsa_core::render::Doctor`), whose JSON is what `--json` prints; `adapter.rs` the adapter check; `zed.rs` the Zed entry; `process.rs` the running pons processes; `render.rs` human durations and sizes; `tests.rs` the unit tests.
+- `src/doctor/`: `mod.rs` the report and the wire-log summary (`summarize_log`); `view.rs` the report in the shared doctor model (`capsa_core::render::Doctor`), whose JSON is what `--json` prints; `adapter.rs` the adapter check; `zed.rs` the Zed entry, including its model `env`; `process.rs` the running pons processes; `render.rs` human durations and sizes; `tests.rs` the unit tests.
 - `src/setup.rs`: `pons self setup`: reports the adapter or installs it through `capsa_core::pkg`.
 - `tests/proxy/`: end-to-end tests. `main.rs` is the entry point, `harness.rs` holds `Harness`, which runs pons in front of `examples/mock_agent.rs`, a fake agent; the other files hold the tests by topic.
 
@@ -44,6 +44,7 @@ Shared rules: see root AGENTS.md.
 - Folded text is plain ASCII. The test `everything_pons_emits_is_ascii` in `src/engine/tests/capability.rs` checks this.
 - `clientCapabilities` is security-sensitive (root rule). The `initialize` arm of `Engine::route_client` forwards `clientCapabilities.fs` and `terminal` unchanged. Its only edit is adding `_meta["subagent-transcript"]` (`inject_transcript`). Changing that needs tests and a review.
 - `--mcp-server` is the one other user-configured edit to client requests: `session/new`, `session/load` and `session/resume` get `{name, command, args, env: []}` appended to `params.mcpServers` (the array is created when missing). A name the client already sends keeps the client's entry. Each addition or skip is a wire-log note. Nothing else in those requests changes, and it applies when pons steps aside.
+- Model selection is environment only: `--model`, `--model-option` and `--model-name` (`src/cli.rs`, `ModelEnv`) set `ANTHROPIC_MODEL`, `ANTHROPIC_CUSTOM_MODEL_OPTION` and `ANTHROPIC_CUSTOM_MODEL_OPTION_NAME` on the agent; without a flag `Spawn.env` stays empty. Never parse ACP messages or rewrite the adapter's model list for this.
 - CLI flags, env vars and the Zed `agent_servers` entry are user configuration. `PONS_LOG` overrides the wire-log path. Renaming one or changing a default breaks users; say so in the README Options and the CHANGELOG.
 - `pons self doctor` reads log notes by their text (`summarize_log` in `src/doctor/mod.rs` matches `fail-safe`), so changing that wording means changing the parser too.
 

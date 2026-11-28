@@ -12,7 +12,9 @@ use serde::Serialize;
 use std::str::FromStr;
 use std::time::Duration;
 use vicarius::agents::{self, Entry, Outcome as SyncOutcome};
-use vicarius::config::{Agent, Config, ConfigError, Effort, KNOWN_MODELS, known_model};
+use vicarius::config::{
+    Agent, Auth, Compat, Config, ConfigError, Effort, KNOWN_MODELS, known_model,
+};
 use vicarius::refresh;
 
 use crate::cmd_service::{self, Item, RESTART_NOTE, WAIT};
@@ -65,10 +67,15 @@ impl Key {
     const fn field(self) -> &'static str {
         match self {
             Key::Port => "port",
-            Key::MinBalance => "min_balance_usd",
-            Key::BalanceRefresh => "balance_refresh_minutes",
+            Key::MinBalance => "providers.deepseek.balance.min_usd",
+            Key::BalanceRefresh => "providers.deepseek.balance.refresh_minutes",
             Key::MaxContext => "max_context_tokens",
         }
+    }
+
+    /// Returns whether the key edits the DeepSeek balance block.
+    const fn is_balance(self) -> bool {
+        matches!(self, Key::MinBalance | Key::BalanceRefresh)
     }
 
     /// Describes the values the key takes, for the error of a value it cannot read.
@@ -138,14 +145,26 @@ impl Render for ConfigOut<'_> {
         let c = self.config;
         doc.title("vicarius self config");
         doc.row("port").text(c.port.to_string());
-        doc.row("min balance")
-            .text(format!("${:.2}", c.min_balance_usd));
-        doc.row("refresh")
-            .text(format!("every {} min", c.balance_refresh_minutes));
+        match c.provider_balance("deepseek") {
+            Some(balance) => {
+                doc.row("min balance")
+                    .text(format!("${:.2}", balance.min_usd));
+                doc.row("refresh")
+                    .text(format!("every {} min", balance.refresh_minutes));
+            }
+            None => {
+                doc.row("min balance").dim("no balance block");
+                doc.row("refresh").dim("no balance block");
+            }
+        }
         doc.row("context").text(format!(
             "{} tokens for the DeepSeek models",
             c.max_context_tokens
         ));
+        doc.section("providers");
+        for (name, provider) in &c.providers {
+            doc.row(name).text(provider_text(provider));
+        }
         if c.agents.is_empty() {
             doc.row("agents").dim("none");
         }
@@ -170,6 +189,45 @@ impl Render for ConfigOut<'_> {
         }
         doc.row("file").dim(self.path.as_str());
     }
+}
+
+fn provider_text(provider: &vicarius::config::Provider) -> String {
+    let auth = match provider.auth {
+        Auth::XApiKey => "x-api-key",
+        Auth::Bearer => "bearer",
+    };
+    let mut text = format!(
+        "{} via {} ({}, {auth})",
+        provider.prefixes.join(", "),
+        provider.base_url,
+        provider.key_env
+    );
+    text.push_str(&format!("; models {}", provider.models.join(", ")));
+    let flags = compat_flags(&provider.compat);
+    if !flags.is_empty() {
+        text.push_str(&format!("; {flags}"));
+    }
+    if let Some(balance) = &provider.balance {
+        text.push_str(&format!(
+            "; balance ${:.2} min, refresh {} min",
+            balance.min_usd, balance.refresh_minutes
+        ));
+    }
+    text
+}
+
+fn compat_flags(compat: &Compat) -> String {
+    let mut flags = Vec::new();
+    if compat.inline_tools {
+        flags.push("inline tools");
+    }
+    if compat.strip_cache_control {
+        flags.push("strip cache control");
+    }
+    if compat.strip_thinking {
+        flags.push("strip thinking");
+    }
+    flags.join(", ")
 }
 
 pub fn run(a: Args, format: Format) -> Result<Outcome> {
@@ -198,6 +256,9 @@ pub fn run(a: Args, format: Format) -> Result<Outcome> {
         };
         change(&mut config, action).hinted()?;
         match set {
+            Some((key, _)) if key.is_balance() => {
+                config.save_to(file.path()).hinted()?;
+            }
             Some((key, value)) if cfg!(target_os = "macos") => {
                 let install = Install::current()?;
                 steps = apply_steps(&install, &System, key, &value, &old, &config, WAIT)?;
@@ -320,8 +381,19 @@ fn outcome_text(outcome: &SyncOutcome) -> String {
 fn set_scalar(config: &mut Config, key: Key, value: &str) -> Result<(), ConfigError> {
     match key {
         Key::Port => config.port = read(value, key)?,
-        Key::MinBalance => config.min_balance_usd = read(value, key)?,
-        Key::BalanceRefresh => config.balance_refresh_minutes = read(value, key)?,
+        Key::MinBalance | Key::BalanceRefresh => {
+            let balance =
+                config
+                    .provider_balance_mut("deepseek")
+                    .ok_or_else(|| ConfigError::NoBalance {
+                        provider: "deepseek".to_owned(),
+                    })?;
+            if matches!(key, Key::MinBalance) {
+                balance.min_usd = read(value, key)?;
+            } else {
+                balance.refresh_minutes = read(value, key)?;
+            }
+        }
         Key::MaxContext => config.max_context_tokens = read(value, key)?,
     }
     Ok(())

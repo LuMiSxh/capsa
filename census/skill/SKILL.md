@@ -17,7 +17,9 @@ subagents cost. For the main agent only; subagents do not run it.
 | Check the 5h and weekly windows, forecast, reset                                                      | `census limits`                         |
 | Summarize this session: requests, cost, subagents, context                                            | `census session`                        |
 | Totals, cost, providers, top models, sessions, tools                                                  | `census usage`                          |
-| Only `anthropic`, `deepseek` or `openai` (Codex) requests                                             | `census usage --provider deepseek`      |
+| Only one provider: a price-table provider or one from `[provider_prefixes]`                           | `census usage --provider deepseek`      |
+| Requests, weighted tokens, cost, unpriced count and billing per provider                              | `census usage --providers`              |
+| Models the price list cannot price, with provider, requests and weighted tokens                       | `census usage --unknown`                |
 | Spawns per role, models, cache hit rate, cache rewrites                                               | `census usage --agents`                 |
 | Output split into thinking, visible text and tool JSON, per role                                      | `census usage --output`                 |
 | Cache gaps, expired-cache rewrite cost, and cost by context size                                      | `census usage --cache`                  |

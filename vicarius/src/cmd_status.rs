@@ -64,6 +64,7 @@ impl Render for StatusOut {
                 "put DEEPSEEK_API_KEY in ~/.config/secrets.env, then run `vicarius self start`",
             );
         }
+        self.provider_rows(doc);
         self.refresh_rows(doc);
         self.request_rows(doc);
         doc.section("agents");
@@ -81,6 +82,29 @@ impl Render for StatusOut {
 }
 
 impl StatusOut {
+    fn provider_rows(&self, doc: &mut Doc) {
+        let providers = &self.0.status.providers;
+        if providers.is_empty() {
+            return;
+        }
+        doc.section("providers");
+        for (name, provider) in providers {
+            let mut text = if !provider.gated {
+                "no balance gate".to_owned()
+            } else if provider.gate.open {
+                "gate open".to_owned()
+            } else {
+                let reason = provider.gate.reason_text.as_deref().unwrap_or("closed");
+                format!("gate closed: {reason}")
+            };
+            if let Some(amount) = provider.gate.balance {
+                let money = money(amount, provider.gate.currency.as_deref());
+                text.push_str(&format!(", balance {money}"));
+            }
+            doc.row(name).text(text);
+        }
+    }
+
     fn refresh_rows(&self, doc: &mut Doc) {
         let Some(refresh) = &self.0.status.refresh else {
             return;
@@ -100,17 +124,11 @@ impl StatusOut {
     fn request_rows(&self, doc: &mut Doc) {
         let counters = &self.0.status.counters;
         doc.section("requests");
-        for (name, route) in [
-            ("anthropic", &counters.anthropic),
-            ("deepseek", &counters.deepseek),
-        ] {
+        for (name, route) in &counters.routes {
             let text = format!("{} requests, {} refused", route.requests, route.refused);
             doc.row(name).text(text);
         }
-        for (name, route) in [
-            ("anthropic", &counters.anthropic),
-            ("deepseek", &counters.deepseek),
-        ] {
+        for (name, route) in &counters.routes {
             doc.row(format!("{name} tokens")).text(token_text(route));
         }
     }

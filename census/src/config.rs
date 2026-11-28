@@ -85,6 +85,10 @@ pub struct Config {
     /// How each provider bills its requests. A provider the map does not list is `subscription`
     /// for `anthropic` and `api` for every other one.
     pub billing: BTreeMap<String, Billing>,
+    /// Prefixes of unpriced model ids → provider, for models the price list does not know, such as
+    /// `kimi- = "moonshot"`. The longest matching prefix wins.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub provider_prefixes: BTreeMap<String, String>,
 }
 
 impl Default for Config {
@@ -98,6 +102,7 @@ impl Default for Config {
             weekly_thresholds: DEFAULT_WEEKLY_THRESHOLDS.to_vec(),
             prices_refresh_days: DEFAULT_PRICES_REFRESH_DAYS,
             billing: default_billing(),
+            provider_prefixes: BTreeMap::new(),
         }
     }
 }
@@ -206,6 +211,13 @@ mod tests {
     }
 
     #[test]
+    fn provider_prefixes_parse_and_default_to_none() {
+        assert!(load("").unwrap().provider_prefixes.is_empty());
+        let c = load("[provider_prefixes]\nkimi- = \"moonshot\"\n").unwrap();
+        assert_eq!(c.provider_prefixes["kimi-"], "moonshot");
+    }
+
+    #[test]
     fn saving_round_trips_and_writes_toml() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE);
@@ -218,6 +230,7 @@ mod tests {
             weekly_thresholds: vec![70, 99],
             prices_refresh_days: 3,
             billing: BTreeMap::from([("openai".to_owned(), Billing::Subscription)]),
+            provider_prefixes: BTreeMap::from([("kimi-".to_owned(), "moonshot".to_owned())]),
         };
         let file = ConfigFile::at(&path);
         file.save(&c).unwrap();

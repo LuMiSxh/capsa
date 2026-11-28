@@ -2,8 +2,11 @@
 //! Secrets never reach the log, the status endpoint or `Debug` output.
 
 use crate::mock::{Mock, Reply};
-use crate::support::{DEEPSEEK_BODY, MESSAGES_BODY, start};
-use vicarius::proxy::{DeepseekKey, ProxyConfig};
+use crate::support::{DEEPSEEK_BODY, KEY_ENV, MESSAGES_BODY, start};
+use std::sync::Arc;
+use vicarius::config::{Auth, Compat};
+use vicarius::gate::Gate;
+use vicarius::proxy::{ProviderId, ProviderKey, ProviderSpec, ProxyConfig};
 
 const OAUTH: &str = "Bearer sk-ant-oat-SECRETOAUTH123";
 const API_KEY: &str = "SECRETAPIKEY456";
@@ -61,7 +64,18 @@ async fn no_secret_value_reaches_the_log() {
 
 #[test]
 fn the_key_never_shows_in_debug_output() {
-    let key = DeepseekKey::new(DS_KEY);
-    let config = ProxyConfig::new(0, key);
+    let provider = ProviderSpec {
+        id: ProviderId::new("deepseek"),
+        prefixes: vec!["deepseek-".to_owned()],
+        base_url: "https://api.deepseek.com/anthropic".to_owned(),
+        key_env: KEY_ENV.to_owned(),
+        auth: Auth::XApiKey,
+        models: Vec::new(),
+        gate: Some(Arc::new(Gate::new(true))),
+        compat: Compat::default(),
+        key: ProviderKey::new(DS_KEY),
+    };
+    let config = ProxyConfig::new(0, vec![provider]);
     assert!(!format!("{config:?}").contains(DS_KEY));
+    assert!(!format!("{:?}", ProviderKey::new(DS_KEY)).contains(DS_KEY));
 }

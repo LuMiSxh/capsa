@@ -116,9 +116,11 @@ fn assert_matches_rebuild(e: &Env, l: &Ledger) {
     let held = l.priced().unwrap();
     assert_eq!(held.raw, built.raw);
     assert_eq!(held.hourly, built.hourly);
+    assert_eq!(held.unpriced, built.unpriced);
     let on_disk = Ledger::open(&e.state).priced().unwrap();
     assert_eq!(on_disk.raw, built.raw);
     assert_eq!(on_disk.hourly, built.hourly);
+    assert_eq!(on_disk.unpriced, built.unpriced);
 }
 
 /// Deterministic generator, so a failing sequence repeats.
@@ -135,9 +137,10 @@ impl Rng {
 
 #[test]
 fn folding_appended_rows_equals_a_full_rebuild_over_generated_sequences() {
-    const MODELS: [&str; 4] = [
+    const MODELS: [&str; 5] = [
         "claude-opus-5",
         "claude-haiku-5-5",
+        "claude-unpriced",
         "deepseek-flash",
         "unpriced-model",
     ];
@@ -156,7 +159,7 @@ fn folding_appended_rows_equals_a_full_rebuild_over_generated_sequences() {
                 } else {
                     rng.next(6 * 86_400)
                 };
-                let model = MODELS[usize::try_from(rng.next(4)).unwrap()];
+                let model = MODELS[usize::try_from(rng.next(5)).unwrap()];
                 let id = format!("m{}", if rng.next(9) == 0 { 0 } else { next_id });
                 next_id += 1;
                 append(&file, &rec(&id, now - age, model, 1 + rng.next(5000)));

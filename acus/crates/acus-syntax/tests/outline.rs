@@ -52,10 +52,16 @@ fn lang_from_path() {
     assert_eq!(Lang::from_path(Path::new("x.cpp")), None);
     assert_eq!(Lang::from_path(Path::new("run.BASH")), Some(Lang::Shell));
     assert_eq!(Lang::from_path(Path::new("a/api.h")), Some(Lang::C));
+    assert_eq!(
+        Lang::from_path(Path::new("a/Program.cs")),
+        Some(Lang::CSharp)
+    );
+    assert_eq!(Lang::from_path(Path::new("a/main.go")), Some(Lang::Go));
 }
 
 /// Returns the source and expected rows of each language whose outline is pinned here.
 #[expect(
+    clippy::too_many_lines,
     clippy::vec_init_then_push,
     reason = "one table of per-language outlines, each row behind its Cargo feature"
 )]
@@ -154,6 +160,42 @@ fn language_outline_cases() -> Vec<(Lang, &'static str, Vec<&'static str>)> {
             "typedef P 10-10",
             "fn add 12-14",
             "fn p 15-15",
+        ],
+    ));
+    #[cfg(feature = "lang-csharp")]
+    cases.push((
+        Lang::CSharp,
+        "using System;\nnamespace App {\n    /// A repository.\n    public class Repo {\n        public Repo() {}\n        public int Count { get; set; }\n        private string name = \"\";\n        public void Load() {}\n    }\n    public interface IRepo {\n        void Load();\n    }\n    public struct Point { public int X; }\n    public record Pair(int A, int B);\n    public enum Color { Red, Blue }\n    public delegate void Handler(object sender);\n}\n",
+        vec![
+            "namespace App 2-17",
+            "  class App::Repo 4-9",
+            "    constructor App::Repo::Repo 5-5",
+            "    property App::Repo::Count 6-6",
+            "    field App::Repo::name 7-7",
+            "    method App::Repo::Load 8-8",
+            "  interface App::IRepo 10-12",
+            "    method App::IRepo::Load 11-11",
+            "  struct App::Point 13-13",
+            "    field App::Point::X 13-13",
+            "  record App::Pair 14-14",
+            "  enum App::Color 15-15",
+            "  delegate App::Handler 16-16",
+        ],
+    ));
+    #[cfg(feature = "lang-go")]
+    cases.push((
+        Lang::Go,
+        "package main\n\nimport \"fmt\"\n\nconst Version = \"1\"\n\nvar counter int\n\ntype Point struct {\n\tX int\n}\n\ntype Shape interface {\n\tArea() float64\n}\n\ntype ID = int\n\nfunc main() {\n\tfmt.Println(Version)\n\tvar local int\n\tconst inner = 1\n\t_ = local + inner\n}\n\nfunc (p Point) Move() {}\n\nfunc add(a, b int) int { return a + b }\n",
+        vec![
+            "namespace main 1-1",
+            "const Version 5-5",
+            "var counter 7-7",
+            "struct Point 9-11",
+            "interface Shape 13-15",
+            "typealias ID 17-17",
+            "func main 19-24",
+            "method Move 26-26",
+            "func add 28-28",
         ],
     ));
     cases
@@ -300,6 +342,16 @@ fn every_outline_kind_is_listed() {
     assert_listed(
         Lang::C,
         "struct S { int a; };\nunion U { int a; };\nenum E { A };\ntypedef int T;\n#define M 1\n#define F(x) x\nint g(void);\nint f(void) { return 0; }\n",
+    );
+    #[cfg(feature = "lang-csharp")]
+    assert_listed(
+        Lang::CSharp,
+        "namespace N {\n    class C { }\n    interface I { }\n    struct S { }\n    enum E { A }\n    record R;\n    delegate void D();\n    class M {\n        M() {}\n        int P { get; }\n        int f;\n        event System.Action Ev;\n        void Run() {}\n    }\n}\n",
+    );
+    #[cfg(feature = "lang-go")]
+    assert_listed(
+        Lang::Go,
+        "package main\nconst C = 1\nvar V int\ntype S struct{}\ntype I interface{}\ntype T int\ntype A = int\nfunc f() {}\nfunc (s S) M() {}\n",
     );
     #[cfg(feature = "lang-css")]
     assert_listed(

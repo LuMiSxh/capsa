@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-use census::usage::{Report, UsageOpts, compare, parse_date, report};
+use census::usage::{Report, UsageOpts, compare, known_providers, parse_date, report};
+use std::collections::BTreeMap;
 use std::fs;
 
 const CLAUDE: &str = r#"{"type":"user","cwd":"/x/Proj","message":{"role":"user","content":"do it"}}
@@ -404,36 +405,102 @@ fn providers_split_the_requests_and_each_model_names_its_provider() {
             request(
                 "2026-10-14T08:02:00.000Z",
                 "d2",
-                "deepseek-v4-pro",
+                "deepseek-v5",
                 &usage(1000, 0, 0, 0),
             ),
             request(
                 "2026-10-14T08:03:00.000Z",
                 "x1",
-                "mystery-model",
+                "kimi-k2",
                 &usage(1, 0, 0, 0),
             ),
         ],
     );
     let r = claude_only(d.path());
-    let names: Vec<&str> = r.providers.iter().map(|p| p.provider).collect();
+    let names: Vec<&str> = r.providers.iter().map(|p| p.provider.as_str()).collect();
     assert_eq!(names, ["anthropic", "deepseek", "unknown"]);
     let provider = |name: &str| r.providers.iter().find(|p| p.provider == name).unwrap();
     assert_eq!(provider("anthropic").tokens.requests, 1);
     assert_eq!(provider("deepseek").tokens.requests, 2);
     assert_eq!(provider("deepseek").tokens.input, 2000);
-    assert!(provider("deepseek").cost.usd > 0.0);
+    assert_eq!(provider("deepseek").tokens.weighted(), 2010.0);
+    assert!((provider("deepseek").cost.usd - 0.000_301_2).abs() < 1e-12);
+    assert_eq!(provider("deepseek").cost.unpriced, 1);
+    assert_eq!(provider("unknown").cost.usd, 0.0);
     assert_eq!(provider("unknown").cost.unpriced, 1);
     let model = |name: &str| r.models.iter().find(|m| m.model == name).unwrap();
     assert_eq!(model("claude-opus-5-5").provider, "anthropic");
     assert_eq!(model("deepseek-flash").provider, "deepseek");
-    assert_eq!(model("mystery-model").provider, "unknown");
+    assert_eq!(model("deepseek-v5").provider, "deepseek");
+    assert_eq!(model("deepseek-v5").cost.unpriced, 1);
+    assert_eq!(model("kimi-k2").provider, "unknown");
+    assert_eq!(model("kimi-k2").cost.unpriced, 1);
     let total: f64 = r.providers.iter().map(|p| p.cost.usd).sum();
     assert!(
         (total - r.cost.usd).abs() < 1e-12,
         "{total} vs {}",
         r.cost.usd
     );
+}
+
+#[test]
+fn a_configured_prefix_names_an_unpriced_model_and_a_price_beats_both() {
+    let d = tempfile::tempdir().unwrap();
+    write(
+        d.path(),
+        "projects/app/s1.jsonl",
+        &[
+            request(
+                "2026-10-14T08:00:00.000Z",
+                "k1",
+                "kimi-k2",
+                &usage(10, 0, 0, 0),
+            ),
+            request(
+                "2026-10-14T08:01:00.000Z",
+                "k2",
+                "kimi-k2-turbo",
+                &usage(10, 0, 0, 0),
+            ),
+            request(
+                "2026-10-14T08:02:00.000Z",
+                "d1",
+                "deepseek-flash",
+                &usage(10, 0, 0, 0),
+            ),
+        ],
+    );
+    let r = report(&UsageOpts {
+        claude_root: Some(d.path().to_owned()),
+        codex_root: Some(d.path().join("none")),
+        provider_prefixes: BTreeMap::from([
+            ("deepseek-".to_owned(), "elsewhere".to_owned()),
+            ("kimi-".to_owned(), "moonshot".to_owned()),
+            ("kimi-k2-t".to_owned(), "kimi-turbo".to_owned()),
+        ]),
+        ..Default::default()
+    });
+    let provider = |name: &str| {
+        r.models
+            .iter()
+            .find(|m| m.model == name)
+            .unwrap()
+            .provider
+            .as_str()
+    };
+    assert_eq!(provider("kimi-k2"), "moonshot");
+    // The longest configured prefix wins.
+    assert_eq!(provider("kimi-k2-turbo"), "kimi-turbo");
+    // A priced id keeps the provider the price table names, whatever the config says.
+    assert_eq!(provider("deepseek-flash"), "deepseek");
+}
+
+#[test]
+fn known_providers_names_the_price_table_the_builtin_prefixes_and_the_config() {
+    let configured = BTreeMap::from([("kimi-".to_owned(), "moonshot".to_owned())]);
+    let known = known_providers(&configured);
+    let names: Vec<&str> = known.iter().map(String::as_str).collect();
+    assert_eq!(names, ["anthropic", "deepseek", "moonshot", "openai"]);
 }
 
 #[test]
@@ -469,7 +536,7 @@ fn provider_filter_keeps_only_the_matching_requests() {
         report(&UsageOpts {
             claude_root: Some(d.path().into()),
             codex_root: Some(d.path().join("none")),
-            provider: Some(provider),
+            provider: Some(provider.to_owned()),
             ..Default::default()
         })
     };

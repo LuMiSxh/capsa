@@ -89,6 +89,8 @@ pub struct Server {
     pub name: String,
     pub command: String,
     pub args: Vec<String>,
+    /// The entry's environment, in file order.
+    pub env: Vec<(String, String)>,
 }
 
 /// What the settings text says about pons.
@@ -129,6 +131,15 @@ pub fn find_pons_servers(text: &str) -> Settings {
                         .collect()
                 })
                 .unwrap_or_default();
+            let env = entry
+                .get("env")
+                .and_then(Value::as_object)
+                .map(|vars| {
+                    vars.iter()
+                        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+                        .collect()
+                })
+                .unwrap_or_default();
             let runs_pons = file_stem(command) == "pons"
                 || args
                     .iter()
@@ -138,6 +149,7 @@ pub fn find_pons_servers(text: &str) -> Settings {
                     name: name.clone(),
                     command: command.to_owned(),
                     args,
+                    env,
                 });
             }
         }

@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.11.0]
+
+### Added
+
+- `census usage --providers` lists each provider's requests, weighted tokens, cost, unpriced
+  requests and billing (subscription or API).
+- `census usage --unknown` lists the models without a list price, with their provider, requests and
+  weighted tokens; the usage summary names it whenever a request was unpriced.
+- An unpriced model id is attributed to a provider by its id prefix (`claude`, `deepseek-`, `gpt-`,
+  `o1-`, `o3-`, `o4-`) or by the new `[provider_prefixes]` config map, which overrides the built-in
+  prefixes and takes the longest match.
+- `census usage --provider` accepts any provider the price table or `[provider_prefixes]` names,
+  and exits 2 with the known names when it does not know one.
+
+### Changed
+
+- `census limits` shows how many requests had no list price and counted as $0 instead of dropping
+  them.
+
 ## [0.10.0] - 2026-11-27
 
 ### Added

@@ -2,10 +2,15 @@
 //! Routing, passthrough, the closed gate and the status endpoint.
 
 use crate::mock::{Mock, Reply};
-use crate::support::{DEEPSEEK_BODY, KEY, MESSAGES_BODY, start};
-use vicarius::gate::Closed;
+use crate::support::{
+    DEEPSEEK_BODY, KEY, MESSAGES_BODY, deepseek_provider, start, start_providers,
+};
+use std::sync::Arc;
+use vicarius::config::{Auth, Compat};
+use vicarius::gate::{Closed, Gate};
+use vicarius::proxy::{ProviderId, ProviderKey, ProviderSpec};
 
-const CLOSED_BODY: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"DeepSeek is currently unavailable (balance not checked yet). Use worker or senior-worker."}}"#;
+const CLOSED_BODY: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"provider `deepseek` is unavailable (balance not checked yet); its key comes from DEEPSEEK_API_KEY"}}"#;
 
 async fn idle() -> Mock {
     Mock::start(|_| Reply::full(200, &[], b"{}")).await
@@ -89,11 +94,10 @@ async fn anthropic_errors_pass_through_unchanged() {
 #[tokio::test(flavor = "multi_thread")]
 async fn unreachable_upstream_gives_an_anthropic_shaped_502() {
     let dir = tempfile::tempdir().unwrap();
-    let mut config = vicarius::proxy::ProxyConfig::new(0, None);
+    let mut config = vicarius::proxy::ProxyConfig::new(0, Vec::new());
     config.anthropic_base = "http://127.0.0.1:1".to_owned();
     config.log_file = dir.path().join("proxy.jsonl");
-    let gate = std::sync::Arc::new(vicarius::gate::Gate::new(false));
-    let proxy = vicarius::proxy::Proxy::bind(config, gate).await.unwrap();
+    let proxy = vicarius::proxy::Proxy::bind(config).await.unwrap();
     let addr = proxy.local_addr().unwrap();
     tokio::spawn(proxy.run(std::future::pending()));
     let resp = reqwest::Client::new()
@@ -238,7 +242,11 @@ async fn closed_gate_names_the_reason() {
             .unwrap();
         resp.text().await.unwrap()
     };
-    assert!(ask().await.contains("(no API key configured)"));
+    assert!(
+        ask()
+            .await
+            .contains("provider `deepseek` is unavailable (no API key configured)")
+    );
     proxy.gate.close(Closed::LowBalance { minimum: 1.0 }, 5);
     assert!(ask().await.contains("(balance below $1)"));
 }
@@ -296,7 +304,6 @@ async fn other_paths_go_to_anthropic_without_parsing_the_body() {
         .send()
         .await
         .unwrap();
-    c.get(proxy.url("/v1/models")).send().await.unwrap();
     c.put(proxy.url("/v1/messages"))
         .body(DEEPSEEK_BODY)
         .send()
@@ -309,10 +316,9 @@ async fn other_paths_go_to_anthropic_without_parsing_the_body() {
         .await
         .unwrap();
     let seen = anthropic.seen();
-    assert_eq!(seen.len(), 5);
-    assert_eq!(seen[2].method, "GET");
-    assert_eq!(seen[3].method, "PUT");
-    assert_eq!(seen[4].body, broken);
+    assert_eq!(seen.len(), 4);
+    assert_eq!(seen[2].method, "PUT");
+    assert_eq!(seen[3].body, broken);
     assert!(deepseek.seen().is_empty());
 }
 
@@ -330,7 +336,12 @@ async fn status_reflects_the_gate_and_the_counters() {
     let first = proxy.status().await;
     assert_eq!(first["gate"]["open"], false);
     assert_eq!(first["gate"]["reason"], "not_checked");
-    assert_eq!(first["counters"]["anthropic"]["requests"], 0);
+    assert_eq!(first["providers"]["deepseek"]["gated"], true);
+    assert_eq!(
+        first["providers"]["deepseek"]["gate"]["reason"],
+        "not_checked"
+    );
+    assert_eq!(first["counters"]["routes"]["anthropic"]["requests"], 0);
 
     proxy
         .client
@@ -357,11 +368,260 @@ async fn status_reflects_the_gate_and_the_counters() {
     assert_eq!(status["gate"]["balance"], 3.25);
     assert_eq!(status["gate"]["currency"], "USD");
     assert_eq!(status["gate"]["checked_at"], 99);
-    assert_eq!(status["counters"]["anthropic"]["requests"], 1);
-    assert_eq!(status["counters"]["anthropic"]["input_tokens"], 11);
-    assert_eq!(status["counters"]["anthropic"]["output_tokens"], 22);
-    assert_eq!(status["counters"]["deepseek"]["requests"], 1);
-    assert_eq!(status["counters"]["deepseek"]["refused"], 1);
+    assert_eq!(status["providers"]["deepseek"]["gate"]["balance"], 3.25);
+    assert_eq!(status["providers"]["deepseek"]["gate"]["currency"], "USD");
+    assert_eq!(status["counters"]["routes"]["anthropic"]["requests"], 1);
+    assert_eq!(
+        status["counters"]["routes"]["anthropic"]["input_tokens"],
+        11
+    );
+    assert_eq!(
+        status["counters"]["routes"]["anthropic"]["output_tokens"],
+        22
+    );
+    assert_eq!(status["counters"]["routes"]["deepseek"]["requests"], 1);
+    assert_eq!(status["counters"]["routes"]["deepseek"]["refused"], 1);
+}
+
+/// Builds a provider with `KEY` and no models, so tests control every field they exercise.
+fn spec(
+    id: &str,
+    prefixes: &[&str],
+    mock: &Mock,
+    gate: Option<Arc<Gate>>,
+    auth: Auth,
+    compat: Compat,
+) -> ProviderSpec {
+    ProviderSpec {
+        id: ProviderId::new(id),
+        prefixes: prefixes.iter().map(|prefix| (*prefix).to_owned()).collect(),
+        base_url: format!("{}/anthropic", mock.url()),
+        key_env: format!("{}_API_KEY", id.to_ascii_uppercase()),
+        auth,
+        models: Vec::new(),
+        gate,
+        compat,
+        key: ProviderKey::new(KEY),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn longest_prefix_wins_and_an_unknown_model_logs_and_goes_to_anthropic() {
+    let (anthropic, broad, narrow) = (idle().await, idle().await, idle().await);
+    let gate = Arc::new(Gate::new(true));
+    gate.open(5.0, "USD", 1);
+    let providers = vec![
+        spec(
+            "broad",
+            &["deepseek-"],
+            &broad,
+            Some(gate.clone()),
+            Auth::XApiKey,
+            Compat::default(),
+        ),
+        spec(
+            "narrow",
+            &["deepseek-v4"],
+            &narrow,
+            Some(gate.clone()),
+            Auth::XApiKey,
+            Compat::default(),
+        ),
+    ];
+    let proxy = start_providers(&anthropic, providers, gate).await;
+
+    proxy
+        .client
+        .post(proxy.url("/v1/messages"))
+        .body(r#"{"model":"deepseek-v4-pro"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(narrow.seen().len(), 1);
+    assert!(broad.seen().is_empty());
+
+    proxy
+        .client
+        .post(proxy.url("/v1/messages"))
+        .body(r#"{"model":"deepsek-flash"}"#)
+        .send()
+        .await
+        .unwrap();
+    let unknown = proxy.event_lines("unknown_model", 1).await;
+    assert_eq!(unknown[0]["level"], "warn");
+    assert_eq!(unknown[0]["model"], "deepsek-flash");
+    assert_eq!(proxy.log_lines(2).await[1]["route"], "anthropic");
+    assert_eq!(anthropic.seen().len(), 1);
+
+    proxy
+        .client
+        .post(proxy.url("/v1/messages"))
+        .body(MESSAGES_BODY)
+        .send()
+        .await
+        .unwrap();
+    proxy.log_lines(3).await;
+    let unknown = proxy
+        .read_log()
+        .into_iter()
+        .filter(|line| line["event"] == "unknown_model")
+        .count();
+    assert_eq!(unknown, 1, "a Claude model must not warn");
+    assert_eq!(anthropic.seen().len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bearer_auth_and_compat_flags_apply_per_provider() {
+    let (anthropic, moonshot) = (idle().await, idle().await);
+    let gate = Arc::new(Gate::new(true));
+    gate.open(5.0, "USD", 1);
+    let compat = Compat {
+        inline_tools: false,
+        strip_cache_control: true,
+        strip_thinking: false,
+    };
+    let mut provider = spec(
+        "moonshot",
+        &["kimi-"],
+        &moonshot,
+        Some(gate.clone()),
+        Auth::Bearer,
+        compat,
+    );
+    provider.models = vec!["kimi-k2".to_owned()];
+    let proxy = start_providers(&anthropic, vec![provider], gate).await;
+
+    let body = br#"{"model":"kimi-k2","thinking":{"type":"enabled","budget_tokens":1024},"messages":[{"role":"user","content":[{"type":"tool_definition","name":"Lookup","input_schema":{}},{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}},{"type":"thinking","thinking":"keep"}]}]}"#;
+    let resp = proxy
+        .client
+        .post(proxy.url("/v1/messages"))
+        .header("authorization", "Bearer client-oauth")
+        .header("x-api-key", "client-key")
+        .header("cookie", "s=1")
+        .body(body.as_slice())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let seen = moonshot.seen();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].headers["authorization"], format!("Bearer {KEY}"));
+    assert!(!seen[0].headers.contains_key("x-api-key"));
+    assert!(!seen[0].headers.contains_key("cookie"));
+    let sent: serde_json::Value = serde_json::from_slice(&seen[0].body).unwrap();
+    let content = &sent["messages"][0]["content"];
+    assert_eq!(content[0]["type"], "tool_definition");
+    assert!(content[1].get("cache_control").is_none());
+    assert_eq!(content[2]["type"], "thinking");
+    assert_eq!(sent["thinking"]["budget_tokens"], 1024);
+    assert!(sent.get("tools").is_none());
+    assert_eq!(proxy.log_lines(1).await[0]["route"], "moonshot");
+    assert!(anthropic.seen().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_missing_key_refuses_with_the_provider_and_its_variable() {
+    let (anthropic, moonshot) = (idle().await, idle().await);
+    let mut provider = spec(
+        "moonshot",
+        &["kimi-"],
+        &moonshot,
+        None,
+        Auth::XApiKey,
+        Compat::default(),
+    );
+    provider.key = None;
+    let proxy = start_providers(&anthropic, vec![provider], Arc::new(Gate::new(true))).await;
+
+    let resp = proxy
+        .client
+        .post(proxy.url("/v1/messages"))
+        .body(r#"{"model":"kimi-k2"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    assert_eq!(resp.headers()["x-should-retry"], "false");
+    let body: serde_json::Value = serde_json::from_slice(&resp.bytes().await.unwrap()).unwrap();
+    assert_eq!(
+        body["error"]["message"],
+        "provider `moonshot` has no key; set MOONSHOT_API_KEY"
+    );
+    assert!(moonshot.seen().is_empty());
+    assert!(anthropic.seen().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closed_gate_refuses_only_its_provider() {
+    let (anthropic, deepseek, moonshot) = (idle().await, idle().await, idle().await);
+    let closed = Arc::new(Gate::new(true));
+    let open = Arc::new(Gate::new(true));
+    open.open(5.0, "USD", 1);
+    let providers = vec![
+        deepseek_provider(&deepseek, Some(KEY), closed),
+        spec(
+            "moonshot",
+            &["kimi-"],
+            &moonshot,
+            Some(open.clone()),
+            Auth::XApiKey,
+            Compat::default(),
+        ),
+    ];
+    let proxy = start_providers(&anthropic, providers, open).await;
+
+    let refused = proxy
+        .client
+        .post(proxy.url("/v1/messages"))
+        .body(DEEPSEEK_BODY)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 400);
+    assert!(deepseek.seen().is_empty());
+    let allowed = proxy
+        .client
+        .post(proxy.url("/v1/messages"))
+        .body(r#"{"model":"kimi-k2"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), 200);
+    assert_eq!(moonshot.seen().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn models_lists_every_configured_model_in_the_openai_shape() {
+    let (anthropic, deepseek) = (idle().await, idle().await);
+    let proxy = start(&anthropic, &deepseek, Some(KEY), true).await;
+    let resp = proxy
+        .client
+        .get(proxy.url("/v1/models"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers()["content-type"], "application/json");
+    let body: serde_json::Value = serde_json::from_slice(&resp.bytes().await.unwrap()).unwrap();
+    assert_eq!(body["object"], "list");
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data.len(), 2);
+    let created = data[0]["created"].as_u64().unwrap();
+    assert_eq!(
+        data[0],
+        serde_json::json!({
+            "id": "deepseek-flash",
+            "object": "model",
+            "created": created,
+            "owned_by": "deepseek"
+        })
+    );
+    assert_eq!(data[1]["id"], "deepseek-v4-pro");
+    assert_eq!(data[1]["object"], "model");
+    assert_eq!(data[1]["created"], created);
+    assert_eq!(data[1]["owned_by"], "deepseek");
+    assert!(deepseek.seen().is_empty() && anthropic.seen().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -21,6 +21,8 @@ pub enum Lang {
     Yaml,
     Shell,
     C,
+    CSharp,
+    Go,
     Css,
     Scss,
     Html,
@@ -44,6 +46,8 @@ impl Lang {
         (Lang::Yaml, "yaml", &["yaml", "yml"]),
         (Lang::Shell, "shell", &["sh", "bash", "zsh"]),
         (Lang::C, "c", &["c", "h"]),
+        (Lang::CSharp, "csharp", &["cs"]),
+        (Lang::Go, "go", &["go"]),
         (Lang::Css, "css", &["css"]),
         (Lang::Scss, "scss", &["scss"]),
         (Lang::Html, "html", &["html", "htm"]),
@@ -90,6 +94,8 @@ impl Lang {
             feature = "lang-data",
             feature = "lang-shell",
             feature = "lang-c",
+            feature = "lang-csharp",
+            feature = "lang-go",
             feature = "lang-css",
             feature = "lang-scss",
             feature = "lang-html",
@@ -129,6 +135,10 @@ impl Lang {
             Lang::Shell => Some(tree_sitter_bash::LANGUAGE.into()),
             #[cfg(feature = "lang-c")]
             Lang::C => Some(tree_sitter_c::LANGUAGE.into()),
+            #[cfg(feature = "lang-csharp")]
+            Lang::CSharp => Some(tree_sitter_c_sharp::LANGUAGE.into()),
+            #[cfg(feature = "lang-go")]
+            Lang::Go => Some(tree_sitter_go::LANGUAGE.into()),
             #[cfg(feature = "lang-css")]
             Lang::Css => Some(tree_sitter_css::LANGUAGE.into()),
             #[cfg(all(feature = "lang-scss", not(windows)))]
@@ -153,12 +163,12 @@ mod rows {
         use Lang::*;
         let all = [
             Rust, Swift, TypeScript, Tsx, JavaScript, Python, Markdown, Svelte, Toml, Json, Yaml,
-            Shell, C, Css, Scss, Html, Xml,
+            Shell, C, CSharp, Go, Css, Scss, Html, Xml,
         ];
         for lang in all {
             match lang {
                 Rust | Swift | TypeScript | Tsx | JavaScript | Python | Markdown | Svelte
-                | Toml | Json | Yaml | Shell | C | Css | Scss | Html | Xml => {}
+                | Toml | Json | Yaml | Shell | C | CSharp | Go | Css | Scss | Html | Xml => {}
             }
             assert!(Lang::ALL.iter().any(|r| r.0 == lang), "{lang:?} has no row");
         }
@@ -177,6 +187,8 @@ mod rows {
     feature = "lang-data",
     feature = "lang-shell",
     feature = "lang-c",
+    feature = "lang-csharp",
+    feature = "lang-go",
     feature = "lang-css",
     feature = "lang-scss",
     feature = "lang-html",

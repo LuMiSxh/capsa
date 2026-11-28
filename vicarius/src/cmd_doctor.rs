@@ -24,7 +24,7 @@ use capsa_core::render::{Check, Doctor, Group, Status};
 use capsa_core::update;
 use capsa_core::which;
 use serde_json::Value;
-use vicarius::config::Config;
+use vicarius::config::{Agent as ConfigAgent, Config};
 use vicarius::proxy::LOG_LIMIT;
 
 use crate::service::{self, Install, Launchctl, System};
@@ -424,7 +424,18 @@ fn agent_problem(entry: &AgentStatus) -> Option<Check> {
 fn config_group(config: &Result<Config, vicarius::config::ConfigError>) -> Group {
     let mut checks = Vec::new();
     match config {
-        Ok(_) => checks.push(ok("config", Config::path().display().to_string())),
+        Ok(config) => {
+            checks.push(ok("config", Config::path().display().to_string()));
+            for (name, provider) in &config.providers {
+                checks.push(provider_key_check(name, &provider.key_env));
+            }
+            checks.extend(
+                config
+                    .agents
+                    .iter()
+                    .filter_map(|agent| agent_model_check(config, agent)),
+            );
+        }
         Err(e) => {
             let hint = e.hint().map(Cow::into_owned);
             checks.push(check(
@@ -451,6 +462,42 @@ fn config_group(config: &Result<Config, vicarius::config::ConfigError>) -> Group
         name: "config",
         checks,
     }
+}
+
+fn provider_key_check(name: &str, key_env: &str) -> Check {
+    let label = format!("{name} key");
+    if std::env::var_os(key_env).is_some() {
+        return ok(label, format!("{key_env} is set"));
+    }
+    let hint = format!("put {key_env} in ~/.config/secrets.env, then run `vicarius self start`");
+    check(
+        label,
+        Status::Warn,
+        format!("{key_env} is not set"),
+        Some(hint.as_str()),
+    )
+}
+
+fn agent_model_check(config: &Config, agent: &ConfigAgent) -> Option<Check> {
+    let served = config.providers.values().any(|provider| {
+        provider
+            .prefixes
+            .iter()
+            .any(|prefix| agent.model.starts_with(prefix))
+    });
+    if served {
+        return None;
+    }
+    let hint = format!(
+        "use a model served by a provider, or add the provider for `{}`",
+        agent.model
+    );
+    Some(check(
+        format!("agent {}", agent.from),
+        Status::Warn,
+        format!("model `{}` matches no provider", agent.model),
+        Some(hint.as_str()),
+    ))
 }
 
 /// Reports whether census is installed, since it reads the DeepSeek gate and balance from the

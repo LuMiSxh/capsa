@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [0.4.0]
+
+### Added
+
+- A provider table in `config.toml`: `[providers.<name>]` names the model prefixes, base URL,
+  `key_env`, auth mode, models and `[providers.<name>.compat]` request flags. The proxy routes each
+  model to the provider with the longest matching prefix and sends that provider's key as
+  `x-api-key` or `Authorization: Bearer`.
+- One balance refresher per provider with a `[providers.<name>.balance]` block. `vicarius status`
+  and `GET /v1/models` list every route and model.
+- `vicarius status` shows each provider's gate and balance in the human and JSON views, and
+  `vicarius.json` gains a `providers` map beside the DeepSeek summary census reads.
+- `self config` shows one row per provider with its prefixes, URL, `key_env`, auth, models, compat
+  flags and balance. `self doctor` checks every provider's `key_env` and warns about an agent model
+  that no provider serves.
+
+### Changed
+
+- `min_balance_usd` and `balance_refresh_minutes` still load when no `providers` table exists and
+  move to `providers.deepseek.balance` on save. `self config set min-balance` and `balance-refresh`
+  write that block.
+- A request whose model matches no provider prefix still goes to Anthropic, and now logs an
+  `unknown_model` line so a typo is visible; Claude model ids are expected and stay silent. A
+  closed gate or a missing key refuses only its own provider and names the provider and its key
+  variable.
+- `vicarius hook` names the provider whose agents it advertises, so a second provider does not
+  inherit the DeepSeek wording. The DeepSeek line is unchanged.
+
 ## [0.3.1]
 
 ### Fixed

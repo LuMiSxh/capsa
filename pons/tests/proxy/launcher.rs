@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 use tokio::process::Command;
 
-#[cfg(unix)]
-use super::harness::pons_command;
-use super::harness::{Harness, mock_agent, temp_path};
+use super::harness::{Harness, mock_agent, pons_command, temp_path};
 
 #[cfg(unix)]
 #[tokio::test]
@@ -24,6 +22,72 @@ async fn without_an_agent_command_pons_finds_claude_agent_acp_on_path() {
     let reply = h.recv().await;
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(reply["result"]["echoed"], json!({"x": 1}));
+}
+
+/// Sends `mock/env` through pons and returns what the mock agent received.
+async fn agent_env(flags: &[&str], inherited_model: Option<&str>) -> serde_json::Value {
+    let mut command = pons_command(flags);
+    command
+        .env_remove("ANTHROPIC_MODEL")
+        .env_remove("ANTHROPIC_CUSTOM_MODEL_OPTION")
+        .env_remove("ANTHROPIC_CUSTOM_MODEL_OPTION_NAME")
+        .arg("--")
+        .arg(mock_agent());
+    if let Some(model) = inherited_model {
+        command.env("ANTHROPIC_MODEL", model);
+    }
+    let mut h = Harness::spawn(command);
+    h.send(json!({"jsonrpc": "2.0", "id": 1, "method": "mock/env"}))
+        .await;
+    h.recv().await["result"]["env"].clone()
+}
+
+#[tokio::test]
+async fn without_model_flags_the_agent_environment_is_unchanged() {
+    let env = agent_env(&[], Some("claude-sonnet-4-5")).await;
+    assert_eq!(
+        env,
+        json!({
+            "ANTHROPIC_MODEL": "claude-sonnet-4-5",
+            "ANTHROPIC_CUSTOM_MODEL_OPTION": null,
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": null,
+        })
+    );
+}
+
+#[tokio::test]
+async fn model_flags_reach_the_agent_and_override_an_inherited_model() {
+    let env = agent_env(
+        &[
+            "--model",
+            "deepseek-flash",
+            "--model-name",
+            "DeepSeek Flash",
+        ],
+        Some("inherited-model"),
+    )
+    .await;
+    assert_eq!(
+        env,
+        json!({
+            "ANTHROPIC_MODEL": "deepseek-flash",
+            "ANTHROPIC_CUSTOM_MODEL_OPTION": "deepseek-flash",
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": "DeepSeek Flash",
+        })
+    );
+}
+
+#[tokio::test]
+async fn model_option_adds_only_the_picker_row() {
+    let env = agent_env(&["--model-option", "deepseek-v4-pro"], None).await;
+    assert_eq!(
+        env,
+        json!({
+            "ANTHROPIC_MODEL": null,
+            "ANTHROPIC_CUSTOM_MODEL_OPTION": "deepseek-v4-pro",
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": null,
+        })
+    );
 }
 
 #[tokio::test]

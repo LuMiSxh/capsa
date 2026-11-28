@@ -264,3 +264,76 @@ fn usage_misses_counts_only_calls_the_guard_let_run() {
         ])
     );
 }
+
+#[test]
+fn usage_provider_refuses_a_name_the_price_table_and_the_config_do_not_know() {
+    let home = Scratch::new("cli-unknown-provider");
+    let out = census(
+        home.path(),
+        home.path(),
+        &["usage", "--provider", "ollama"],
+        "",
+        &[],
+    );
+    assert_eq!(out.status.code(), Some(2));
+    let err = text(&out.stderr);
+    assert!(err.contains("unknown provider `ollama`"), "{err}");
+    assert!(
+        err.contains("hint: known providers: anthropic, deepseek, openai"),
+        "{err}"
+    );
+}
+
+#[test]
+fn usage_provider_views_name_configured_prefixes_and_the_unpriced_models() {
+    let home = Scratch::new("cli-provider-views");
+    home.write(
+        "claude/projects/app/s1.jsonl",
+        &jsonl(&[
+            json!({"type": "assistant", "timestamp": "2026-10-14T08:00:10.000Z",
+                "message": {"id": "m1", "model": "deepseek-flash",
+                    "usage": {"input_tokens": 1000, "output_tokens": 0}}}),
+            json!({"type": "assistant", "timestamp": "2026-10-14T08:01:10.000Z",
+                "message": {"id": "m2", "model": "deepseek-v5",
+                    "usage": {"input_tokens": 2000, "output_tokens": 0}}}),
+            json!({"type": "assistant", "timestamp": "2026-10-14T08:02:10.000Z",
+                "message": {"id": "m3", "model": "kimi-k2",
+                    "usage": {"input_tokens": 3000, "output_tokens": 0}}}),
+        ]),
+    );
+    home.write(
+        CONFIG_FILE,
+        "[provider_prefixes]\n\"kimi-\" = \"moonshot\"\n",
+    );
+    let run = |args: &[&str]| census(home.path(), home.path(), args, "", &[]);
+
+    let out = run(&["--json", "usage", "--providers"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let doc: Value = serde_json::from_slice(&out.stdout).expect("census prints JSON");
+    assert_eq!(
+        doc,
+        json!([
+            {"provider": "deepseek", "requests": 2, "weighted": 3000.0,
+             "cost_usd": 0.0003, "unpriced": 1, "billing": "api"},
+            {"provider": "moonshot", "requests": 1, "weighted": 3000.0,
+             "cost_usd": 0.0, "unpriced": 1, "billing": "api"},
+        ])
+    );
+
+    let out = run(&["--json", "usage", "--unknown"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let doc: Value = serde_json::from_slice(&out.stdout).expect("census prints JSON");
+    assert_eq!(
+        doc,
+        json!([
+            {"model": "kimi-k2", "provider": "moonshot", "requests": 1, "weighted": 3000.0},
+            {"model": "deepseek-v5", "provider": "deepseek", "requests": 1, "weighted": 2000.0},
+        ])
+    );
+
+    let out = run(&["--json", "usage", "--provider", "moonshot"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let doc: Value = serde_json::from_slice(&out.stdout).expect("census prints JSON");
+    assert_eq!(doc["total"]["requests"], 1);
+    assert_eq!(doc["models"][0]["model"], "kimi-k2");
+}

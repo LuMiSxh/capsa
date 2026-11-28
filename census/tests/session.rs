@@ -164,7 +164,10 @@ fn a_deepseek_subagent_is_api_spend_apart_from_the_subscription_cost() {
     assert_eq!(mixed.requests, 2);
     assert!((mixed.cost.usd - subscription.cost.usd).abs() < 1e-12);
     assert_eq!(mixed.cost.unpriced, 0);
-    assert_eq!(mixed.api.keys().copied().collect::<Vec<_>>(), ["deepseek"]);
+    assert_eq!(
+        mixed.api.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["deepseek"]
+    );
     assert!(mixed.api["deepseek"].usd > 0.0);
     assert!(subscription.api.is_empty());
 }
@@ -188,7 +191,10 @@ fn a_provider_billed_as_subscription_moves_its_spend_from_the_api_rows_to_the_co
         ..Config::default()
     };
     let as_subscription = summarize(&main, &openai).expect("the summary");
-    assert_eq!(as_api.api.keys().copied().collect::<Vec<_>>(), ["openai"]);
+    assert_eq!(
+        as_api.api.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["openai"]
+    );
     assert!(as_subscription.api.is_empty());
     let api_usd = as_api.api["openai"].usd;
     assert!(api_usd > 0.0);

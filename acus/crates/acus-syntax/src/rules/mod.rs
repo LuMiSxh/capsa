@@ -15,10 +15,14 @@ pub const KINDS: &[&str] = &[
     "array",
     "class",
     "const",
+    "constructor",
     "def",
+    "delegate",
     "element",
     "enum",
+    "event",
     "extension",
+    "field",
     "fn",
     "footer",
     "func",
@@ -41,7 +45,9 @@ pub const KINDS: &[&str] = &[
     "mod",
     "namespace",
     "nav",
+    "property",
     "protocol",
+    "record",
     "rule",
     "script",
     "section",
@@ -94,6 +100,8 @@ pub(crate) fn classify(lang: Lang, n: Node, src: &[u8]) -> Option<Class> {
         Lang::Toml | Lang::Json | Lang::Yaml => data(n, src),
         Lang::Shell => shell(n, src),
         Lang::C => c(n, src),
+        Lang::CSharp => csharp(n, src),
+        Lang::Go => go(n, src),
         Lang::Css | Lang::Scss => css(n, src),
         Lang::Html => html(n, src),
         Lang::Xml => xml(n, src),
@@ -210,6 +218,83 @@ fn c(n: Node, src: &[u8]) -> Option<Class> {
         "preproc_def" | "preproc_function_def" => named("macro", n, src, true),
         _ => None,
     }
+}
+
+fn csharp(n: Node, src: &[u8]) -> Option<Class> {
+    let leaf = |k: &'static str| named(k, n, src, true);
+    match n.kind() {
+        "namespace_declaration" => named("namespace", n, src, false),
+        // A file-scoped namespace owns the declarations after it, which are its siblings.
+        "file_scoped_namespace_declaration" => leaf("namespace"),
+        "class_declaration" => named("class", n, src, false),
+        "interface_declaration" => named("interface", n, src, false),
+        "struct_declaration" => named("struct", n, src, false),
+        "enum_declaration" => leaf("enum"),
+        "record_declaration" => named("record", n, src, false),
+        "delegate_declaration" => leaf("delegate"),
+        "method_declaration" => leaf("method"),
+        "constructor_declaration" => leaf("constructor"),
+        "property_declaration" => leaf("property"),
+        "event_declaration" => leaf("event"),
+        "variable_declarator" => csharp_member(n, src),
+        _ => None,
+    }
+}
+
+fn go(n: Node, src: &[u8]) -> Option<Class> {
+    let leaf = |k: &'static str| named(k, n, src, true);
+    match n.kind() {
+        "package_clause" => {
+            let name = n
+                .named_child(0)
+                .filter(|c| c.kind() == "package_identifier")?;
+            Some(Class {
+                kind: "namespace",
+                name: text(name, src).to_owned(),
+                detail: None,
+                leaf: false,
+            })
+        }
+        "function_declaration" => leaf("func"),
+        "method_declaration" => leaf("method"),
+        "type_spec" => {
+            let kind = match n.child_by_field_name("type")?.kind() {
+                "struct_type" => "struct",
+                "interface_type" => "interface",
+                _ => "type",
+            };
+            named(kind, n, src, true)
+        }
+        "type_alias" => leaf("typealias"),
+        "const_spec" => go_file_scope(n, "const", src),
+        "var_spec" => go_file_scope(n, "var", src),
+        _ => None,
+    }
+}
+
+/// Lists a spec only at file scope: Go allows the same declaration inside a function body.
+fn go_file_scope(n: Node, kind: &'static str, src: &[u8]) -> Option<Class> {
+    let mut cur = n.parent();
+    while let Some(p) = cur {
+        if matches!(p.kind(), "const_declaration" | "var_declaration") {
+            if p.parent()?.kind() != "source_file" {
+                return None;
+            }
+            return named(kind, n, src, true);
+        }
+        cur = p.parent();
+    }
+    None
+}
+
+/// Names a field or event field by its declarator; a local variable has no member holder above it.
+fn csharp_member(n: Node, src: &[u8]) -> Option<Class> {
+    let kind = match n.parent()?.parent()?.kind() {
+        "field_declaration" => "field",
+        "event_field_declaration" => "event",
+        _ => return None,
+    };
+    named(kind, n, src, true)
 }
 
 /// Lists a specifier only with a body, so `struct S;` forward declarations are skipped.

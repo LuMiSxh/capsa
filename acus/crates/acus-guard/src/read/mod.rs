@@ -12,9 +12,7 @@ pub(super) use window::*;
 /// so a new language is picked up) plus common languages it cannot, whose reads and edits get the
 /// same `acus show` / `acus find` / `acus patch` advice.
 pub(super) static CODE: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    const OTHER: &[&str] = &[
-        "vue", "go", "cc", "cpp", "hpp", "java", "kt", "rb", "lua", "cs", "sql",
-    ];
+    const OTHER: &[&str] = &["vue", "cc", "cpp", "hpp", "java", "kt", "rb", "lua", "sql"];
     Lang::extensions().chain(OTHER.iter().copied()).collect()
 });
 

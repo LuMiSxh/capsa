@@ -136,9 +136,13 @@ fn a_model_without_a_price_has_no_cost() {
 
 #[test]
 fn a_model_without_a_price_is_billed_by_its_id() {
-    assert_eq!(billed_by("claude-sonnet-9-0"), "anthropic");
-    assert_eq!(billed_by("deepseek-v4-pro"), "deepseek");
-    assert_eq!(billed_by("mystery-model"), "unknown");
+    let none = BTreeMap::new();
+    assert_eq!(billed_by("claude-sonnet-9-0", &none), "anthropic");
+    assert_eq!(billed_by("deepseek-v4-pro", &none), "deepseek");
+    assert_eq!(billed_by("gpt-7", &none), "openai");
+    assert_eq!(billed_by("o3-mini", &none), "openai");
+    assert_eq!(billed_by("o4-mini", &none), "openai");
+    assert_eq!(billed_by("mystery-model", &none), "unknown");
     assert!(counts_toward_limits("claude-sonnet-9-0"));
     assert!(!counts_toward_limits("deepseek-v4-pro"));
     assert!(!counts_toward_limits("mystery-model"));

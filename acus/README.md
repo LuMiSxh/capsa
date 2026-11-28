@@ -63,7 +63,7 @@ Everything is top-level except the management commands under `acus self` (see [S
 
 `acus log --oneline` is accepted as a no-op.
 
-Addresses look like `path#Type::method`, `path:10-40`, `path:10`, `path:-20`, `path:150-` or just `path`. A unique suffix such as `#method` is enough, `Type.method` works too, and config keys nest with `::` (`config.yaml#server::port`). Symbols are understood for Rust, Swift, TypeScript (with TSX), JavaScript, Svelte, Python, Shell, C, CSS and SCSS (not on Windows), HTML, XML and plists, Markdown headings, and TOML, JSON and YAML keys; other files work with `find`, `files` and line ranges.
+Addresses look like `path#Type::method`, `path:10-40`, `path:10`, `path:-20`, `path:150-` or just `path`. A unique suffix such as `#method` is enough, `Type.method` works too, and config keys nest with `::` (`config.yaml#server::port`). Symbols are understood for Rust, Swift, TypeScript (with TSX), JavaScript, Svelte, Python, Shell, C, C#, Go, CSS and SCSS (not on Windows), HTML, XML and plists, Markdown headings, and TOML, JSON and YAML keys; other files work with `find`, `files` and line ranges.
 
 Output is a compact agent format by default. `--agent`, `--human` and `--json` choose it explicitly, before or after the command; `--human` adds colour on a terminal and `NO_COLOR` turns colour off. Exit codes: 0 for results or success, 1 for nothing found, 2 for errors, which carry a `hint:` line. `find`, `files` and `log` with no matches exit 1, `diff` with no changes exits 0 (`--conflicts` exits 1 when it finds none), and their empty results serialize as `null` in JSON. `run` passes on the exit code of the command it ran.
 
@@ -157,7 +157,7 @@ hint_every_max = 40                                 # interval for a rule agents
 
 `acus run --drop REGEX` does the same for one run. `ACUS_DISABLE` (comma-separated, e.g. `ACUS_DISABLE=usage`) adds to `[commands] disabled`.
 
-Languages are compiled in through the features `lang-rust`, `lang-swift`, `lang-ts`, `lang-python`, `lang-markdown`, `lang-svelte`, `lang-data`, `lang-shell`, `lang-c`, `lang-css`, `lang-scss`, `lang-html` and `lang-xml`; the guard's shell grammars through `guard-bash`, `guard-zsh` and `guard-powershell`. All are on by default. Without a grammar the guard falls back to a simpler splitter that guards less precisely and rewrites nothing for Bash. The zsh grammar adds about 4.8 MB and the PowerShell one about 1 MB. To keep only what you need, pass `--no-default-features` and list the features, for example `cargo install --path crates/acus-cli --no-default-features --features lang-rust,lang-python,lang-shell,guard-bash,cmd-update`.
+Languages are compiled in through the features `lang-rust`, `lang-swift`, `lang-ts`, `lang-python`, `lang-markdown`, `lang-svelte`, `lang-data`, `lang-shell`, `lang-c`, `lang-csharp`, `lang-go`, `lang-css`, `lang-scss`, `lang-html` and `lang-xml`; the guard's shell grammars through `guard-bash`, `guard-zsh` and `guard-powershell`. All are on by default. Without a grammar the guard falls back to a simpler splitter that guards less precisely and rewrites nothing for Bash. The zsh grammar adds about 4.8 MB and the PowerShell one about 1 MB. To keep only what you need, pass `--no-default-features` and list the features, for example `cargo install --path crates/acus-cli --no-default-features --features lang-rust,lang-python,lang-shell,guard-bash,cmd-update`.
 
 ## Self
 

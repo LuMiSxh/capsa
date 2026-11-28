@@ -10,6 +10,7 @@ use capsa_core::format::Format;
 use capsa_core::log::Entry;
 use serde_json::Value;
 
+use crate::cli::ModelEnv;
 use crate::launcher::{self, LAUNCHERS, PACKAGE};
 use crate::log::WireFields;
 use capsa_core::pkg;
@@ -136,6 +137,8 @@ pub struct Inputs {
     pub log: Option<PathBuf>,
     /// Keep every note instead of the newest [`LAST_NOTES`].
     pub all_notes: bool,
+    /// The model variables already in pons's environment.
+    pub model: ModelEnv,
 }
 
 /// Answers nothing.
@@ -207,6 +210,8 @@ pub struct Report {
     pub settings_path: Option<String>,
     /// `None`: not found or unreadable.
     pub settings: Option<Settings>,
+    /// The model variables pons would pass to the adapter.
+    pub model: ModelEnv,
     /// Version and directory of the adapter Zed installed from its registry.
     pub registry_adapter: Option<(Option<String>, String)>,
     pub log: Option<LogReport>,
@@ -313,6 +318,7 @@ pub fn gather(
         update: sys.update_check(),
         settings_path: settings_path.map(|p| p.display().to_string()),
         settings,
+        model: inputs.model.clone(),
         registry_adapter,
         log,
         old_log_dir,
@@ -353,6 +359,7 @@ pub fn run(
         agent_cmd,
         log: pick_log(log, log_dir),
         all_notes,
+        model: ModelEnv::from_process(),
     };
     let read = |p: &Path| {
         std::fs::read(p)

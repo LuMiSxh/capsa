@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `vicarius hook`: the Claude Code hook. It dispatches on the input's `hook_event_name` and, on
-//! `SessionStart`, prints the DeepSeek agent context line when the gate is open and an agent file
-//! is ready. Every other event, every invalid input and every failure print nothing, and it always
+//! `SessionStart`, prints the agent context line of every open provider when an agent file is
+//! ready. Every other event, every invalid input and every failure print nothing, and it always
 //! exits 0.
 
+use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read, Write};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -11,7 +12,7 @@ use std::time::{Duration, Instant};
 use capsa_core::exit::Outcome;
 use serde::Deserialize;
 use serde_json::json;
-use vicarius::config::Config;
+use vicarius::config::{Config, Provider};
 use vicarius::gate::Closed;
 
 use crate::status_client::{self, ServiceStatus};
@@ -145,39 +146,88 @@ impl Clock for SystemClock {
     }
 }
 
-/// Builds the context line from the status and the configured models, or `None` when the gate is
-/// closed or no agent file is ready.
+/// Builds the context line from the status and the configured models, or `None` when no agent file
+/// of an open provider is ready.
 fn agents_line(config: &Config, status: &ServiceStatus) -> Option<String> {
-    if !status.gate.open {
-        return None;
+    let mut groups: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for entry in &status.agents.as_ref()?.entries {
+        if !matches!(entry.outcome_name(), "written" | "unchanged") {
+            continue;
+        }
+        let agent = &entry.agent;
+        let Some(configured) = config
+            .agents
+            .iter()
+            .find(|a| &a.from == agent && !a.suspended)
+        else {
+            continue;
+        };
+        let Some((provider, _)) = provider_of(config, &configured.model) else {
+            continue;
+        };
+        if !provider_open(status, provider) {
+            continue;
+        }
+        groups.entry(provider).or_default().push(format!(
+            "{agent}-ds ({}, variant of {agent})",
+            configured.model
+        ));
     }
-    let entries: Vec<String> = status
-        .agents
-        .as_ref()?
-        .entries
-        .iter()
-        .filter(|entry| matches!(entry.outcome_name(), "written" | "unchanged"))
-        .filter_map(|entry| {
-            let agent = &entry.agent;
-            let model = &config
-                .agents
-                .iter()
-                .find(|a| &a.from == agent && !a.suspended)?
-                .model;
-            Some(format!("{agent}-ds ({model}, variant of {agent})"))
+    let lines: Vec<String> = groups
+        .into_iter()
+        .map(|(provider, entries)| {
+            let label = provider_label(provider);
+            let balance = provider_balance(status, provider);
+            format!(
+                "vicarius: {label} agents available{balance}: {}. Use a healthy mix with their Claude source agents: a -ds agent for well-scoped tasks with a clear check, the Claude agent for work that needs judgement or after a -ds result needed rework; report the {label} cost afterwards (vicarius status) and do not pass a model parameter when spawning one.",
+                entries.join(", ")
+            )
         })
         .collect();
-    if entries.is_empty() {
-        return None;
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// Returns the provider that serves `model` by the longest matching prefix.
+fn provider_of<'a>(config: &'a Config, model: &str) -> Option<(&'a str, &'a Provider)> {
+    config
+        .providers
+        .iter()
+        .filter(|(_, provider)| {
+            provider
+                .prefixes
+                .iter()
+                .any(|prefix| model.starts_with(prefix))
+        })
+        .max_by_key(|(_, provider)| provider.prefixes.iter().map(String::len).max().unwrap_or(0))
+        .map(|(name, provider)| (name.as_str(), provider))
+}
+
+/// Returns whether `provider` accepts requests; a service without per-provider gates falls back to
+/// its DeepSeek gate.
+fn provider_open(status: &ServiceStatus, provider: &str) -> bool {
+    if let Some(view) = status.providers.get(provider) {
+        return !view.gated || view.gate.open;
     }
-    let balance = status.gate.balance.map_or_else(String::new, |amount| {
-        let money = status_client::money(amount, status.gate.currency.as_deref());
-        format!(" (balance {money})")
-    });
-    Some(format!(
-        "vicarius: DeepSeek agents available{balance}: {}. Use a healthy mix with their Claude source agents: a -ds agent for well-scoped tasks with a clear check, the Claude agent for work that needs judgement or after a -ds result needed rework; report the DeepSeek cost afterwards (vicarius status) and do not pass a model parameter when spawning one.",
-        entries.join(", ")
-    ))
+    provider != "deepseek" || status.gate.open
+}
+
+/// Returns the balance suffix of `provider`, empty when it has no checked balance.
+fn provider_balance(status: &ServiceStatus, provider: &str) -> String {
+    let (balance, currency) = match status.providers.get(provider) {
+        Some(view) => (view.gate.balance, view.gate.currency.as_deref()),
+        None if provider == "deepseek" => (status.gate.balance, status.gate.currency.as_deref()),
+        None => (None, None),
+    };
+    balance.map_or_else(String::new, |amount| {
+        format!(" (balance {})", status_client::money(amount, currency))
+    })
+}
+
+fn provider_label(provider: &str) -> &str {
+    if provider == "deepseek" {
+        return "DeepSeek";
+    }
+    provider
 }
 
 #[cfg(test)]
@@ -189,7 +239,9 @@ mod tests {
     use vicarius::config::{Agent, Config, Effort};
 
     use super::{Clock, DEADLINE, POLL, agents_line, settled_status};
-    use crate::status_client::{AgentStatus, AgentsStatus, GateStatus, ServiceStatus};
+    use crate::status_client::{
+        AgentStatus, AgentsStatus, GateStatus, ProviderStatus, ServiceStatus,
+    };
 
     fn agent(from: &str, suspended: bool) -> Agent {
         Agent {
@@ -351,6 +403,43 @@ mod tests {
         assert!(status.is_none());
         assert_eq!(reads.get(), 1);
         assert_eq!(clock.elapsed(), Duration::ZERO);
+    }
+
+    #[test]
+    fn an_open_provider_names_itself_instead_of_deepseek() {
+        let mut config = senior_config();
+        let mut provider = config.providers.remove("deepseek").unwrap();
+        provider.prefixes = vec!["other-".to_owned()];
+        provider.models = vec!["other-flash".to_owned()];
+        config.providers.insert("other".to_owned(), provider);
+        config.agents = vec![Agent {
+            model: "other-flash".to_owned(),
+            ..agent("senior-worker", false)
+        }];
+        let mut status = settled();
+        status.gate = GateStatus {
+            reason: Some("payment_required".to_owned()),
+            ..GateStatus::default()
+        };
+        status.providers.insert(
+            "other".to_owned(),
+            ProviderStatus {
+                gated: true,
+                gate: GateStatus {
+                    open: true,
+                    balance: Some(3.0),
+                    currency: Some("USD".to_owned()),
+                    ..GateStatus::default()
+                },
+                refresh: None,
+            },
+        );
+
+        let line = agents_line(&config, &status).unwrap();
+
+        assert!(line.starts_with("vicarius: other agents available (balance $3.00): "));
+        assert!(line.contains("report the other cost afterwards"));
+        assert!(!line.contains("DeepSeek"));
     }
 
     #[test]

@@ -28,7 +28,8 @@ fn settings_text_yields_the_pons_servers_or_an_unparsed_marker() {
     let text = r#"{
             "agent_servers": {
                 // mine
-                "claude-pons": {"type": "custom", "command": "/Users/me/.cargo/bin/pons", "args": [],},
+                "claude-pons": {"type": "custom", "command": "/Users/me/.cargo/bin/pons", "args": [],
+                    "env": {"ANTHROPIC_MODEL": "deepseek-flash", "ANTHROPIC_CUSTOM_MODEL_OPTION": "deepseek-flash"}},
                 "wrapped": {"command": "sh", "args": ["-c", "pons --log /tmp/x -- npx"]},
                 "win": {"command": "C:\\bin\\PONS.exe"},
                 "other": {"command": "npx", "args": ["-y", "pkg"]},
@@ -40,6 +41,16 @@ fn settings_text_yields_the_pons_servers_or_an_unparsed_marker() {
     let names: Vec<_> = found.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, vec!["claude-pons", "win", "wrapped"]);
     assert_eq!(found[0].command, "/Users/me/.cargo/bin/pons");
+    assert_eq!(
+        found[0].env,
+        vec![
+            ("ANTHROPIC_MODEL".to_owned(), "deepseek-flash".to_owned()),
+            (
+                "ANTHROPIC_CUSTOM_MODEL_OPTION".to_owned(),
+                "deepseek-flash".to_owned()
+            ),
+        ]
+    );
     assert_eq!(find_pons_servers("{}"), Settings::Servers(Vec::new()));
     assert_eq!(
         find_pons_servers("{ broken pons\n more"),
@@ -190,6 +201,7 @@ fn detect_report(files: &[&str], path: &[&str]) -> Report {
         agent_cmd: Vec::new(),
         log: None,
         all_notes: false,
+        model: ModelEnv::default(),
     };
     let fs = Files(files.iter().map(PathBuf::from).collect());
     gather(&inputs, &fs, &|_| None, &NoSys)
@@ -325,6 +337,7 @@ fn the_report_is_ascii_and_survives_missing_everything() {
         agent_cmd: Vec::new(),
         log: Some(PathBuf::from("/nope.log")),
         all_notes: false,
+        model: ModelEnv::default(),
     };
     let view = View::new(gather(&inputs, &NoFs, &|_| None, &NoSys));
     let plain = text(&view, false);
@@ -378,6 +391,7 @@ fn freshness_of(files: &[&str], machine: &Machine) -> Freshness {
         agent_cmd: Vec::new(),
         log: None,
         all_notes: false,
+        model: ModelEnv::default(),
     };
     let fs = Files(files.iter().map(PathBuf::from).collect());
     let read = |p: &Path| {
@@ -553,6 +567,7 @@ fn a_newer_pons_release_warns_with_the_self_update_command() {
         agent_cmd: Vec::new(),
         log: None,
         all_notes: false,
+        model: ModelEnv::default(),
     };
     let view = View::new(gather(&inputs, &Files(Vec::new()), &|_| None, &Newer));
     let v: Value = serde_json::from_str(&json_of(&view)).unwrap();
@@ -590,6 +605,40 @@ fn versions_compare_by_semver_core_and_never_warn_when_unparseable() {
             "{installed} {latest}"
         );
     }
+}
+
+#[test]
+fn the_view_names_the_environment_model_and_the_zed_entry_model() {
+    let mut env = env(Platform::Linux);
+    env.path = vec![PathBuf::from("/bin")];
+    let inputs = Inputs {
+        env,
+        agent_cmd: Vec::new(),
+        log: None,
+        all_notes: false,
+        model: ModelEnv {
+            model: Some("deepseek-flash".to_owned()),
+            option: Some("deepseek-v4-pro".to_owned()),
+            option_name: Some("DeepSeek".to_owned()),
+        },
+    };
+    let settings = r#"{"agent_servers": {"claude-pons": {"command": "pons",
+        "env": {"ANTHROPIC_MODEL": "deepseek-flash", "PONS_LOG": "/tmp/x"}}}}"#;
+    let settings_file = settings_path(&inputs.env).unwrap();
+    let read = move |p: &Path| (p == settings_file).then(|| settings.to_owned());
+    let view = View::new(gather(&inputs, &Files(Vec::new()), &read, &NoSys));
+    let plain = text(&view, false);
+    assert!(
+        plain.contains(
+            "startup model: deepseek-flash; custom option: deepseek-v4-pro; option name: DeepSeek"
+        ),
+        "{plain}"
+    );
+    assert!(
+        plain.contains("agent_servers claude-pons sets: ANTHROPIC_MODEL=deepseek-flash"),
+        "{plain}"
+    );
+    assert!(!plain.contains("/tmp/x"), "{plain}");
 }
 
 #[cfg(unix)]
@@ -674,6 +723,7 @@ fn more_notes_than_shown_get_a_footer_naming_all() {
         agent_cmd: Vec::new(),
         log: Some(PathBuf::from("/log")),
         all_notes: false,
+        model: ModelEnv::default(),
     };
     let view = View::new(gather(
         &inputs,

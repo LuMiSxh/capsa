@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.28.0]
+
+### Added
+
+- C# outlines and addresses: namespaces, classes, interfaces, structs, records, enums, delegates,
+  methods, constructors, properties, fields and events, plus calls for invocations and object
+  creation. Enabled by the `lang-csharp` feature, on by default; the macOS release binary from
+  `cargo build --release -p acus-cli` grows from 26,244,096 to 33,559,088 bytes (+7.3 MB).
+- Go outlines and addresses: packages, functions, methods, structs, interfaces, type aliases and
+  file-scope consts and vars, plus calls for bare, package-qualified and method calls and generic
+  instantiations. Enabled by the `lang-go` feature, on by default; the macOS release binary from
+  `cargo build --release -p acus-cli` grows from 33,559,088 to 33,773,792 bytes (+0.21 MB).
+
 ## [0.27.0] - 2026-11-27
 
 ### Added

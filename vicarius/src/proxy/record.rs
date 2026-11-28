@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Counts requests and tokens per route and writes one log line per request.
 
+use super::ProviderId;
 use super::headers::HeaderLog;
 use super::usage::Usage;
 use capsa_core::log::{self, Level};
@@ -16,17 +17,18 @@ use std::time::Instant;
 pub const LOG_LIMIT: u64 = 8 * 1024 * 1024;
 
 /// Names where a request went.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Route {
     Anthropic,
-    Deepseek,
+    Provider(ProviderId),
 }
 
 impl Route {
-    pub fn as_str(self) -> &'static str {
+    /// Returns the route name used in the log and the status JSON.
+    pub fn name(&self) -> &str {
         match self {
             Route::Anthropic => "anthropic",
-            Route::Deepseek => "deepseek",
+            Route::Provider(id) => id.as_str(),
         }
     }
 }
@@ -34,7 +36,7 @@ impl Route {
 /// The fields of a `proxy.request` log line.
 #[derive(Serialize)]
 pub struct RequestLine {
-    pub route: &'static str,
+    pub route: String,
     pub model: Option<String>,
     pub method: String,
     pub path: String,
@@ -55,13 +57,13 @@ const ROUTE_NONE: &str = "none";
 
 impl RequestLine {
     pub fn new(
-        route: Route,
+        route: &Route,
         model: Option<String>,
         method: &str,
         path: &str,
         h: HeaderLog,
     ) -> Self {
-        Self::with_route(route.as_str(), model, method, path, h)
+        Self::with_route(route.name(), model, method, path, h)
     }
 
     /// Builds the line of a request refused before routing.
@@ -72,14 +74,14 @@ impl RequestLine {
     }
 
     fn with_route(
-        route: &'static str,
+        route: &str,
         model: Option<String>,
         method: &str,
         path: &str,
         h: HeaderLog,
     ) -> Self {
         RequestLine {
-            route,
+            route: route.to_owned(),
             model,
             method: method.to_owned(),
             path: path.to_owned(),
@@ -120,8 +122,8 @@ pub struct RouteCounts {
 /// A copy of all counters.
 #[derive(Serialize)]
 pub struct Counts {
-    pub anthropic: RouteCounts,
-    pub deepseek: RouteCounts,
+    /// One entry per route, `anthropic` included, in name order.
+    pub routes: BTreeMap<String, RouteCounts>,
     /// Requests refused for a foreign `Host` or an `Origin` header, on any path.
     pub forbidden: u64,
 }
@@ -130,45 +132,50 @@ pub struct Counts {
 pub struct Recorder {
     file: PathBuf,
     write: Mutex<()>,
-    anthropic: RouteCounters,
-    deepseek: RouteCounters,
+    routes: BTreeMap<String, RouteCounters>,
     forbidden: AtomicU64,
     log_failing: AtomicBool,
 }
 
 impl Recorder {
-    pub fn new(file: PathBuf) -> Self {
+    /// Builds a recorder with one zeroed counter set per route name.
+    pub fn new(file: PathBuf, routes: impl IntoIterator<Item = String>) -> Self {
         Recorder {
             file,
             write: Mutex::new(()),
-            anthropic: RouteCounters::default(),
-            deepseek: RouteCounters::default(),
+            routes: routes
+                .into_iter()
+                .map(|name| (name, RouteCounters::default()))
+                .collect(),
             forbidden: AtomicU64::new(0),
             log_failing: AtomicBool::new(false),
         }
     }
 
-    fn counters(&self, route: Route) -> &RouteCounters {
-        match route {
-            Route::Anthropic => &self.anthropic,
-            Route::Deepseek => &self.deepseek,
-        }
+    #[expect(
+        clippy::expect_used,
+        reason = "the recorder is built from the same provider table that builds every route"
+    )]
+    fn counters(&self, route: &Route) -> &RouteCounters {
+        self.routes
+            .get(route.name())
+            .expect("every route has a counter set")
     }
 
     /// Counts a request when it is routed, before its response ends.
-    pub fn begin(&self, route: Route) {
+    pub fn begin(&self, route: &Route) {
         self.counters(route)
             .requests
             .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Counts a request refused by the closed gate.
-    pub fn refuse(&self, route: Route) {
+    pub fn refuse(&self, route: &Route) {
         self.counters(route).refused.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Adds the tokens of a finished request and writes its log line.
-    pub fn finish(&self, route: Route, line: &RequestLine) {
+    pub fn finish(&self, route: &Route, line: &RequestLine) {
         let c = self.counters(route);
         let add = |slot: &AtomicU64, n: u64| slot.fetch_add(n, Ordering::Relaxed);
         add(&c.input, line.usage.input_tokens);
@@ -184,12 +191,21 @@ impl Recorder {
         self.write_line(line);
     }
 
+    /// Writes the `unknown_model` line of a model id that no provider prefix matched.
+    pub fn unknown_model(&self, model: &str) {
+        self.append(Level::Warn, "unknown_model", &UnknownModel { model });
+    }
+
     fn write_line(&self, line: &RequestLine) {
         let level = if line.status >= 400 {
             Level::Warn
         } else {
             Level::Info
         };
+        self.append(level, "proxy.request", line);
+    }
+
+    fn append<T: Serialize>(&self, level: Level, event: &str, line: &T) {
         let _guard = self
             .write
             .lock()
@@ -198,7 +214,7 @@ impl Recorder {
             .file
             .parent()
             .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| log::append(&self.file, LOG_LIMIT, level, "proxy.request", line));
+            .and_then(|()| log::append(&self.file, LOG_LIMIT, level, event, line));
         self.report_log_failure(written.err());
     }
 
@@ -228,12 +244,22 @@ impl Recorder {
             cache_read_tokens: c.cache_read.load(Ordering::Relaxed),
             output_tokens: c.output.load(Ordering::Relaxed),
         };
+        let routes = self
+            .routes
+            .iter()
+            .map(|(name, counters)| (name.clone(), copy(counters)))
+            .collect();
         Counts {
-            anthropic: copy(&self.anthropic),
-            deepseek: copy(&self.deepseek),
+            routes,
             forbidden: self.forbidden.load(Ordering::Relaxed),
         }
     }
+}
+
+/// The fields of an `unknown_model` log line.
+#[derive(Serialize)]
+struct UnknownModel<'a> {
+    model: &'a str,
 }
 
 /// A request whose response is still passing; logs itself when dropped.
@@ -264,6 +290,40 @@ impl Pending {
         self.line.usage = usage;
         self.line.duration_ms =
             u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.recorder.finish(self.route, &self.line);
+        self.recorder.finish(&self.route, &self.line);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unknown_model_line_carries_the_id_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("proxy.jsonl");
+        let recorder = Recorder::new(path.clone(), ["anthropic".to_owned()]);
+        recorder.unknown_model("deepsek-flash");
+        let line: serde_json::Value =
+            serde_json::from_str(std::fs::read_to_string(&path).unwrap().trim()).unwrap();
+        assert_eq!(line["event"], "unknown_model");
+        assert_eq!(line["level"], "warn");
+        assert_eq!(line["model"], "deepsek-flash");
+        assert_eq!(line.as_object().unwrap().len(), 4, "{line}");
+    }
+
+    #[test]
+    fn every_route_starts_at_zero_and_the_counts_keep_one_entry_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let recorder = Recorder::new(
+            dir.path().join("proxy.jsonl"),
+            ["anthropic".to_owned(), "deepseek".to_owned()],
+        );
+        recorder.begin(&Route::Provider(ProviderId::new("deepseek")));
+        let counts = recorder.counts();
+        assert_eq!(counts.routes.len(), 2);
+        assert_eq!(counts.routes["anthropic"].requests, 0);
+        assert_eq!(counts.routes["deepseek"].requests, 1);
+        assert_eq!(counts.forbidden, 0);
     }
 }

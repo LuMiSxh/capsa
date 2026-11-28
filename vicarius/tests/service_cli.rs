@@ -21,7 +21,7 @@ const HOOK_LIMIT: Duration = Duration::from_secs(10);
 
 const SENIOR: &str = r#"[{ from = "senior-worker", model = "deepseek-flash" }]"#;
 
-const OPEN: &str = r#"{"started_at":1,"gate":{"open":true,"reason":null,"reason_text":null,"balance":18.4,"currency":"USD","checked_at":1793723161},"counters":{"anthropic":{"requests":3,"refused":0,"input_tokens":10,"cache_creation_tokens":1,"cache_read_tokens":2,"output_tokens":4},"deepseek":{"requests":2,"refused":1,"input_tokens":100,"cache_creation_tokens":0,"cache_read_tokens":50,"output_tokens":20}},"agents":{"entries":[{"agent":"senior-worker","file":"senior-worker-ds.md","outcome":"written"}]},"refresh":{"last_ok_at":1793723161,"last_error":null,"next_at":1793723761}}"#;
+const OPEN: &str = r#"{"started_at":1,"gate":{"open":true,"reason":null,"reason_text":null,"balance":18.4,"currency":"USD","checked_at":1793723161},"counters":{"routes":{"anthropic":{"requests":3,"refused":0,"input_tokens":10,"cache_creation_tokens":1,"cache_read_tokens":2,"output_tokens":4},"deepseek":{"requests":2,"refused":1,"input_tokens":100,"cache_creation_tokens":0,"cache_read_tokens":50,"output_tokens":20}},"forbidden":0},"agents":{"entries":[{"agent":"senior-worker","file":"senior-worker-ds.md","outcome":"written"}]},"refresh":{"last_ok_at":1793723161,"last_error":null,"next_at":1793723761},"providers":{"deepseek":{"gated":true,"gate":{"open":true,"reason":null,"reason_text":null,"balance":18.4,"currency":"USD","checked_at":1793723161},"refresh":{"last_ok_at":1793723161,"last_error":null,"next_at":1793723761}}}}"#;
 
 const ONE_AGENT_LINE: &str = r#"{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"vicarius: DeepSeek agents available (balance $18.40): senior-worker-ds (deepseek-flash, variant of senior-worker). Use a healthy mix with their Claude source agents: a -ds agent for well-scoped tasks with a clear check, the Claude agent for work that needs judgement or after a -ds result needed rework; report the DeepSeek cost afterwards (vicarius status) and do not pass a model parameter when spawning one."}}"#;
 
@@ -281,6 +281,8 @@ fn status_renders_the_agent_view_the_human_view_and_the_json_bytes() {
     assert_eq!(agent.status.code(), Some(0), "{}", text(&agent.stderr));
     let view = text(&agent.stdout);
     assert!(view.contains("balance: $18.40"), "{view}");
+    assert!(view.contains("providers"), "{view}");
+    assert!(view.contains("gate open, balance $18.40"), "{view}");
     assert!(view.contains("senior-worker-ds"), "{view}");
     assert!(view.contains("in 100, out 20"), "{view}");
     let human = vicarius(home.path(), &["--human", "status"]);
@@ -433,6 +435,40 @@ fn doctor_fails_on_an_invalid_config_and_names_the_rule() {
     let report = text(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{report}");
     assert!(report.contains("port must not be 0"), "{report}");
+}
+
+#[test]
+fn doctor_checks_each_provider_key_and_an_unserved_agent_model() {
+    let home = tempfile::tempdir().unwrap();
+    let port = free_port();
+    let path = home.path().join(CONFIG_FILE);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        format!(
+            r#"port = {port}
+providers.other.prefixes = ["other-"]
+providers.other.base_url = "http://127.0.0.1:1"
+providers.other.key_env = "OTHER_KEY"
+providers.other.auth = "x-api-key"
+providers.other.models = ["other-model"]
+agents = {SENIOR}
+"#
+        ),
+    )
+    .unwrap();
+    let out = base(home.path())
+        .env_remove("OTHER_KEY")
+        .args(["self", "doctor"])
+        .output()
+        .unwrap();
+    let report = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{report}");
+    assert!(report.contains("OTHER_KEY is not set"), "{report}");
+    assert!(
+        report.contains("model `deepseek-flash` matches no provider"),
+        "{report}"
+    );
 }
 
 #[test]

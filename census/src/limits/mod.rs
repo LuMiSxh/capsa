@@ -55,6 +55,9 @@ pub struct LimitStatus {
     pub now: u64,
     /// False when the ledger and the snapshots hold nothing.
     pub data: bool,
+    /// Requests that count toward the limits but have no list price; they price as 0 USD.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub unpriced: u64,
     /// The five-hour window, then the weekly one.
     pub windows: Vec<WindowStatus>,
     pub burn: Burn,
@@ -249,6 +252,7 @@ pub fn compute(history: &History, now: u64) -> LimitStatus {
     LimitStatus {
         now,
         data: !(history.priced.is_empty() && history.snapshots.is_empty()),
+        unpriced: history.priced.unpriced,
         windows: vec![five.status, seven.status],
         burn,
         forecast,
@@ -352,6 +356,11 @@ fn full_at(used: f64, k: f64, usd_per_hour: f64, now: u64, end: u64) -> Full {
     } else {
         Full::AfterReset
     }
+}
+
+/// Returns whether `n` is zero, so that a zero unpriced count stays out of the JSON.
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// Returns the weekly windows that the snapshots name, oldest first.

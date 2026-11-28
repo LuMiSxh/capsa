@@ -12,10 +12,12 @@ mod compare;
 mod guard;
 mod handbacks;
 mod output;
+mod providers;
 mod returns;
 mod scripts;
 mod skills;
 mod tools;
+mod unknown;
 
 pub(crate) use agents::AgentsView;
 pub(crate) use by::ByView;
@@ -24,10 +26,12 @@ pub(crate) use compare::CompareOut;
 pub(crate) use guard::GuardView;
 pub(crate) use handbacks::HandbacksView;
 pub(crate) use output::OutputView;
+pub(crate) use providers::ProvidersView;
 pub(crate) use returns::ReturnsView;
 pub(crate) use scripts::ScriptsView;
 pub(crate) use skills::SkillsView;
 pub(crate) use tools::ToolsView;
+pub(crate) use unknown::UnknownView;
 
 /// A table with one header per column; `align` holds an `r` for each right-aligned column.
 pub(crate) fn table(head: &[&str], align: &str, rows: Vec<Vec<String>>) -> Table {
@@ -96,6 +100,10 @@ pub(crate) fn cost_rows(doc: &mut Doc, r: &Report, config: &Config) {
         usd(r.cost.usd),
         r.cost.unpriced
     ));
+    if r.cost.unpriced > 0 {
+        doc.row("unpriced")
+            .text("census usage --unknown lists the models without a list price");
+    }
     let providers: Vec<String> = r
         .providers
         .iter()
@@ -104,7 +112,7 @@ pub(crate) fn cost_rows(doc: &mut Doc, r: &Report, config: &Config) {
                 "{} {} ({})",
                 p.provider,
                 usd(p.cost.usd),
-                provider_kind(config, p.provider)
+                provider_kind(config, &p.provider)
             )
         })
         .collect();

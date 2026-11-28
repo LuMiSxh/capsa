@@ -3,6 +3,8 @@
 //! newline-delimited JSON on stdio.
 //!
 //! - any request `echo/*`: answers `{"echoed": params}`
+//! - request `mock/env`: answers `{"env": {"ANTHROPIC_MODEL": ..., ...}}` with
+//!   the model variables it received in its environment (`null` when unset)
 //! - request `ask`: sends the client a `session/request_permission` request
 //!   (id "perm-1"), answers `ask` with the client's reply
 //! - request `initialize`: answers `{"echoed": params}`, like `echo/*`
@@ -130,6 +132,14 @@ fn main() {
             }
             (Some(m), Some(id)) if m.starts_with("echo/") => {
                 send(&json!({"jsonrpc": "2.0", "id": id, "result": {"echoed": params}}));
+            }
+            (Some("mock/env"), Some(id)) => {
+                let var = |name: &str| std::env::var(name).ok();
+                send(&json!({"jsonrpc": "2.0", "id": id, "result": {"env": {
+                    "ANTHROPIC_MODEL": var("ANTHROPIC_MODEL"),
+                    "ANTHROPIC_CUSTOM_MODEL_OPTION": var("ANTHROPIC_CUSTOM_MODEL_OPTION"),
+                    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": var("ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"),
+                }}}));
             }
             (Some("initialize"), Some(id)) => initialize(&id, &params, steer.is_some()),
             (Some("_session/steering"), Some(id)) => {

@@ -126,6 +126,30 @@ fn language_call_cases() -> Vec<(Lang, &'static str, Vec<&'static str>)> {
             "helper - Bare 8",
         ],
     ));
+    #[cfg(feature = "lang-csharp")]
+    cases.push((
+        Lang::CSharp,
+        "using System;\nnamespace App {\n    class Repo {\n        void Load() {\n            var a = Parse(1);\n            var b = new Thing();\n            var c = this.Make();\n            var d = new ns.Bar();\n            var e = other.Send(a);\n        }\n    }\n}\n",
+        vec![
+            "Parse - Bare 5",
+            "Thing - Ctor 6",
+            "Make this SelfRecv 7",
+            "Bar ns Ctor 8",
+            "Send other Method 9",
+        ],
+    ));
+    #[cfg(feature = "lang-go")]
+    cases.push((
+        Lang::Go,
+        "package main\n\nimport \"fmt\"\n\nfunc run(obj *Repo, a, b int) {\n\thelper(1)\n\tfmt.Println(helper(1))\n\tobj.Send(2)\n\treturn id[int](a, b)\n}\n",
+        vec![
+            "helper - Bare 6",
+            "Println fmt Path 7",
+            "helper - Bare 7",
+            "Send obj Method 8",
+            "id - Bare 9",
+        ],
+    ));
     #[cfg(feature = "lang-swift")]
     cases.push((
         Lang::Swift,

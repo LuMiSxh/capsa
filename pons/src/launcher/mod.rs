@@ -33,6 +33,9 @@ pub struct Spawn {
     /// inherited `PATH`, then the user bin directories). `None` leaves the
     /// environment alone.
     pub path_dirs: Option<Vec<PathBuf>>,
+    /// Environment entries for the agent, applied after `PATH`. Empty leaves the rest of
+    /// its environment alone.
+    pub env: Vec<(String, String)>,
     /// How the command was chosen, for the log.
     pub how: String,
 }
@@ -91,6 +94,7 @@ fn plan_with(env: &Env, fs: &dyn Fs, command: &[String]) -> Result<Spawn, Failur
                 path_dirs: Some(which::child_path(env, fs, &path)),
                 program: path.into_os_string(),
                 args,
+                env: Vec::new(),
             }
         }
     };
@@ -111,12 +115,14 @@ fn explicit(env: &Env, fs: &dyn Fs, program: &str, args: &[String]) -> Spawn {
             path_dirs: Some(which::child_path(env, fs, &path)),
             program: path.into_os_string(),
             args: args.to_vec(),
+            env: Vec::new(),
         },
         None => Spawn {
             how: "explicit command".to_owned(),
             program: program.into(),
             args: args.to_vec(),
             path_dirs: None,
+            env: Vec::new(),
         },
     }
 }

@@ -555,6 +555,7 @@ mod tests {
         LimitStatus {
             now,
             data: true,
+            unpriced: 0,
             windows: vec![w],
             burn: Burn {
                 usd_per_hour_15: 0.0,

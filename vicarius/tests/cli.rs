@@ -51,6 +51,8 @@ fn show_prints_the_defaults_and_writes_nothing() {
     let stdout = text(&out.stdout);
     assert!(stdout.contains("3337"), "{stdout}");
     assert!(stdout.contains("senior-worker"), "{stdout}");
+    assert!(stdout.contains("DEEPSEEK_API_KEY"), "{stdout}");
+    assert!(stdout.contains("deepseek-v4-pro"), "{stdout}");
     assert!(!home.path().join(CONFIG_FILE).exists());
 }
 
@@ -62,6 +64,11 @@ fn json_is_one_value_with_the_settings_and_the_path() {
     let value: Value = serde_json::from_slice(&out.stdout).expect("one JSON value");
     assert_eq!(value["port"], 3337);
     assert_eq!(value["agents"][0]["from"], "senior-worker");
+    assert_eq!(
+        value["providers"]["deepseek"]["key_env"],
+        "DEEPSEEK_API_KEY"
+    );
+    assert_eq!(value["providers"]["deepseek"]["balance"]["min_usd"], 1.0);
     assert!(value["path"].is_string());
 }
 
@@ -105,9 +112,16 @@ fn set_saves_each_scalar_and_prints_the_settings() {
     }
     let config = saved(home.path());
     assert_eq!(config.port, 4000);
-    assert_eq!(config.min_balance_usd, 2.5);
-    assert_eq!(config.balance_refresh_minutes, 5);
+    let balance = config
+        .provider_balance("deepseek")
+        .expect("the DeepSeek balance block");
+    assert_eq!(balance.min_usd, 2.5);
+    assert_eq!(balance.refresh_minutes, 5);
     assert_eq!(config.max_context_tokens, 500_000);
+    let text = std::fs::read_to_string(home.path().join(CONFIG_FILE)).expect("config text");
+    assert!(text.contains("[providers.deepseek.balance]"), "{text}");
+    assert!(!text.contains("min_balance_usd"), "{text}");
+    assert!(!text.contains("balance_refresh_minutes"), "{text}");
 }
 
 #[test]

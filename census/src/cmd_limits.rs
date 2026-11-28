@@ -57,6 +57,9 @@ impl Render for PlanView<'_> {
         ));
         doc.row("weekly").text(forecast_text(s.forecast.as_ref()));
         doc.row("5h windows").text(five_hour_text(&s.five_hour));
+        if s.unpriced > 0 {
+            doc.row("unpriced").text(unpriced_text(s.unpriced));
+        }
         doc.row("basis").dim(basis_text(s));
     }
 
@@ -122,6 +125,9 @@ impl Render for BudgetOut<'_> {
         }
         doc.row("month ends")
             .text(format!("{} days, at {}", m.days_left, when(m.end)));
+        if m.unpriced > 0 {
+            doc.row("unpriced").text(unpriced_text(m.unpriced));
+        }
     }
 
     fn outcome(&self) -> Outcome {
@@ -141,6 +147,11 @@ fn run_budget(config: &Config, out: &Out) -> Result<Outcome> {
 
 fn outcome(data: bool) -> Outcome {
     if data { Outcome::Found } else { Outcome::Empty }
+}
+
+/// The row that names unpriced requests and the command that lists them.
+fn unpriced_text(n: u64) -> String {
+    format!("{n} requests had no list price and counted as $0; census usage --unknown lists them")
 }
 
 /// A dollar amount. Adding zero turns the `-0.0` of an empty window into `0.0`, which would

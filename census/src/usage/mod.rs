@@ -28,7 +28,7 @@ pub use guard::{
 pub use handback::{HandbackWeek, RoleHandbacks};
 pub use output::{ContextBucket, GapBucket, OutputStat};
 pub use prices::{
-    Cost, LOG as PRICE_LOG, LOG_LIMIT as PRICE_LOG_LIMIT, PROVIDERS, knows_provider,
+    Cost, LOG as PRICE_LOG, LOG_LIMIT as PRICE_LOG_LIMIT, known_providers, knows_provider,
     refresh as refresh_prices,
 };
 pub use returns::ReturnStat;
@@ -57,8 +57,10 @@ pub struct UsageOpts {
     pub days: Option<u64>,
     /// Case-insensitive substring of the session's working directory.
     pub project: Option<String>,
-    /// Only requests billed by this provider, as the price table names it.
-    pub provider: Option<&'static str>,
+    /// Only requests billed by this provider, as the price table or `[provider_prefixes]` names it.
+    pub provider: Option<String>,
+    /// Prefixes of unpriced model ids → provider, from `[provider_prefixes]` in the config.
+    pub provider_prefixes: BTreeMap<String, String>,
 }
 
 /// Relative cost in input-token equivalents (Anthropic list-price ratios):
@@ -233,7 +235,7 @@ pub struct Report {
 #[derive(Debug, Serialize)]
 pub struct ModelStat {
     pub model: String,
-    pub provider: &'static str,
+    pub provider: String,
     pub tokens: Tokens,
     pub cost: Cost,
 }
@@ -241,7 +243,7 @@ pub struct ModelStat {
 /// The requests of one provider. `anthropic` is the Claude subscription, the others are API spend.
 #[derive(Debug, Serialize)]
 pub struct ProviderStat {
-    pub provider: &'static str,
+    pub provider: String,
     pub tokens: Tokens,
     pub cost: Cost,
 }
@@ -426,15 +428,15 @@ fn default_root(env: &str, home_sub: &str, sub: &str) -> Option<PathBuf> {
 
 /// The report over every transcript `o` selects.
 pub fn report(o: &UsageOpts) -> Report {
-    merge::build(&read_files(o), Side::All)
+    merge::build(&read_files(o), Side::All, &o.provider_prefixes)
 }
 
 /// The report before and after `date` (ms since the epoch, from `parse_date`), read in one pass.
 pub fn compare(o: &UsageOpts, date: u64) -> (Report, Report) {
     let files = read_files(o);
     (
-        merge::build(&files, Side::Before(date)),
-        merge::build(&files, Side::After(date)),
+        merge::build(&files, Side::Before(date), &o.provider_prefixes),
+        merge::build(&files, Side::After(date), &o.provider_prefixes),
     )
 }
 
@@ -468,10 +470,10 @@ fn read_files(o: &UsageOpts) -> Vec<FileStats> {
         let q = q.to_lowercase();
         files.retain(|f| f.cwd.to_lowercase().contains(&q));
     }
-    if let Some(provider) = o.provider {
+    if let Some(provider) = &o.provider {
         for f in &mut files {
             f.requests
-                .retain(|q| prices::billed_by(&q.model) == provider);
+                .retain(|q| prices::billed_by(&q.model, &o.provider_prefixes) == provider.as_str());
         }
         files.retain(|f| !f.requests.is_empty());
     }

@@ -88,11 +88,21 @@ Each program is searched on `PATH` first, then in the user directories that Zed'
 
 On Windows, `.cmd` and `.bat` shims are spawned through `cmd.exe /c` by Rust's `Command`, which escapes their arguments and refuses what it cannot make safe. pons also rejects arguments containing `"`, `%`, `^`, `&`, `|`, `<`, `>`, `!`, a backtick or a line break for such a shim. `pons self doctor` shows what would be chosen.
 
-The environment (including Anthropic auth) is inherited by the agent process.
+The environment (including Anthropic auth) is inherited by the agent process. `--model`, `--model-option` and `--model-name` override the model variables; see [Models](#models).
 
 ### MCP servers for the session
 
 `--mcp-server NAME=COMMAND[,ARG...]` (repeatable) adds a stdio MCP server to every `session/new`, `session/load` and `session/resume` request that Zed sends through pons, so the server exists only in those sessions. A server whose name Zed already sends keeps Zed's entry.
+
+### Models
+
+The adapter reads its model from the environment, so pons can select one without touching the ACP messages:
+
+- `--model ID` sets `ANTHROPIC_MODEL` and `ANTHROPIC_CUSTOM_MODEL_OPTION`: the session starts on that model and it appears in the picker.
+- `--model-option ID` sets only `ANTHROPIC_CUSTOM_MODEL_OPTION`: the session starts on Claude and the model appears in the picker. It conflicts with `--model`.
+- `--model-name LABEL` sets `ANTHROPIC_CUSTOM_MODEL_OPTION_NAME`, the picker label for either flag.
+
+The same variables can be set in the `"env"` object of Zed's `agent_servers` entry instead. A flag overrides the variable it sets; without a flag pons leaves the agent's model environment unchanged. pons never inspects a model id or rewrites the adapter's model list, so a provider behind `ANTHROPIC_BASE_URL` (vicarius, say) must accept the name.
 
 ## Platforms
 
@@ -247,6 +257,7 @@ pons [--log FILE | --no-log] [--log-dir DIR] [--log-level all|default|meta]
      [--auto-approve-tools LIST]
      [--force-features] [--no-subagent-text] [--max-failures N] [--no-census]
      [--mcp-server NAME=COMMAND[,ARG...]]...
+     [--model ID | --model-option ID] [--model-name LABEL]
      [-- <agent> [args...]]
 pons self doctor [--log FILE] [--log-dir DIR] [--all] [--agent-cmd CMD...]
 pons self setup [--package-manager pnpm|bun|npm] [--dry-run]
@@ -269,7 +280,7 @@ pons self uninstall [--dry-run]
 The report covers:
 
 - **Launcher:** whether the Claude ACP adapter can be started, which launcher would run it, its version when known, and, when none can, the install command for pnpm, bun or npm on `PATH`. It lists every candidate's resolved path, and the version the launcher resolves to, read from its `package.json` and never by starting it. That version is labelled apart from the adapter Zed installed under `external_agents`, which pons would not use unless the command points at it. Two more checks compare the installed adapter with the `latest` version in the npm registry, and the Claude Code it bundles with the `claude` on `PATH`. The registry request has a 5-second timeout; without an answer the check is `ok` and says it could not check. A stale adapter, or a bundled Claude Code older than the terminal's, warns with the command that installs the latest adapter, so models added since the bundled version appear in Zed.
-- **Zed:** whether Zed's `settings.json` (`~/.config/zed/` on macOS and Linux, `%APPDATA%\Zed\` on Windows) has an `agent_servers` entry running pons. It is parsed leniently as JSONC, so a parse failure only changes the wording.
+- **Zed:** whether Zed's `settings.json` (`~/.config/zed/` on macOS and Linux, `%APPDATA%\Zed\` on Windows) has an `agent_servers` entry running pons. It is parsed leniently as JSONC, so a parse failure only changes the wording. The details show the startup model and custom option from the environment, and the model variables an entry sets in its `env`.
 - **Processes:** the running pons processes (Unix), flagged `STALE` when one started before the installed binary was replaced and so still runs old code.
 - **Wire log:** the log given by `--log`, `PONS_LOG`, else the newest per-start log in the log directory, else `pons.log` in the temp directory. It shows the size and rotated copy, cancels dropped, forwarded and stop escapes, subagents tracked, finished and provisionally finished, fail-safe events, dropped task notifications, why pons last exited, and the last 5 notes. A footer names `pons self doctor --all` for the older notes, and a directory from before the move to the state directory is reported with a hint when it still exists.
 

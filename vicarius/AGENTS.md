@@ -11,39 +11,45 @@ the settings and the launchd service.
 Paths are relative to `vicarius/`. vicarius depends on `capsa-core` only.
 
 - `src/main.rs`: the clap CLI: `serve` and the `self` command group.
-- `src/cmd_serve.rs`: `vicarius serve`; owns the tokio runtime, the key from `DEEPSEEK_API_KEY`,
-  the shutdown signals and `spawn_balance_refresh`, the place where the refresh task starts.
-- `src/gate.rs`: whether the DeepSeek route is open, the reason it is closed and the last balance.
+- `src/cmd_serve.rs`: `vicarius serve`; owns the tokio runtime, builds one provider spec and one
+  refresher per provider with a balance, and starts the refresh tasks and the shutdown signals.
+- `src/gate.rs`: whether one provider's route is open, the reason it is closed and the last balance.
   A close for `PaymentRequired` or `KeyRejected` bumps a generation; `Refresher::refresh` reads it
   before the fetch and opens through `open_if_unchanged`.
-- `src/proxy/`: `mod.rs` (`ProxyConfig`, `Proxy::bind` and `run`), `handler.rs` (routing and
-  relay), `tap.rs` and `usage.rs` (read tokens from the stream), `record.rs` (counters and
-  `proxy.jsonl`), `headers.rs` (hop-by-hop and the log allowlist), `local.rs` (`/vicarius/*`),
-  `inline_tools.rs` (moves the inline tool definitions into the request's `tools`).
+- `src/proxy/`: `mod.rs` (`ProviderId`, `ProviderSpec`, `ProviderRuntime`, `ProxyConfig`,
+  `Proxy::bind` and `run`), `handler.rs` (routing and relay), `tap.rs` and `usage.rs` (read tokens
+  from the stream), `record.rs` (counters and `proxy.jsonl`), `headers.rs` (hop-by-hop and the log
+  allowlist), `local.rs` (`/vicarius/*`, with the gate and refresh of every provider under
+  `providers`), `compat.rs` (applies the provider's compat flags), `inline_tools.rs` (moves the
+  inline tool definitions into the request's `tools`).
 - `tests/proxy/`: the proxy against mock upstreams on 127.0.0.1.
 - `src/agents/`: derives `<from>-ds.md` from each configured agent file. `frontmatter.rs` does the
   line-based edit, `sync.rs` writes, refreshes and removes the files, treating a suspended agent as
   not configured, and `tests.rs` tests both.
 - `src/balance.rs`: parses the `/user/balance` answer and decides availability; tested in
   `tests/balance.rs`.
-- `src/refresh.rs`: `Refresher` fetches `/user/balance`, sets the gate, syncs the agent files and
-  withdraws them on shutdown.
-- `src/bulletin.rs`: publishes the gate to the capsa bulletin as `vicarius.json` from a blocking
-  thread; `self uninstall` removes it through the shared core. The publish is tested in
+- `src/refresh.rs`: one `Refresher` per provider with a balance fetches its `balance.url`, sets its
+  gate and, for the provider that derives agents, syncs them and withdraws them on shutdown.
+- `src/bulletin.rs`: publishes each gate to the capsa bulletin as `vicarius.json` from a blocking
+  thread; `providers.<name>` holds every published provider and `deepseek` stays the summary census
+  reads. `self uninstall` removes it through the shared core. The publish is tested in
   `tests/refresh/`.
 - `tests/refresh/`: the refresher against a mock balance endpoint, with a temporary agents dir.
 - `src/service/`: the launchd plist, the `Launchctl` trait (faked in tests), the settings keys and
   the hook. `src/cmd_service/`: `self setup`, `start`, `stop` and the uninstall removal.
-- `src/cmd_doctor.rs`, `src/cmd_hook.rs`, `src/cmd_status.rs`: the commands.
+- `src/cmd_doctor.rs`, `src/cmd_hook.rs`, `src/cmd_status.rs`: the commands. Doctor checks each
+  provider's `key_env` and warns about an agent model no provider serves; the hook names each open
+  provider instead of DeepSeek; status shows a row per provider.
   `src/status_client.rs`: the plain-TCP client and lenient status types.
   `src/test_support.rs`: test doubles. `tests/service_cli.rs`: hook, status and doctor through the
   binary.
 - `src/cmd_self.rs`: `self update` and `self uninstall` (feature `cmd-update`, on by default) and
   `self config`.
-- `src/cmd_config.rs`: `self config` shows the settings; `set <key> <value>` changes a scalar;
-  `agent add`, `remove`, `suspend` and `activate` edit the derived agents and sync them at once.
-- `src/config.rs`: `config.toml` in the vicarius config directory, its defaults, its rules and the
-  atomic save.
+- `src/cmd_config/`: `self config` shows the settings and one row per provider; `set <key> <value>`
+  changes a scalar; `agent add`, `remove`, `suspend` and `activate` edit the derived agents and sync
+  them at once. `min-balance` and `balance-refresh` are aliases for `providers.deepseek.balance`.
+- `src/config/`: `config.toml` in the vicarius config directory, its provider table, defaults,
+  rules and atomic save; legacy top-level balance keys load and migrate on save.
 - `tests/cli.rs`: the binary, run with its config directory under a scratch home.
 
 ## Commands
@@ -63,7 +69,7 @@ Shared rules: see the root AGENTS.md.
 - A change to a default or to a rule is user-visible: record it in CHANGELOG.
 - The proxy carries the Claude OAuth token and the DeepSeek key. It binds `127.0.0.1` only, logs
   header names but values only for `anthropic-beta`, `anthropic-version` and `x-claude-code-*`,
-  and keeps the key behind `DeepseekKey`, whose `Debug` is redacted. Keep a test for every new
+  and keeps each key behind `ProviderKey`, whose `Debug` is redacted. Keep a test for every new
   logged field.
 - reqwest has no decompression features: bodies and `content-encoding` pass byte for byte. Do not
   add `gzip`, `brotli` or `system-proxy`.

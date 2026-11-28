@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Serves the local endpoint Claude Code uses as its base URL and routes each request.
 
+mod compat;
 mod handler;
 mod headers;
 mod inline_tools;
@@ -9,6 +10,7 @@ mod record;
 mod tap;
 mod usage;
 
+use crate::config::{Auth, Compat};
 use crate::gate::{Gate, unix_now};
 use crate::refresh::Refresher;
 use capsa_core::hint::Hint;
@@ -36,7 +38,6 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 type ResBody = UnsyncBoxBody<Bytes, BoxError>;
 
 const ANTHROPIC_URL: &str = "https://api.anthropic.com";
-const DEEPSEEK_URL: &str = "https://api.deepseek.com/anthropic";
 
 /// How long a running response may delay shutdown.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
@@ -47,27 +48,117 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long an upstream may stay silent in the middle of a response.
 const READ_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Holds the DeepSeek API key and never shows it: `Debug` prints a placeholder.
-#[derive(Clone)]
-pub struct DeepseekKey(String);
+/// Identifies a configured provider by its name in `config.toml`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProviderId(String);
 
-impl DeepseekKey {
-    /// Wraps `key`, or returns `None` when it is empty after trimming.
-    pub fn new(key: &str) -> Option<Self> {
-        let key = key.trim();
-        (!key.is_empty()).then(|| DeepseekKey(key.to_owned()))
+impl ProviderId {
+    /// Wraps the provider name that its `[providers.<name>]` table gives it.
+    pub fn new(name: impl Into<String>) -> Self {
+        ProviderId(name.into())
+    }
+
+    /// Returns the provider name used in the routes and the status JSON.
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
-impl DeepseekKey {
+impl fmt::Display for ProviderId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Holds a provider API key and never shows it: `Debug` prints a placeholder.
+#[derive(Clone)]
+pub struct ProviderKey(String);
+
+impl ProviderKey {
+    /// Wraps `key`, or returns `None` when it is empty after trimming.
+    pub fn new(key: &str) -> Option<Self> {
+        let key = key.trim();
+        (!key.is_empty()).then(|| ProviderKey(key.to_owned()))
+    }
+}
+
+impl ProviderKey {
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-impl fmt::Debug for DeepseekKey {
+impl fmt::Debug for ProviderKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("DeepseekKey(<redacted>)")
+        f.write_str("ProviderKey(<redacted>)")
+    }
+}
+
+/// Describes one provider before the proxy formats its key.
+#[derive(Clone, Debug)]
+pub struct ProviderSpec {
+    pub id: ProviderId,
+    pub prefixes: Vec<String>,
+    /// The base URL, without a trailing slash.
+    pub base_url: String,
+    pub key_env: String,
+    pub auth: Auth,
+    pub models: Vec<String>,
+    pub gate: Option<Arc<Gate>>,
+    pub compat: Compat,
+    pub key: Option<ProviderKey>,
+}
+
+/// A provider with its credential ready to send.
+pub struct ProviderRuntime {
+    pub id: ProviderId,
+    pub prefixes: Vec<String>,
+    pub base_url: String,
+    pub key_env: String,
+    pub auth: Auth,
+    pub models: Vec<String>,
+    pub gate: Option<Arc<Gate>>,
+    pub compat: Compat,
+    credential: Option<HeaderValue>,
+    pub(crate) refresher: Option<Arc<Refresher>>,
+}
+
+impl ProviderRuntime {
+    /// Formats the provider's key for its auth mode.
+    fn resolve(spec: ProviderSpec) -> Result<Self, ProxyError> {
+        let credential = match &spec.key {
+            Some(key) => {
+                let text = match spec.auth {
+                    Auth::XApiKey => key.as_str().to_owned(),
+                    Auth::Bearer => format!("Bearer {}", key.as_str()),
+                };
+                let error = || ProxyError::KeyHeader {
+                    provider: spec.id.as_str().to_owned(),
+                    key_env: spec.key_env.clone(),
+                };
+                let mut value = HeaderValue::from_str(&text).map_err(|_| error())?;
+                value.set_sensitive(true);
+                Some(value)
+            }
+            None => None,
+        };
+        Ok(ProviderRuntime {
+            id: spec.id,
+            prefixes: spec.prefixes,
+            base_url: spec.base_url.trim_end_matches('/').to_owned(),
+            key_env: spec.key_env,
+            auth: spec.auth,
+            models: spec.models,
+            gate: spec.gate,
+            compat: spec.compat,
+            credential,
+            refresher: None,
+        })
+    }
+
+    /// Returns the credential to send, in the header that `auth` names.
+    pub(crate) fn credential(&self) -> Option<&HeaderValue> {
+        self.credential.as_ref()
     }
 }
 
@@ -78,21 +169,19 @@ pub struct ProxyConfig {
     pub port: u16,
     /// The base URL of the Anthropic API, without a trailing slash.
     pub anthropic_base: String,
-    /// The base URL of DeepSeek's Anthropic-compatible API, without a trailing slash.
-    pub deepseek_base: String,
-    pub deepseek_key: Option<DeepseekKey>,
+    /// The providers that requests are routed to.
+    pub providers: Vec<ProviderSpec>,
     /// The `proxy.jsonl` file.
     pub log_file: PathBuf,
 }
 
 impl ProxyConfig {
-    /// Returns the production setup for `port`.
-    pub fn new(port: u16, deepseek_key: Option<DeepseekKey>) -> Self {
+    /// Returns the production Anthropic URL and log file for `port`.
+    pub fn new(port: u16, providers: Vec<ProviderSpec>) -> Self {
         ProxyConfig {
             port,
             anthropic_base: ANTHROPIC_URL.to_owned(),
-            deepseek_base: DEEPSEEK_URL.to_owned(),
-            deepseek_key,
+            providers,
             log_file: crate::proxy_log_file(),
         }
     }
@@ -109,8 +198,8 @@ pub enum ProxyError {
     },
     #[error("cannot build the upstream HTTP client")]
     Client(#[source] reqwest::Error),
-    #[error("the DeepSeek key cannot be sent as a header")]
-    KeyHeader,
+    #[error("the `{key_env}` key of provider `{provider}` cannot be sent as a header")]
+    KeyHeader { provider: String, key_env: String },
 }
 
 impl Hint for ProxyError {
@@ -119,9 +208,9 @@ impl Hint for ProxyError {
             ProxyError::Bind { .. } => Some(Cow::Borrowed(
                 "another program uses the port; choose a free one with `vicarius self config set port <n>`",
             )),
-            ProxyError::KeyHeader => Some(Cow::Borrowed(
-                "check that DEEPSEEK_API_KEY holds only the key",
-            )),
+            ProxyError::KeyHeader { key_env, .. } => Some(Cow::Owned(format!(
+                "check that {key_env} holds only the key"
+            ))),
             ProxyError::Client(_) => None,
         }
     }
@@ -137,9 +226,9 @@ impl Proxy {
     /// Binds `127.0.0.1` on the configured port. No other interface is ever used.
     ///
     /// # Errors
-    /// Fails when the port is taken, the client cannot be built or the key is not a valid
-    /// header value.
-    pub async fn bind(config: ProxyConfig, gate: Arc<Gate>) -> Result<Proxy, ProxyError> {
+    /// Fails when the port is taken, the client cannot be built or a key is not a valid header
+    /// value.
+    pub async fn bind(config: ProxyConfig) -> Result<Proxy, ProxyError> {
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, config.port));
         let listener = TcpListener::bind(addr)
             .await
@@ -156,25 +245,22 @@ impl Proxy {
             .read_timeout(READ_TIMEOUT)
             .build()
             .map_err(ProxyError::Client)?;
-        let key = match &config.deepseek_key {
-            Some(key) => {
-                let mut value = HeaderValue::from_str(&key.0).map_err(|_| ProxyError::KeyHeader)?;
-                value.set_sensitive(true);
-                Some(value)
-            }
-            None => None,
-        };
+        let providers = config
+            .providers
+            .into_iter()
+            .map(ProviderRuntime::resolve)
+            .collect::<Result<Vec<_>, _>>()?;
         let port = listener.local_addr().map_or(config.port, |a| a.port());
+        let routes: Vec<String> = std::iter::once("anthropic".to_owned())
+            .chain(providers.iter().map(|p| p.id.as_str().to_owned()))
+            .collect();
         let state = State {
             hosts: [format!("127.0.0.1:{port}"), format!("localhost:{port}")],
             client,
             anthropic_base: config.anthropic_base.trim_end_matches('/').to_owned(),
-            deepseek_base: config.deepseek_base.trim_end_matches('/').to_owned(),
-            key,
-            gate,
-            recorder: Arc::new(record::Recorder::new(config.log_file)),
+            providers,
+            recorder: Arc::new(record::Recorder::new(config.log_file, routes)),
             started_at: unix_now(),
-            refresher: None,
         };
         Ok(Proxy {
             listener,
@@ -184,9 +270,11 @@ impl Proxy {
 
     /// Connects the refresher that `POST /vicarius/refresh` runs and the status reports.
     #[must_use]
-    pub fn with_refresher(mut self, refresher: Arc<Refresher>) -> Proxy {
-        if let Some(state) = Arc::get_mut(&mut self.state) {
-            state.refresher = Some(refresher);
+    pub fn with_refresher(mut self, provider: &ProviderId, refresher: Arc<Refresher>) -> Proxy {
+        if let Some(state) = Arc::get_mut(&mut self.state)
+            && let Some(found) = state.providers.iter_mut().find(|p| &p.id == provider)
+        {
+            found.refresher = Some(refresher);
         }
         self
     }

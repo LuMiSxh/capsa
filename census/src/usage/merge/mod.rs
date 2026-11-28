@@ -10,7 +10,7 @@ use super::{
     SpawnCall, Tokens, ToolStat, handback,
 };
 use agents::{Spawn, agent_stats};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 mod agents;
@@ -40,12 +40,16 @@ impl Side {
 
 /// Folds `files` into one report over the requests `side` keeps. Cache gaps are judged on every
 /// request of a thread, so a cut does not hide the request that follows it.
-pub(super) fn build(files: &[FileStats], side: Side) -> Report {
+pub(super) fn build(
+    files: &[FileStats],
+    side: Side,
+    prefixes: &BTreeMap<String, String>,
+) -> Report {
     let mut acc = Acc::default();
     for f in files {
         acc.file(f, side);
     }
-    acc.finish()
+    acc.finish(prefixes)
 }
 
 /// What a report folds its transcripts into.
@@ -55,7 +59,6 @@ struct Acc<'a> {
     seen: HashSet<&'a str>,
     sessions: HashMap<(&'static str, String), Session>,
     models: HashMap<&'a str, (Tokens, Cost)>,
-    providers: HashMap<&'static str, (Tokens, Cost)>,
     tools: HashMap<String, ToolStat>,
     contexts: Vec<u64>,
     context_buckets: HashMap<(&'static str, usize), ContextAcc>,
@@ -172,12 +175,6 @@ impl<'a> Acc<'a> {
             let m = self.models.entry(q.model.as_str()).or_default();
             m.0.add(t);
             m.1.merge(&cost);
-            let p = self
-                .providers
-                .entry(super::prices::billed_by(&q.model))
-                .or_default();
-            p.0.add(t);
-            p.1.merge(&cost);
             self.r.total.add(t);
             self.r.cost.merge(&cost);
             if s.model.is_empty() || s.model == "<synthetic>" {
@@ -229,7 +226,7 @@ impl<'a> Acc<'a> {
         b.output += q.tokens.output;
     }
 
-    fn finish(self) -> Report {
+    fn finish(self, prefixes: &BTreeMap<String, String>) -> Report {
         let mut r = self.r;
         r.weighted = r.total.weighted();
         r.context = quantiles(self.contexts);
@@ -245,20 +242,26 @@ impl<'a> Acc<'a> {
         }
         r.sessions
             .sort_by(|a, b| b.weighted.total_cmp(&a.weighted).then(a.id.cmp(&b.id)));
+        let mut providers: BTreeMap<String, (Tokens, Cost)> = BTreeMap::new();
         let mut models: Vec<super::ModelStat> = self
             .models
             .into_iter()
-            .map(|(m, (tokens, cost))| super::ModelStat {
-                provider: super::prices::billed_by(m),
-                model: m.to_owned(),
-                tokens,
-                cost,
+            .map(|(m, (tokens, cost))| {
+                let provider = super::prices::billed_by(m, prefixes).to_owned();
+                let p = providers.entry(provider.clone()).or_default();
+                p.0.add(&tokens);
+                p.1.merge(&cost);
+                super::ModelStat {
+                    provider,
+                    model: m.to_owned(),
+                    tokens,
+                    cost,
+                }
             })
             .collect();
         models.sort_by(|a, b| b.tokens.weighted().total_cmp(&a.tokens.weighted()));
         r.models = models;
-        let mut providers: Vec<super::ProviderStat> = self
-            .providers
+        r.providers = providers
             .into_iter()
             .map(|(provider, (tokens, cost))| super::ProviderStat {
                 provider,
@@ -266,8 +269,6 @@ impl<'a> Acc<'a> {
                 cost,
             })
             .collect();
-        providers.sort_by_key(|p| p.provider);
-        r.providers = providers;
         r.tools = self.tools.into_values().collect();
         r.result_chars = r.tools.iter().map(|t| t.result_chars).sum();
         r.tools

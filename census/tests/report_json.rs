@@ -171,6 +171,24 @@ fn claude_fixture(home: &Scratch) {
     );
 }
 
+/// One priced, one unpriced and one unknown model in October 2026, each with a request of its own.
+fn provider_fixture(home: &Scratch) {
+    home.write(
+        "claude/projects/app/s1.jsonl",
+        &jsonl(&[
+            json!({"type": "assistant", "timestamp": "2026-10-14T08:00:10.000Z",
+                "message": {"id": "m1", "model": "deepseek-flash",
+                    "usage": {"input_tokens": 1000, "output_tokens": 100}}}),
+            json!({"type": "assistant", "timestamp": "2026-10-14T08:01:10.000Z",
+                "message": {"id": "m2", "model": "deepseek-v5",
+                    "usage": {"input_tokens": 2000, "output_tokens": 200}}}),
+            json!({"type": "assistant", "timestamp": "2026-10-14T08:02:10.000Z",
+                "message": {"id": "m3", "model": "kimi-k2",
+                    "usage": {"input_tokens": 3000, "output_tokens": 300}}}),
+        ]),
+    );
+}
+
 /// The acus guard log: a deny, a hint and an escaped call, in the format acus writes.
 fn guard_fixture(home: &Scratch) {
     home.write(
@@ -278,6 +296,25 @@ fn usage_views_json_are_unchanged() {
         let out = run(&["--json", "usage", "--by", kind]);
         golden(&format!("usage_by_{kind}"), &out, home.path(), 0);
     }
+}
+
+#[test]
+fn usage_provider_views_json_are_unchanged() {
+    let home = Scratch::new("golden-usage-providers");
+    provider_fixture(&home);
+    let run = |args: &[&str]| census(home.path(), home.path(), args, "");
+    golden(
+        "usage_providers",
+        &run(&["--json", "usage", "--providers"]),
+        home.path(),
+        0,
+    );
+    golden(
+        "usage_unknown",
+        &run(&["--json", "usage", "--unknown"]),
+        home.path(),
+        0,
+    );
 }
 
 /// The hour buckets follow the offset: the fixtures' events are at 09:00 and 10:00 UTC, so under

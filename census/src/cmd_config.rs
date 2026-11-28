@@ -254,12 +254,13 @@ fn apply(file: &ConfigFile, key: Key, warnings: &mut Vec<String>) -> Result<()> 
         }
         Key::Billing { provider, value } => {
             let (provider, billing) = billing_key(&provider, &value)?;
-            if !knows_provider(&provider) {
+            let mut config = file.load::<Config>().hinted()?;
+            let configured = config.provider_prefixes.values().any(|p| *p == provider);
+            if !knows_provider(&provider) && !configured {
                 warnings.push(format!(
                     "`{provider}` is not in the price table; the setting has no effect yet"
                 ));
             }
-            let mut config = file.load::<Config>().hinted()?;
             config.billing.insert(provider, billing);
             file.save(&config).hinted()?;
         }

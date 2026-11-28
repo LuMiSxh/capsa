@@ -4,9 +4,9 @@
 use crate::now_secs;
 use crate::out::Out;
 use crate::usage_views::{
-    AgentsView, ByView, CacheView, CompareOut, GuardView, HandbacksView, OutputView, ReturnsView,
-    ScriptsView, SkillsView, ToolsView, cost_rows, k, money, provider_kind, rate, sizes_text,
-    table,
+    AgentsView, ByView, CacheView, CompareOut, GuardView, HandbacksView, OutputView, ProvidersView,
+    ReturnsView, ScriptsView, SkillsView, ToolsView, UnknownView, cost_rows, k, money,
+    provider_kind, rate, sizes_text, table,
 };
 use anyhow::Result;
 use capsa_core::exit::Outcome;
@@ -28,9 +28,16 @@ pub struct Args {
     /// Only sessions whose working directory contains this text.
     #[arg(long)]
     project: Option<String>,
-    /// Only requests billed by this provider: `anthropic` (Claude), `deepseek`, `openai` (Codex).
-    #[arg(long, value_name = "PROVIDER", value_parser = census::usage::PROVIDERS)]
+    /// Only requests billed by this provider: a price-table provider or one named by
+    /// `[provider_prefixes]`.
+    #[arg(long, value_name = "PROVIDER")]
     provider: Option<String>,
+    /// Requests, weighted tokens, cost, unpriced requests and billing per provider.
+    #[arg(long)]
+    providers: bool,
+    /// The models without a list price, with their provider, requests and weighted tokens.
+    #[arg(long)]
+    unknown: bool,
     /// Rows per table.
     #[arg(long, default_value_t = 10)]
     top: usize,
@@ -90,6 +97,19 @@ pub struct Args {
     by: Option<String>,
 }
 
+/// Fails with a hint when `name` is neither a price-table provider nor a configured prefix's.
+fn reject_unknown_provider(name: &str, config: &Config) -> Result<()> {
+    let known = census::usage::known_providers(&config.provider_prefixes);
+    if known.contains(name) {
+        return Ok(());
+    }
+    let names: Vec<&str> = known.iter().map(String::as_str).collect();
+    Err(capsa_core::hint::hinted(
+        format!("unknown provider `{name}`"),
+        format!("known providers: {}", names.join(", ")),
+    ))
+}
+
 /// `census usage --by`: the expected cost of each bucket of the usage pattern.
 fn by(kind: &str, out: &Out) -> Result<Outcome> {
     let kind = match kind {
@@ -110,14 +130,11 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     }
     let config = Config::load();
     refresh_prices(now_secs(), config.prices_refresh_days);
-    let provider = a.provider.as_deref().and_then(|name| {
-        census::usage::PROVIDERS
-            .iter()
-            .copied()
-            .find(|p| *p == name)
-    });
+    if let Some(name) = &a.provider {
+        reject_unknown_provider(name, &config)?;
+    }
     if let Some(kind) = &a.by {
-        if provider.is_some_and(|p| p != "anthropic") {
+        if a.provider.as_deref().is_some_and(|p| p != "anthropic") {
             return Ok(Outcome::Empty);
         }
         return by(kind, out);
@@ -127,7 +144,8 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
         codex_root: a.codex_dir,
         days: a.days,
         project: a.project,
-        provider,
+        provider: a.provider,
+        provider_prefixes: config.provider_prefixes.clone(),
     };
     if let Some(date) = &a.compare {
         let Some(cut) = parse_date(date) else {
@@ -147,6 +165,18 @@ pub fn run(a: Args, out: &Out) -> Result<Outcome> {
     let r = report(&opts);
     if r.sessions.is_empty() {
         return Ok(Outcome::Empty);
+    }
+    if a.providers {
+        return emit(&ProvidersView::new(&r.providers, &config), out.format);
+    }
+    if a.unknown {
+        let view = UnknownView::new(&r.models);
+        let outcome = emit(&view, out.format)?;
+        return Ok(if view.is_empty() {
+            Outcome::Empty
+        } else {
+            outcome
+        });
     }
     if a.tools {
         return emit(&ToolsView::new(&r, a.misses, a.top), out.format);
@@ -251,8 +281,8 @@ fn models(doc: &mut Doc, r: &Report, top: usize, config: &Config) {
         .map(|m| {
             vec![
                 m.model.clone(),
-                m.provider.to_owned(),
-                provider_kind(config, m.provider).to_owned(),
+                m.provider.clone(),
+                provider_kind(config, &m.provider).to_owned(),
                 m.tokens.requests.to_string(),
                 k(m.tokens.weighted()),
                 pct(m.tokens.weighted(), r.weighted),

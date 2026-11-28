@@ -22,6 +22,13 @@ struct TestCli {
     action: Action,
 }
 
+fn with_port(port: u16) -> Config {
+    Config {
+        port,
+        ..Config::default()
+    }
+}
+
 fn read_json(path: &Path) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
@@ -70,10 +77,7 @@ fn suspend_and_activate_take_a_name_or_all_but_not_both() {
 
 #[test]
 fn a_stopped_service_skips_the_sync_and_notes_when_the_files_arrive() {
-    let config = Config {
-        port: free_port(),
-        ..Config::default()
-    };
+    let config = with_port(free_port());
     let (steps, note) = sync_agents(&config);
     assert!(steps.is_empty());
     assert!(note.unwrap().contains("written when it starts"));
@@ -152,14 +156,8 @@ fn max_context_replaces_only_the_value_vicarius_wrote() {
 fn port_restarts_a_loaded_agent_and_rewrites_the_url_once_it_answers() {
     let dir = tempfile::tempdir().unwrap();
     let install = install_in(dir.path());
-    let old = Config {
-        port: free_port(),
-        ..Config::default()
-    };
-    let new = Config {
-        port: serve(vec![("GET /vicarius/status", 200, STATUS)]),
-        ..Config::default()
-    };
+    let old = with_port(free_port());
+    let new = with_port(serve(vec![("GET /vicarius/status", 200, STATUS)]));
     write_env(&install, &json!({"ANTHROPIC_BASE_URL": base_url(old.port)}));
     let lctl = FakeLaunchctl::default();
     lctl.loaded.set(true);
@@ -192,14 +190,8 @@ fn port_restarts_a_loaded_agent_and_rewrites_the_url_once_it_answers() {
 fn port_that_does_not_answer_leaves_the_settings_unchanged() {
     let dir = tempfile::tempdir().unwrap();
     let install = install_in(dir.path());
-    let old = Config {
-        port: free_port(),
-        ..Config::default()
-    };
-    let new = Config {
-        port: free_port(),
-        ..Config::default()
-    };
+    let old = with_port(free_port());
+    let new = with_port(free_port());
     write_env(&install, &json!({"ANTHROPIC_BASE_URL": base_url(old.port)}));
     let before = std::fs::read_to_string(&install.settings).unwrap();
     let lctl = FakeLaunchctl::default();
@@ -227,14 +219,8 @@ fn port_that_does_not_answer_leaves_the_settings_unchanged() {
 fn port_with_the_agent_not_loaded_rewrites_the_url_without_touching_the_agent() {
     let dir = tempfile::tempdir().unwrap();
     let install = install_in(dir.path());
-    let old = Config {
-        port: free_port(),
-        ..Config::default()
-    };
-    let new = Config {
-        port: free_port(),
-        ..Config::default()
-    };
+    let old = with_port(free_port());
+    let new = with_port(free_port());
     write_env(&install, &json!({"ANTHROPIC_BASE_URL": base_url(old.port)}));
     let lctl = FakeLaunchctl::default();
     let items = apply_steps(
@@ -259,14 +245,8 @@ fn port_with_the_agent_not_loaded_rewrites_the_url_without_touching_the_agent() 
 fn port_with_the_agent_not_loaded_creates_no_settings_when_the_url_is_absent() {
     let dir = tempfile::tempdir().unwrap();
     let install = install_in(dir.path());
-    let old = Config {
-        port: free_port(),
-        ..Config::default()
-    };
-    let new = Config {
-        port: free_port(),
-        ..Config::default()
-    };
+    let old = with_port(free_port());
+    let new = with_port(free_port());
     let items = apply_steps(
         &install,
         &FakeLaunchctl::default(),
@@ -285,14 +265,8 @@ fn port_with_the_agent_not_loaded_creates_no_settings_when_the_url_is_absent() {
 fn a_port_that_does_not_answer_is_rolled_back_to_the_old_port() {
     let dir = tempfile::tempdir().unwrap();
     let install = install_in(dir.path());
-    let old = Config {
-        port: serve(vec![("GET /vicarius/status", 200, STATUS)]),
-        ..Config::default()
-    };
-    let new = Config {
-        port: free_port(),
-        ..Config::default()
-    };
+    let old = with_port(serve(vec![("GET /vicarius/status", 200, STATUS)]));
+    let new = with_port(free_port());
     old.save_to(&install.config).unwrap();
     write_env(&install, &json!({"ANTHROPIC_BASE_URL": base_url(old.port)}));
     let before = std::fs::read_to_string(&install.settings).unwrap();

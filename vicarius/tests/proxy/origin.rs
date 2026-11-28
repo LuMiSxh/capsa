@@ -35,7 +35,7 @@ async fn a_wrong_host_gets_403_and_nothing_goes_upstream() {
     assert!(deepseek.seen().is_empty() && anthropic.seen().is_empty());
     let status = proxy.status().await;
     assert_eq!(status["counters"]["forbidden"], 4);
-    assert_eq!(status["counters"]["deepseek"]["requests"], 0);
+    assert_eq!(status["counters"]["routes"]["deepseek"]["requests"], 0);
     let lines = proxy.log_lines(4).await;
     assert_eq!(lines[0]["status"], 403);
     assert_eq!(lines[0]["route"], "none");

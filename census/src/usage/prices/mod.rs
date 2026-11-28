@@ -12,8 +12,8 @@ use crate::ledger::family_of;
 use capsa_core::paths::state_dir;
 use serde::Serialize;
 pub use source::{LOG, LOG_LIMIT};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
-pub use table::PROVIDERS;
 use table::{Price, Table};
 
 /// Refreshes the cached price list when it is older than `days`. The usage, limit and session
@@ -46,31 +46,74 @@ pub(crate) fn fetched_at() -> u64 {
     current().fetched_at
 }
 
+/// Prefixes that name the provider of a model the price list does not know. They duplicate
+/// vicarius's routing table on purpose: census does not depend on vicarius and the two ship
+/// separately.
+const PREFIXES: [(&str, &str); 6] = [
+    ("claude", "anthropic"),
+    ("deepseek-", "deepseek"),
+    ("gpt-", "openai"),
+    ("o1-", "openai"),
+    ("o3-", "openai"),
+    ("o4-", "openai"),
+];
+
+/// The configured prefixes the ledger sees: it reads no config, so only the built-in ones apply.
+const NO_PREFIXES: BTreeMap<String, String> = BTreeMap::new();
+
 /// Returns the provider of a priced model, such as `anthropic`, or `None` for an unknown model.
 pub(crate) fn provider(model: &str) -> Option<&'static str> {
     current().models.get(model).map(|e| e.provider.as_str())
 }
 
-/// Returns the provider that bills a model. An unpriced model is `anthropic` when its id starts
-/// with `claude` (a Claude model the price list does not know yet), else `unknown`.
-pub(crate) fn billed_by(model: &str) -> &'static str {
-    provider(model).unwrap_or(if model.starts_with("claude") {
-        "anthropic"
-    } else {
-        crate::UNKNOWN
-    })
+/// Returns the provider that bills `model`: the price table's, else the longest matching prefix of
+/// `configured` (the config's `[provider_prefixes]`), else a built-in prefix, else `unknown`.
+pub(crate) fn billed_by<'a>(model: &str, configured: &'a BTreeMap<String, String>) -> &'a str {
+    if let Some(named) = provider(model) {
+        return named;
+    }
+    longest_prefix(
+        model,
+        configured.iter().map(|(p, v)| (p.as_str(), v.as_str())),
+    )
+    .or_else(|| longest_prefix(model, PREFIXES.iter().map(|(p, v)| (*p, *v))))
+    .unwrap_or(crate::UNKNOWN)
+}
+
+/// Returns the provider of the longest prefix of `model` in `prefixes`.
+fn longest_prefix<'a>(
+    model: &str,
+    prefixes: impl Iterator<Item = (&'a str, &'a str)>,
+) -> Option<&'a str> {
+    prefixes
+        .filter(|(prefix, _)| model.starts_with(*prefix))
+        .max_by_key(|(prefix, _)| prefix.len())
+        .map(|(_, provider)| provider)
 }
 
 /// Returns whether a request of `model` counts toward the Claude rate-limit windows and the budget
 /// month. Only `anthropic` does, whatever `billing` in the config says: the windows track Claude's
 /// own limits, so a provider set to subscription does not move them.
 pub(crate) fn counts_toward_limits(model: &str) -> bool {
-    billed_by(model) == "anthropic"
+    billed_by(model, &NO_PREFIXES) == "anthropic"
 }
 
 /// Returns whether the price table lists a model of `provider`.
 pub fn knows_provider(provider: &str) -> bool {
     current().models.values().any(|e| e.provider == provider)
+}
+
+/// Returns every provider census can attribute a request to: the price table's, the built-in
+/// prefixes' and `configured`'s.
+pub fn known_providers(configured: &BTreeMap<String, String>) -> BTreeSet<String> {
+    let mut providers: BTreeSet<String> = current()
+        .models
+        .values()
+        .map(|e| e.provider.clone())
+        .collect();
+    providers.extend(PREFIXES.iter().map(|(_, p)| (*p).to_owned()));
+    providers.extend(configured.values().cloned());
+    providers
 }
 
 /// The list-price cost of one request in USD, or `None` for a model without a price.

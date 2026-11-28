@@ -91,6 +91,12 @@ fn spawn_agent(spawn: Spawn) -> Result<(Child, Option<u32>, ChildStdin, ChildStd
     if let Some(path) = spawn.path_dirs.and_then(|d| std::env::join_paths(d).ok()) {
         command.env("PATH", path);
     }
+    command.envs(
+        spawn
+            .env
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str())),
+    );
     own_group(command.as_std_mut());
     let mut child = command
         .stdin(Stdio::piped())

@@ -16,9 +16,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::Notify;
-use vicarius::config::{Agent, Config, Effort};
+use vicarius::config::{Agent, Auth, Compat, Config, Effort};
 use vicarius::gate::{Closed, Gate};
-use vicarius::proxy::{DeepseekKey, Proxy, ProxyConfig};
+use vicarius::proxy::{ProviderId, ProviderKey, ProviderSpec, Proxy, ProxyConfig};
 use vicarius::refresh::{RefreshConfig, Refresher};
 
 const KEY: &str = "sk-REFRESHSECRET777";
@@ -40,24 +40,42 @@ fn rig(base: &str, key: Option<&str>) -> Rig {
     let agents = tmp.path().join("agents");
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(agents.join("senior-worker.md"), SOURCE).unwrap();
-    let key = key.and_then(DeepseekKey::new);
+    let key = key.and_then(ProviderKey::new);
     let gate = Arc::new(Gate::new(key.is_some()));
-    let mut config = RefreshConfig::new(key);
-    config.balance_base = base.to_owned();
-    config.config_file = tmp.path().join("config.toml");
+    let config_file = tmp.path().join("config.toml");
+    let mut stored = Config::default();
+    stored.provider_balance_mut("deepseek").unwrap().url =
+        format!("{}/user/balance", base.trim_end_matches('/'));
+    stored.save_to(&config_file).unwrap();
+    let mut config = RefreshConfig::new(ProviderId::new("deepseek"), key, true);
+    config.config_file = config_file.clone();
     config.agents_dir = agents.clone();
     config.log_file = tmp.path().join("proxy.jsonl");
     config.sync_every = Duration::from_millis(100);
-    config.bulletin_dir = tmp.path().join("bulletin");
+    config.bulletin_dir = Some(tmp.path().join("bulletin"));
     let refresher = Arc::new(Refresher::new(config.clone(), gate.clone()).unwrap());
     Rig {
         refresher,
         gate,
         agents,
-        config_file: config.config_file,
+        config_file,
         log: config.log_file,
-        bulletin: config.bulletin_dir,
+        bulletin: config.bulletin_dir.unwrap(),
         tmp,
+    }
+}
+
+fn provider(base_url: &str, gate: Arc<Gate>, key: Option<ProviderKey>) -> ProviderSpec {
+    ProviderSpec {
+        id: ProviderId::new("deepseek"),
+        prefixes: vec!["deepseek-".to_owned()],
+        base_url: base_url.to_owned(),
+        key_env: "DEEPSEEK_API_KEY".to_owned(),
+        auth: Auth::XApiKey,
+        models: vec!["deepseek-flash".to_owned()],
+        gate: Some(gate),
+        compat: Compat::default(),
+        key,
     }
 }
 
@@ -328,12 +346,19 @@ async fn run_syncs_at_start_and_withdraws_the_agents_on_shutdown() {
 async fn post_refresh_returns_the_updated_status() {
     let mock = balance_mock(200, balance_body(true, "5.00")).await;
     let rig = rig(&mock.url(), Some(KEY));
-    let mut config = ProxyConfig::new(0, DeepseekKey::new(KEY));
+    let mut config = ProxyConfig::new(
+        0,
+        vec![provider(
+            "http://127.0.0.1:1",
+            rig.gate.clone(),
+            ProviderKey::new(KEY),
+        )],
+    );
     config.log_file = rig.tmp.path().join("proxy.jsonl");
-    let proxy = Proxy::bind(config, rig.gate.clone())
+    let proxy = Proxy::bind(config)
         .await
         .unwrap()
-        .with_refresher(rig.refresher.clone());
+        .with_refresher(&ProviderId::new("deepseek"), rig.refresher.clone());
     let addr = proxy.local_addr().unwrap();
     tokio::spawn(proxy.run(std::future::pending()));
     let client = reqwest::Client::new();
@@ -390,13 +415,15 @@ async fn an_available_balance_publishes_the_open_route_with_its_balance() {
     let mock = balance_mock(200, balance_body(true, "5.00")).await;
     let rig = rig(&mock.url(), Some(KEY));
     rig.refresher.refresh().await;
-    let entry = &published(&rig)["deepseek"];
+    let published = published(&rig);
+    let entry = &published["deepseek"];
     assert_eq!(
         entry["value"],
         serde_json::json!({"open": true, "balance_usd": 5.0})
     );
     assert_eq!(entry["ttl"], 1200);
     assert!(entry["at"].is_u64());
+    assert_eq!(published["providers"]["deepseek"], *entry);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -416,13 +443,16 @@ async fn a_402_from_a_proxied_request_publishes_the_closed_route() {
     let deepseek = Mock::start(|_| Reply::full(402, &[], b"insufficient balance")).await;
     let rig = rig("http://127.0.0.1:1", Some(KEY));
     rig.gate.open(9.0, "USD", 1);
-    let mut config = ProxyConfig::new(0, DeepseekKey::new(KEY));
-    config.deepseek_base = format!("{}/anthropic", deepseek.url());
+    let base = format!("{}/anthropic", deepseek.url());
+    let mut config = ProxyConfig::new(
+        0,
+        vec![provider(&base, rig.gate.clone(), ProviderKey::new(KEY))],
+    );
     config.log_file = rig.tmp.path().join("proxy.jsonl");
-    let proxy = Proxy::bind(config, rig.gate.clone())
+    let proxy = Proxy::bind(config)
         .await
         .unwrap()
-        .with_refresher(rig.refresher.clone());
+        .with_refresher(&ProviderId::new("deepseek"), rig.refresher.clone());
     let addr = proxy.local_addr().unwrap();
     tokio::spawn(proxy.run(std::future::pending()));
     let reply = reqwest::Client::new()
@@ -440,7 +470,12 @@ async fn a_402_from_a_proxied_request_publishes_the_closed_route() {
 async fn the_published_ttl_is_twice_the_balance_refresh_period() {
     let mock = balance_mock(200, balance_body(true, "5.00")).await;
     let rig = rig(&mock.url(), Some(KEY));
-    std::fs::write(&rig.config_file, "balance_refresh_minutes = 3\n").unwrap();
+    let mut stored = Config::load_from(&rig.config_file).unwrap();
+    stored
+        .provider_balance_mut("deepseek")
+        .unwrap()
+        .refresh_minutes = 3;
+    stored.save_to(&rig.config_file).unwrap();
     rig.refresher.refresh().await;
     assert_eq!(published(&rig)["deepseek"]["ttl"], 360);
 }

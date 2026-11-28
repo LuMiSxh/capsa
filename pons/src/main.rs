@@ -95,6 +95,7 @@ async fn proxy(cli: Cli) -> Result<Outcome> {
     };
     let logger = Logger::open(log_path.as_deref(), cli.log_level, max_bytes)?;
     logger.log_panics();
+    let model_env = cli.model_env().entries();
     let cfg = Config {
         cancel_filter: !cli.no_cancel_filter,
         fold: !cli.no_fold,
@@ -131,8 +132,9 @@ async fn proxy(cli: Cli) -> Result<Outcome> {
     };
     let note_error =
         |e: &anyhow::Error| logger.log(Dir::Pons, format!("exiting: error: {e:#}").as_bytes());
-    let spawn =
+    let mut spawn =
         launcher::plan_hinted(&Env::from_process(), &RealFs, &cli.agent).inspect_err(note_error)?;
+    spawn.env = model_env;
     logger.log(Dir::Pons, format!("agent: {}", spawn.how).as_bytes());
     if cli.quiet_ms.is_some() {
         logger.log(

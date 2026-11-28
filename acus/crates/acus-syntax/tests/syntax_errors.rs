@@ -30,6 +30,28 @@ fn c_errors_keep_their_line_numbers_after_blanking() {
     );
 }
 
+#[cfg(feature = "lang-csharp")]
+#[test]
+fn csharp_syntax_errors_come_from_the_c_sharp_grammar() {
+    let ok = "namespace App {\n    class Repo {\n        void Load() {}\n    }\n}\n";
+    assert_eq!(syntax_errors(Lang::CSharp, ok, false), Some(vec![]));
+    let broken = "namespace App {\n    class Repo {\n        void Load( {\n    }\n}\n";
+    assert!(
+        !syntax_errors(Lang::CSharp, broken, false)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[cfg(feature = "lang-go")]
+#[test]
+fn go_syntax_errors_come_from_the_go_grammar() {
+    let ok = "package main\n\nfunc Run() {}\n";
+    assert_eq!(syntax_errors(Lang::Go, ok, false), Some(vec![]));
+    let broken = "package main\n\nfunc Run( {\n}\n";
+    assert!(!syntax_errors(Lang::Go, broken, false).unwrap().is_empty());
+}
+
 #[test]
 fn jsonc_comments_and_trailing_commas_parse_in_jsonc_mode() {
     assert_eq!(syntax_errors(Lang::Json, ZED_SETTINGS, true), Some(vec![]));

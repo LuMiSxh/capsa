@@ -20,7 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 type Result<T> = std::result::Result<T, LedgerError>;
 
 /// Layout of `digest.json`. Bump it when a digest with the same fields would mean something else.
-const FORMAT: u32 = 3;
+const FORMAT: u32 = 4;
 
 /// Bytes at the end of `rows.jsonl` that the digest hashes. More than one row, so a replaced file
 /// with the same length still differs.
@@ -33,18 +33,29 @@ pub struct Priced {
     pub raw: Vec<(u64, f64)>,
     /// Hour start and USD of each hourly aggregate.
     pub hourly: Vec<(u64, f64)>,
+    /// Requests that count toward the limits but have no list price; they price as 0 USD.
+    pub unpriced: u64,
 }
 
 impl Priced {
-    /// Prices the limit requests and the aggregates. A model without a price counts as 0 USD, and
-    /// requests of other providers are left out.
+    /// Prices the limit requests and the aggregates. A model without a price counts as 0 USD and
+    /// its requests are counted in `unpriced`; requests of other providers are left out.
     pub fn of(rows: &[Row], hourly: &[Hourly]) -> Self {
+        let mut raw = Vec::new();
+        let mut unpriced = 0;
+        for r in rows {
+            let Some((usd, no_price)) = limit_price(r) else {
+                continue;
+            };
+            if no_price {
+                unpriced += 1;
+            }
+            raw.push((r.t, usd));
+        }
         Priced {
-            raw: rows
-                .iter()
-                .filter_map(|r| Some((r.t, limit_usd(r)?)))
-                .collect(),
+            raw,
             hourly: hourly.iter().map(|h| (h.hour, aggregate_usd(h))).collect(),
+            unpriced,
         }
     }
 
@@ -71,6 +82,9 @@ pub(super) struct Digest {
     /// provider. The ids let the updater skip requests it has read.
     raw: Vec<(String, u64, Option<f64>)>,
     hourly: Vec<(u64, f64)>,
+    /// Requests that count toward the limits but have no list price; they price as 0 USD.
+    #[serde(default)]
+    unpriced: u64,
     /// The fetch time of the price list the USD values were priced with.
     prices: u64,
 }
@@ -96,13 +110,20 @@ impl Digest {
                 .filter_map(|(_, t, usd)| Some((*t, (*usd)?)))
                 .collect(),
             hourly: self.hourly.clone(),
+            unpriced: self.unpriced,
         }
     }
 
     /// Adds the rows the updater appended to `rows.jsonl`, which now ends in `key`.
     pub(super) fn append(&mut self, rows: &[Row], key: RowsKey, now: u64) {
-        self.raw
-            .extend(rows.iter().map(|r| (r.id.clone(), r.t, limit_usd(r))));
+        for r in rows {
+            let price = limit_price(r);
+            if price.is_some_and(|(_, no_price)| no_price) {
+                self.unpriced += 1;
+            }
+            self.raw
+                .push((r.id.clone(), r.t, price.map(|(usd, _)| usd)));
+        }
         self.rows_len = key.len;
         self.rows_tail = key.tail;
         self.updated = now;
@@ -170,6 +191,17 @@ pub(super) fn build(layout: &Layout, now: u64) -> Result<Digest> {
     let (rows_key, hourly_len) = (RowsKey::of(&layout.rows), file_len(&layout.hourly));
     let (folded, hourly) = state::load_hourly(&layout.hourly)?;
     let rows = state::load_rows(&layout.rows, folded)?;
+    let mut unpriced = 0;
+    let raw = rows
+        .into_iter()
+        .map(|r| {
+            let price = limit_price(&r);
+            if price.is_some_and(|(_, no_price)| no_price) {
+                unpriced += 1;
+            }
+            (r.id, r.t, price.map(|(usd, _)| usd))
+        })
+        .collect();
     Ok(Digest {
         format: FORMAT,
         census: env!("CARGO_PKG_VERSION").to_owned(),
@@ -177,13 +209,8 @@ pub(super) fn build(layout: &Layout, now: u64) -> Result<Digest> {
         rows_len: rows_key.len,
         rows_tail: rows_key.tail,
         hourly_len,
-        raw: rows
-            .into_iter()
-            .map(|r| {
-                let usd = limit_usd(&r);
-                (r.id, r.t, usd)
-            })
-            .collect(),
+        raw,
+        unpriced,
         hourly: hourly.iter().map(|h| (h.hour, aggregate_usd(h))).collect(),
         prices: prices::fetched_at(),
     })
@@ -196,14 +223,19 @@ pub(super) fn write(layout: &Layout, digest: &Digest) -> Result<()> {
         .map_err(state::io_at(&layout.digest))
 }
 
-/// Returns the USD of a request that counts toward the limits, or `None` for any other provider.
-/// The limits and the budget month read only `anthropic`, whatever `billing` in the config says,
-/// because the windows track Claude's own limits.
-fn limit_usd(r: &Row) -> Option<f64> {
-    prices::counts_toward_limits(&r.model).then(|| row_usd(r))
+/// Returns the USD of a request that counts toward the limits and whether its model had no price,
+/// or `None` for a request of another provider. The limits and the budget month read only
+/// `anthropic`, whatever `billing` in the config says, because the windows track Claude's own
+/// limits.
+fn limit_price(r: &Row) -> Option<(f64, bool)> {
+    if !prices::counts_toward_limits(&r.model) {
+        return None;
+    }
+    let usd = row_usd(r);
+    Some((usd.unwrap_or(0.0), usd.is_none()))
 }
 
-fn row_usd(r: &Row) -> f64 {
+fn row_usd(r: &Row) -> Option<f64> {
     let t = Tokens {
         input: r.input,
         cache_read: r.cache_read,
@@ -212,7 +244,7 @@ fn row_usd(r: &Row) -> f64 {
         output: r.output,
         requests: 1,
     };
-    prices::request_cost(&r.model, &t).unwrap_or(0.0)
+    prices::request_cost(&r.model, &t)
 }
 
 fn aggregate_usd(h: &Hourly) -> f64 {

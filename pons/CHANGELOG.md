@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.12.0]
+
+### Added
+
+- `--model ID` starts the session on a model and adds it to the model picker (`ANTHROPIC_MODEL` and `ANTHROPIC_CUSTOM_MODEL_OPTION`); `--model-option ID` adds only the picker row (`ANTHROPIC_CUSTOM_MODEL_OPTION`), so Claude stays the startup model; `--model-name LABEL` labels that row (`ANTHROPIC_CUSTOM_MODEL_OPTION_NAME`). `--model` and `--model-option` conflict. A flag overrides the variable it sets, and without a flag the agent's environment is unchanged. `pons self doctor` shows the startup model and custom option, and the model variables a Zed `agent_servers` entry sets in its `env`.
+
 ## [0.11.0]
 
 ### Added

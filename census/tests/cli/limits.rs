@@ -174,3 +174,34 @@ fn budget_mode_switches_limits_and_statusline() {
     let line = run(&["statusline", "--line"], STATUS);
     assert_eq!(text(&line.stdout), "ctx 44k/400k · 5h 6% · wk 1%\n");
 }
+
+#[test]
+fn limits_surface_requests_without_a_list_price() {
+    let home = Scratch::new("cli-limits-unpriced");
+    home.write(
+        "claude/projects/app/s1.jsonl",
+        &jsonl(&[
+            json!({"type": "assistant", "timestamp": "2026-10-02T10:00:00.000Z",
+                "message": {"id": "m1", "model": "claude-opus-5-5",
+                    "usage": {"input_tokens": 400_000, "output_tokens": 10}}}),
+            json!({"type": "assistant", "timestamp": "2026-10-14T07:00:00.000Z",
+                "message": {"id": "u1", "model": "claude-unpriced-9",
+                    "usage": {"input_tokens": 1000, "output_tokens": 10}}}),
+        ]),
+    );
+    home.write(CONFIG_FILE, "mode = \"plan\"\n");
+    let env = isolated_env(home.path());
+    let extra: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+
+    let out = census(home.path(), home.path(), &["--json", "limits"], "", &extra);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let doc: Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(doc["unpriced"], 1);
+
+    let out = census(home.path(), home.path(), &["limits"], "", &extra);
+    assert!(
+        text(&out.stdout).contains("census usage --unknown"),
+        "{}",
+        text(&out.stdout)
+    );
+}

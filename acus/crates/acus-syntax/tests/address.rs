@@ -113,6 +113,38 @@ fn html_id_address() {
     assert!(matches!(resolve(&o, "div#main"), Resolve::Found(s) if s.start_line == 2));
 }
 
+#[cfg(feature = "lang-csharp")]
+#[test]
+fn csharp_address_uses_namespace_and_type() {
+    use acus_syntax::{Lang, Resolve, outline, resolve};
+    let src = "namespace App {\n    class Repo {\n        void Load() {}\n    }\n}\n";
+    assert_eq!(
+        Address::parse("Repo.cs#App::Repo::Load").target,
+        Target::Symbol("App::Repo::Load".into())
+    );
+    let o = outline(Lang::CSharp, src).unwrap();
+    assert!(matches!(
+        resolve(&o, "App::Repo::Load"),
+        Resolve::Found(s) if s.kind == "method" && s.start_line == 3
+    ));
+}
+
+#[cfg(feature = "lang-go")]
+#[test]
+fn go_address_resolves_a_function() {
+    use acus_syntax::{Lang, Resolve, outline, resolve};
+    let src = "package main\n\nfunc Run() {}\n";
+    assert_eq!(
+        Address::parse("main.go#Run").target,
+        Target::Symbol("Run".into())
+    );
+    let o = outline(Lang::Go, src).unwrap();
+    assert!(matches!(
+        resolve(&o, "Run"),
+        Resolve::Found(s) if s.kind == "func" && s.start_line == 3
+    ));
+}
+
 #[cfg(feature = "lang-xml")]
 #[test]
 fn plist_key_address() {

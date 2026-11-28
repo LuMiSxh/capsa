@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Keeps the gate in step with the DeepSeek balance and the derived agent files in step with the
-//! gate.
+//! Keeps one provider's gate in step with its balance and, for the provider that derives agents,
+//! the agent files in step with the gate.
 
 use crate::agents::{SyncReport, sync};
 use crate::balance::{Availability, decide, parse};
 use crate::bulletin::{self, Publisher};
 use crate::config::Config;
 use crate::gate::{Closed, Gate, unix_now};
-use crate::proxy::DeepseekKey;
+use crate::proxy::{ProviderId, ProviderKey};
 use capsa_core::log::{self, Level};
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde::Serialize;
@@ -16,9 +16,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex as AsyncMutex, watch};
 use tokio::task::JoinHandle;
-
-/// The base URL of the DeepSeek API, which serves `/user/balance`.
-pub const DEEPSEEK_API_URL: &str = "https://api.deepseek.com";
 
 /// The size past which the log rotates.
 pub(crate) const LOG_LIMIT: u64 = 8 * 1024 * 1024;
@@ -35,32 +32,35 @@ const COALESCE_WINDOW: Duration = Duration::from_secs(2);
 /// Configures a [`Refresher`].
 #[derive(Clone, Debug)]
 pub struct RefreshConfig {
-    /// The base URL that serves `/user/balance`, without a trailing slash.
-    pub balance_base: String,
-    /// The DeepSeek key. Without one nothing is fetched and the agents are withdrawn.
-    pub key: Option<DeepseekKey>,
+    /// The provider whose `[providers.<name>.balance]` block this refresher reads.
+    pub provider: ProviderId,
+    /// The provider key. Without one nothing is fetched and the agents are withdrawn.
+    pub key: Option<ProviderKey>,
     /// The `config.toml` that is read again on every refresh and sync.
     pub config_file: PathBuf,
     /// The directory that holds the agent files.
     pub agents_dir: PathBuf,
     /// The log file, shared with the proxy.
     pub log_file: PathBuf,
-    /// The directory that holds the capsa bulletin, where the gate is published.
-    pub bulletin_dir: PathBuf,
+    /// The directory that holds the capsa bulletin, when this provider publishes its gate.
+    pub bulletin_dir: Option<PathBuf>,
+    /// Whether this provider derives the `-ds` agent files.
+    pub derives_agents: bool,
     /// The time between two agent syncs.
     pub sync_every: Duration,
 }
 
 impl RefreshConfig {
-    /// Returns the production setup: the real API, the user's config and the Claude agents.
-    pub fn new(key: Option<DeepseekKey>) -> Self {
+    /// Returns the production setup: the user's config and the Claude agents.
+    pub fn new(provider: ProviderId, key: Option<ProviderKey>, derives_agents: bool) -> Self {
         RefreshConfig {
-            balance_base: DEEPSEEK_API_URL.to_owned(),
+            provider,
             key,
             config_file: Config::path(),
             agents_dir: claude_agents_dir(),
             log_file: crate::proxy_log_file(),
-            bulletin_dir: capsa_core::bulletin::dir(),
+            bulletin_dir: derives_agents.then(capsa_core::bulletin::dir),
+            derives_agents,
             sync_every: Duration::from_secs(60),
         }
     }
@@ -93,7 +93,7 @@ pub struct RefreshView {
 pub enum RefreshError {
     #[error("cannot build the HTTP client for the balance")]
     Client(#[source] reqwest::Error),
-    #[error("the DeepSeek key cannot be sent as a header")]
+    #[error("a provider key cannot be sent as a header")]
     KeyHeader,
 }
 
@@ -131,14 +131,15 @@ struct Line<'a> {
 /// Reads the balance, sets the gate and syncs the agent files.
 pub struct Refresher {
     gate: Arc<Gate>,
+    provider: ProviderId,
     client: reqwest::Client,
-    url: String,
     bearer: Option<HeaderValue>,
     config_file: PathBuf,
     agents_dir: PathBuf,
     log_file: PathBuf,
     sync_every: Duration,
-    publisher: Publisher,
+    derives_agents: bool,
+    publisher: Option<Publisher>,
     config: Mutex<Config>,
     inner: Mutex<Inner>,
     refresh_lock: AsyncMutex<()>,
@@ -166,16 +167,24 @@ impl Refresher {
             None => None,
         };
         let initial = Config::load_from(&config.config_file).unwrap_or_default();
-        let publisher = Publisher::new(config.bulletin_dir, config.log_file.clone(), gate.clone());
+        let publisher = config.bulletin_dir.map(|dir| {
+            Publisher::new(
+                dir,
+                config.log_file.clone(),
+                gate.clone(),
+                config.provider.as_str().to_owned(),
+            )
+        });
         Ok(Refresher {
             gate,
+            provider: config.provider,
             client,
-            url: format!("{}/user/balance", config.balance_base.trim_end_matches('/')),
             bearer,
             config_file: config.config_file,
             agents_dir: config.agents_dir,
             log_file: config.log_file,
             sync_every: config.sync_every,
+            derives_agents: config.derives_agents,
             publisher,
             config: Mutex::new(initial),
             inner: Mutex::new(Inner::default()),
@@ -183,16 +192,17 @@ impl Refresher {
         })
     }
 
-    /// Writes the gate to the capsa bulletin in the background, with the TTL of the config last read.
+    /// Writes the gate to the capsa bulletin in the background, with the TTL of the config last
+    /// read. Returns `None` when this provider has no bulletin or no balance block.
     ///
     /// The returned handle may be dropped; the write finishes on its own.
-    pub fn publish_gate(&self) -> JoinHandle<()> {
+    pub fn publish_gate(&self) -> Option<JoinHandle<()>> {
         let minutes = self
-            .config
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .balance_refresh_minutes;
-        self.publisher.spawn(bulletin::ttl_secs(minutes))
+            .current_config()
+            .provider_balance(self.provider.as_str())?
+            .refresh_minutes;
+        let publisher = self.publisher.as_ref()?;
+        Some(publisher.spawn(bulletin::ttl_secs(minutes)))
     }
 
     /// Returns the last sync report and the refresh timestamps.
@@ -225,15 +235,23 @@ impl Refresher {
         }
         let started = Instant::now();
         let config = self.current_config();
-        let result = self.fetch(bearer, config.min_balance_usd).await;
+        let Some(balance) = config.provider_balance(self.provider.as_str()) else {
+            return;
+        };
+        let url = balance.url.trim_end_matches('/');
+        let min_usd = balance.min_usd;
+        let refresh_minutes = balance.refresh_minutes;
+        let result = self.fetch(url, bearer, min_usd).await;
         let now = unix_now();
-        let next = now + u64::from(config.balance_refresh_minutes) * 60;
+        let next = now + u64::from(refresh_minutes) * 60;
         match &result {
             Ok(fetched) => self.apply(fetched, generation, now),
             Err(error) => self.record_error(error),
         }
-        if result.is_ok() {
-            let _ = self.publish_gate().await;
+        if result.is_ok()
+            && let Some(written) = self.publish_gate()
+        {
+            let _ = written.await;
         }
         let mut inner = self.inner();
         inner.completed += 1;
@@ -287,6 +305,9 @@ impl Refresher {
     }
 
     fn sync_with(&self, available: bool) {
+        if !self.derives_agents {
+            return;
+        }
         let config = self.current_config();
         let report = sync(&self.agents_dir, &config.agents, available);
         self.inner().report = Some(report);
@@ -315,10 +336,15 @@ impl Refresher {
         self.inner().view.next_at.is_some_and(|at| at <= unix_now())
     }
 
-    async fn fetch(&self, bearer: &HeaderValue, min_usd: f64) -> Result<Fetched, String> {
+    async fn fetch(
+        &self,
+        url: &str,
+        bearer: &HeaderValue,
+        min_usd: f64,
+    ) -> Result<Fetched, String> {
         let response = self
             .client
-            .get(&self.url)
+            .get(url)
             .header(AUTHORIZATION, bearer.clone())
             .send()
             .await

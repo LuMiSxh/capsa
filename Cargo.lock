@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acus-cli"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "acus-edit",
  "acus-guard",
@@ -104,7 +104,9 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
+ "tree-sitter-c-sharp",
  "tree-sitter-css",
+ "tree-sitter-go",
  "tree-sitter-html",
  "tree-sitter-javascript",
  "tree-sitter-json",
@@ -351,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "census"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anstyle",
  "anyhow",
@@ -1620,7 +1622,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "pons"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "capsa-core",
@@ -2601,10 +2603,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-c-sharp"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54b3cdb7aeae9018e60908aa18937708de29338c83ecf3701de534b23d365c30"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-css"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5cbc5e18f29a2c6d6435891f42569525cf95435a3e01c2f1947abcde178686f"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-go"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8560a4d2f835cc0d4d2c2e03cbd0dde2f6114b43bc491164238d333e28b16ea"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -2881,7 +2903,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vicarius"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "capsa-core",

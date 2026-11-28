@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Publishes the DeepSeek gate to the capsa bulletin, where census reads it without a socket call.
+//! Publishes provider gates to the capsa bulletin, where census reads them without a socket call.
 
 use crate::gate::{Gate, unix_now};
 use crate::refresh::LOG_LIMIT;
 use capsa_core::bulletin::{self, BulletinError, Stamped};
 use capsa_core::log::{self, Level};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use tokio::task::JoinHandle;
@@ -16,17 +17,24 @@ pub const TOOL: &str = "vicarius";
 /// The body of `vicarius.json`, which census reads.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Bulletin {
+    /// The DeepSeek summary that census reads today.
     pub deepseek: Stamped<DeepSeek>,
+    /// Every provider that publishes a gate, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub providers: Option<BTreeMap<String, Stamped<ProviderGate>>>,
 }
 
-/// The DeepSeek route as the gate holds it.
+/// A provider's route as its gate holds it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DeepSeek {
+pub struct ProviderGate {
     /// Whether the route accepts requests.
     pub open: bool,
     /// The last balance in USD, or `None` when the account reports another currency.
     pub balance_usd: Option<f64>,
 }
+
+/// The DeepSeek route as the gate holds it.
+pub type DeepSeek = ProviderGate;
 
 /// Returns how long a published entry stays current: two balance refresh periods, in seconds.
 ///
@@ -41,17 +49,20 @@ pub struct Publisher {
     dir: PathBuf,
     log_file: PathBuf,
     gate: Arc<Gate>,
+    provider: String,
     /// Held across the snapshot and the write, so the file ends with the newest gate state.
     order: Arc<Mutex<()>>,
 }
 
 impl Publisher {
-    /// Returns a publisher that writes into `dir` and logs a failed write to `log_file`.
-    pub fn new(dir: PathBuf, log_file: PathBuf, gate: Arc<Gate>) -> Self {
+    /// Returns a publisher for `provider` that writes into `dir` and logs a failed write to
+    /// `log_file`.
+    pub fn new(dir: PathBuf, log_file: PathBuf, gate: Arc<Gate>, provider: String) -> Self {
         Publisher {
             dir,
             log_file,
             gate,
+            provider,
             order: Arc::new(Mutex::new(())),
         }
     }
@@ -71,18 +82,33 @@ impl Publisher {
     fn write(&self, ttl: u64) -> Result<(), BulletinError> {
         let _order = self.order.lock().unwrap_or_else(PoisonError::into_inner);
         let snap = self.gate.snapshot();
-        let value = DeepSeek {
+        let at = unix_now();
+        let value = ProviderGate {
             open: snap.is_open(),
             balance_usd: snap
                 .balance
                 .filter(|_| snap.currency.as_deref() == Some("USD")),
         };
-        let body = Bulletin {
-            deepseek: Stamped {
-                at: unix_now(),
+        let existing = bulletin::read_in::<Bulletin>(&self.dir, TOOL);
+        let mut providers = existing
+            .as_ref()
+            .and_then(|bulletin| bulletin.providers.clone())
+            .unwrap_or_default();
+        providers.insert(
+            self.provider.clone(),
+            Stamped {
+                at,
                 ttl,
-                value,
+                value: value.clone(),
             },
+        );
+        let deepseek = match existing {
+            Some(bulletin) if self.provider != "deepseek" => bulletin.deepseek,
+            _ => Stamped { at, ttl, value },
+        };
+        let body = Bulletin {
+            deepseek,
+            providers: Some(providers),
         };
         bulletin::write_in(&self.dir, TOOL, &body)
     }

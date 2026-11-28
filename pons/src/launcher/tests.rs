@@ -224,3 +224,14 @@ fn batch_shims_refuse_shell_metacharacters_in_arguments() {
     assert!(is_batch(Path::new("X.CMD")) && is_batch(Path::new("a.bat")));
     assert!(!is_batch(Path::new("a.exe")));
 }
+
+#[test]
+fn a_plan_sets_no_agent_environment_of_its_own() {
+    let env = unix(Platform::Macos, &["/bin"]);
+    let fs = FakeFs::with(&["/bin/claude-agent-acp", "/bin/mine"]);
+    assert_eq!(plan(&env, &fs, &[]).unwrap().env, Vec::new());
+    assert_eq!(
+        plan(&env, &fs, &["mine".to_owned()]).unwrap().env,
+        Vec::new()
+    );
+}

@@ -151,6 +151,6 @@ An address names code without reading it first; every command that takes a path 
 - A script call without `await` returns a promise, not the result: write `await find(...)`.
 - A `return` or `print` anywhere in a script turns off the implicit result: the last expression then prints nothing.
 - `acus run <<'EOF'` is not a batch: `run` takes one command and never reads stdin, so the heredoc is ignored and the project's test command runs. Use `acus batch`.
-- Symbols exist for Rust, Swift, TS/JS, Svelte, Python, Shell, C, CSS, SCSS, HTML, XML/plist, Markdown and TOML/JSON/YAML keys; on other files use `find` and `show PATH:A-B`.
+- Symbols exist for Rust, Swift, TS/JS, Svelte, Python, Shell, C, C#, Go, CSS, SCSS, HTML, XML/plist, Markdown and TOML/JSON/YAML keys; on other files use `find` and `show PATH:A-B`.
 
 More: `acus self skill --full`, `--topic <topic>`.

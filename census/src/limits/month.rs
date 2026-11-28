@@ -27,6 +27,9 @@ pub struct MonthStatus {
     pub now: u64,
     /// False when the ledger holds nothing.
     pub data: bool,
+    /// Requests that count toward the limits but have no list price; they price as 0 USD.
+    #[serde(skip_serializing_if = "super::is_zero")]
+    pub unpriced: u64,
     /// First second of the month, its local midnight on the 1st.
     pub start: u64,
     /// First second of the next month.
@@ -74,6 +77,7 @@ impl MonthStatus {
         MonthStatus {
             now,
             data,
+            unpriced: 0,
             start,
             end,
             elapsed_s,
@@ -102,7 +106,7 @@ pub fn compute_month(history: &History, now: u64, budget_usd: Option<f64>) -> Mo
         usd: costs.between(day, now),
         days_left: days_until(day, end),
     };
-    MonthStatus::new(
+    let mut status = MonthStatus::new(
         costs.between(start, now),
         start,
         end,
@@ -110,7 +114,9 @@ pub fn compute_month(history: &History, now: u64, budget_usd: Option<f64>) -> Mo
         budget_usd,
         data,
         today,
-    )
+    );
+    status.unpriced = history.priced.unpriced;
+    status
 }
 
 /// Returns the month status at `now` from the ledger as it is, without reading transcripts, for

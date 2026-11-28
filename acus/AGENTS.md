@@ -46,7 +46,8 @@ Shared rules: see root AGENTS.md.
        two places of `crates/acus-cli/Cargo.toml`. `every_listed_language_has_a_grammar` fails
        when the arm is missing.
     3. The variant in `classify` (`crates/acus-syntax/src/rules/mod.rs`; no wildcard, so the
-       compiler asks), and any new kind in `KINDS`.
+       compiler asks), and any new kind in `KINDS`. A language with call rules also gets an arm in
+       `src/calls.rs` and a case in `tests/calls.rs`.
     4. Only if its doc comments or decorators use a prefix `attached_start` (`outline.rs`) does not
        know: add the prefix, or a `#`-comment extension to its `hash` list.
     5. An outline test in `crates/acus-syntax/tests/outline.rs`, gated by the same feature.

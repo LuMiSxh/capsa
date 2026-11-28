@@ -7,6 +7,8 @@ use capsa_core::exit::Outcome;
 use capsa_core::render::{Check, Doc, Doctor, Group, Render, Status};
 use serde::{Serialize, Serializer};
 
+use crate::cli::ModelEnv;
+
 use super::*;
 
 /// What `pons self doctor` shows: the checks, and the facts behind them.
@@ -204,6 +206,33 @@ fn log_checks(r: &Report) -> Vec<Check> {
     checks
 }
 
+/// The Zed entries that run pons, each with the model variables it sets.
+fn settings_details(r: &Report, doc: &mut Doc) {
+    let Some(Settings::Servers(list)) = &r.settings else {
+        return;
+    };
+    for s in list {
+        doc.line(format!(
+            "agent_servers {}: command {:?}, args {:?}",
+            s.name, s.command, s.args
+        ));
+        let configured = ModelEnv::from_pairs(&s.env);
+        if let Some(summary) = configured.summary() {
+            doc.line(format!("agent_servers {} sets: {summary}", s.name));
+        }
+    }
+}
+
+/// The model an adapter would start on and the picker row it would add.
+fn model_line(model: &ModelEnv) -> String {
+    format!(
+        "startup model: {}; custom option: {}; option name: {}",
+        model.model.as_deref().unwrap_or("adapter default"),
+        model.option.as_deref().unwrap_or("none"),
+        model.option_name.as_deref().unwrap_or("none"),
+    )
+}
+
 /// The facts the checks summarize: the launcher's candidates, the Zed entries, the running
 /// proxies and the wire log.
 fn details(r: &Report, doc: &mut Doc) {
@@ -223,14 +252,8 @@ fn details(r: &Report, doc: &mut Doc) {
         "searched {} directories (PATH, then user bin directories)",
         r.searched_dirs
     ));
-    if let Some(Settings::Servers(list)) = &r.settings {
-        for s in list {
-            doc.line(format!(
-                "agent_servers {}: command {:?}, args {:?}",
-                s.name, s.command, s.args
-            ));
-        }
-    }
+    settings_details(r, doc);
+    doc.line(model_line(&r.model));
     if let Some((version, dir)) = &r.registry_adapter {
         let version = version.as_deref().unwrap_or("not found");
         doc.line(format!(

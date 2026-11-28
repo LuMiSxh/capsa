@@ -206,7 +206,7 @@ pub struct Summary {
     pub cost: Cost,
     /// List-price cost of the requests billed as API spend, by provider.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub api: BTreeMap<&'static str, Cost>,
+    pub api: BTreeMap<String, Cost>,
     /// Subagents per role, from `attributionAgent`.
     pub spawns: BTreeMap<String, u64>,
     pub compactions: u64,
@@ -248,14 +248,17 @@ pub fn summarize_with_cwd(
     let scans = || std::iter::once(&main_scan).chain(subagents.iter().map(|(_, s)| s));
 
     let mut cost = Cost::default();
-    let mut api: BTreeMap<&'static str, Cost> = BTreeMap::new();
+    let mut api: BTreeMap<String, Cost> = BTreeMap::new();
     let mut requests = 0;
     for scan in scans() {
         for (model, tokens) in &scan.requests {
-            let provider = crate::usage::prices::billed_by(model);
+            let provider = crate::usage::prices::billed_by(model, &config.provider_prefixes);
             match config.billing_of(provider) {
                 Billing::Subscription => cost.add_request(model, tokens),
-                Billing::Api => api.entry(provider).or_default().add_request(model, tokens),
+                Billing::Api => api
+                    .entry(provider.to_owned())
+                    .or_default()
+                    .add_request(model, tokens),
             }
             requests += 1;
         }

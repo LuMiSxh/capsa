@@ -50,6 +50,8 @@ pub fn supports_calls(lang: Lang) -> bool {
             | Lang::JavaScript
             | Lang::Python
             | Lang::C
+            | Lang::CSharp
+            | Lang::Go
             | Lang::Shell
     )
 }
@@ -86,6 +88,8 @@ fn node_call(lang: Lang, n: Node, src: &[u8]) -> Option<Call> {
         Lang::Python => python(n, src),
         Lang::TypeScript | Lang::Tsx | Lang::JavaScript => ts(n, src),
         Lang::C => c(n, src),
+        Lang::CSharp => csharp(n, src),
+        Lang::Go => go(n, src),
         Lang::Swift => swift(n, src),
         Lang::Shell => shell(n, src),
         _ => None,
@@ -320,6 +324,165 @@ fn c(n: Node, src: &[u8]) -> Option<Call> {
     }
 }
 
+fn csharp(n: Node, src: &[u8]) -> Option<Call> {
+    match n.kind() {
+        "invocation_expression" => csharp_callee(n.child_by_field_name("function")?, src),
+        "object_creation_expression" => {
+            let (name, qual) = csharp_type(n.child_by_field_name("type")?, src)?;
+            Some(call(name, src, qual, CallForm::Ctor))
+        }
+        _ => None,
+    }
+}
+
+fn csharp_callee(f: Node, src: &[u8]) -> Option<Call> {
+    match f.kind() {
+        "identifier" => Some(call(f, src, None, CallForm::Bare)),
+        "generic_name" => Some(call(csharp_identifier(f)?, src, None, CallForm::Bare)),
+        "member_access_expression" => Some(receiver_call(
+            f.child_by_field_name("expression"),
+            csharp_identifier(f.child_by_field_name("name")?)?,
+            src,
+            &["this"],
+        )),
+        "qualified_name" => {
+            let name = csharp_identifier(f.child_by_field_name("name")?)?;
+            let qual = csharp_qualifier(f, src);
+            Some(call(name, src, qual, CallForm::Path))
+        }
+        _ => None,
+    }
+}
+
+fn csharp_type<'t>(t: Node<'t>, src: &[u8]) -> Option<(Node<'t>, Option<String>)> {
+    match t.kind() {
+        "identifier" => Some((t, None)),
+        "generic_name" => Some((csharp_identifier(t)?, None)),
+        "qualified_name" => Some((
+            csharp_identifier(t.child_by_field_name("name")?)?,
+            csharp_qualifier(t, src),
+        )),
+        _ => None,
+    }
+}
+
+/// Returns the identifier naming `n`: itself, or the left side of a `generic_name`.
+fn csharp_identifier(n: Node) -> Option<Node> {
+    match n.kind() {
+        "identifier" => Some(n),
+        "generic_name" => n.named_child(0).filter(|c| c.kind() == "identifier"),
+        _ => None,
+    }
+}
+
+/// Returns the last segment of a qualified name's qualifier, as `Call::qual` wants.
+fn csharp_qualifier(n: Node, src: &[u8]) -> Option<String> {
+    n.child_by_field_name("qualifier")
+        .map(|q| {
+            text(q, src)
+                .rsplit('.')
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .filter(|q| !q.is_empty())
+}
+
+fn go(n: Node, src: &[u8]) -> Option<Call> {
+    if n.kind() != "call_expression" {
+        return None;
+    }
+    go_callee(n.child_by_field_name("function")?, src)
+}
+
+/// Reads the callee of a call: a generic call `id[int](x, y)` parses as a call on an index
+/// expression, so its operand is the callee.
+fn go_callee(f: Node, src: &[u8]) -> Option<Call> {
+    match f.kind() {
+        "identifier" => Some(call(f, src, None, CallForm::Bare)),
+        "index_expression" => go_callee(f.child_by_field_name("operand")?, src),
+        "selector_expression" => {
+            let operand = f.child_by_field_name("operand")?;
+            let field = f.child_by_field_name("field")?;
+            Some(go_selector(operand, field, src))
+        }
+        _ => None,
+    }
+}
+
+/// Sets the form of `operand.field`: an imported package or a selector chain is a `Path`, a plain
+/// identifier is a `Method`, and any other operand keeps the receiver rules.
+fn go_selector(operand: Node, field: Node, src: &[u8]) -> Call {
+    if operand.kind() == "selector_expression" {
+        return call(field, src, go_qualifier(operand, src), CallForm::Path);
+    }
+    if operand.kind() == "identifier" {
+        let qual = text(operand, src).to_owned();
+        let is_pkg = go_imports(operand, src, &qual);
+        let form = if is_pkg {
+            CallForm::Path
+        } else {
+            CallForm::Method
+        };
+        return call(field, src, Some(qual), form);
+    }
+    receiver_call(Some(operand), field, src, &[])
+}
+
+/// Returns the last segment of a selector chain, as `Call::qual` wants.
+fn go_qualifier(operand: Node, src: &[u8]) -> Option<String> {
+    let last = text(operand, src).rsplit('.').next().unwrap_or_default();
+    word(last).then(|| last.to_owned())
+}
+
+/// Reports whether `name` is a package imported by the file. Go gives a package call and a method
+/// call the same syntax, so `fmt.Println` is a `Path` only through the import list.
+fn go_imports(operand: Node, src: &[u8], name: &str) -> bool {
+    let mut cur = operand.parent();
+    while let Some(p) = cur {
+        if p.kind() == "source_file" {
+            let mut names = Vec::new();
+            let mut walk = p.walk();
+            for decl in p
+                .named_children(&mut walk)
+                .filter(|n| n.kind() == "import_declaration")
+            {
+                go_import_names(decl, src, &mut names);
+            }
+            return names.iter().any(|n| n == name);
+        }
+        cur = p.parent();
+    }
+    false
+}
+
+fn go_import_names(n: Node, src: &[u8], out: &mut Vec<String>) {
+    let mut cur = n.walk();
+    for child in n.named_children(&mut cur) {
+        if child.kind() == "import_spec" {
+            if let Some(name) = go_import_name(child, src) {
+                out.push(name);
+            }
+        } else {
+            go_import_names(child, src, out);
+        }
+    }
+}
+
+/// Returns an import's local name: its alias, else the last segment of its quoted path.
+fn go_import_name(spec: Node, src: &[u8]) -> Option<String> {
+    if let Some(name) = spec.child_by_field_name("name") {
+        return (name.kind() == "package_identifier").then(|| text(name, src).to_owned());
+    }
+    let path = text(spec.child_by_field_name("path")?, src);
+    let trimmed = path.trim_matches(|c| c == '"' || c == '`');
+    trimmed
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
 fn swift(n: Node, src: &[u8]) -> Option<Call> {
     if n.kind() != "call_expression" {
         return None;
@@ -401,6 +564,29 @@ mod tests {
                     "field_expression",
                     "field_identifier",
                     "identifier",
+                ],
+            ),
+            (
+                Lang::CSharp,
+                &[
+                    "invocation_expression",
+                    "object_creation_expression",
+                    "member_access_expression",
+                    "qualified_name",
+                    "generic_name",
+                    "identifier",
+                ],
+            ),
+            (
+                Lang::Go,
+                &[
+                    "call_expression",
+                    "selector_expression",
+                    "field_identifier",
+                    "identifier",
+                    "import_declaration",
+                    "import_spec",
+                    "type_arguments",
                 ],
             ),
             (
